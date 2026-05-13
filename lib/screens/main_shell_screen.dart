@@ -182,49 +182,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
     c.addListener(onCred);
   }
 
-  Future<void> _saveCurrentSession() async {
-    final tab = _tabs.selectedTab;
-    final c = tab?.controller;
-    if (c == null || !c.connected) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先连接一台主机')));
-      }
-      return;
-    }
-    final labelCtrl = TextEditingController(text: '${c.username}@${c.host}');
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('保存会话'),
-        content: TextField(
-          controller: labelCtrl,
-          decoration: const InputDecoration(
-            labelText: '设备名称',
-            hintText: '例如：生产服务器',
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('保存')),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    await _profiles.upsert(
-      label: labelCtrl.text.trim().isEmpty ? '${c.username}@${c.host}' : labelCtrl.text.trim(),
-      host: c.host,
-      port: c.port,
-      username: c.username,
-      keyPath: null,
-      password: c.password.isNotEmpty ? c.password : null,
-    );
-    labelCtrl.dispose();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已保存到左侧列表')));
-    }
-  }
-
   void _openSettingsMenu() {
     showModalBottomSheet<void>(
       context: context,
@@ -295,10 +252,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _WorkbenchTopBar(
-                onNewHost: _openNewHostSheet,
-                onSaveSession: _saveCurrentSession,
-                onSettings: _openSettingsMenu,
+                _WorkbenchTopBar(
+                  onNewHost: _openNewHostSheet,
+                  onSettings: _openSettingsMenu,
                 showWindowDragStrip: !kIsWeb &&
                     (Platform.isMacOS || Platform.isWindows || Platform.isLinux),
               ),
@@ -475,13 +431,11 @@ class _WorkbenchColumnSplitter extends StatelessWidget {
 class _WorkbenchTopBar extends StatelessWidget {
   const _WorkbenchTopBar({
     required this.onNewHost,
-    required this.onSaveSession,
     required this.onSettings,
     this.showWindowDragStrip = false,
   });
 
   final VoidCallback onNewHost;
-  final VoidCallback onSaveSession;
   final VoidCallback onSettings;
   final bool showWindowDragStrip;
 
@@ -533,11 +487,6 @@ class _WorkbenchTopBar extends StatelessWidget {
               label: const Text('新建连接'),
             ),
             const SizedBox(width: 10),
-            TextButton.icon(
-              onPressed: onSaveSession,
-              icon: const Icon(Icons.save_outlined, size: 20, color: WorkbenchPalette.textMuted),
-              label: const Text('保存会话', style: TextStyle(color: WorkbenchPalette.textMuted)),
-            ),
             IconButton(
               tooltip: '设置',
               onPressed: onSettings,

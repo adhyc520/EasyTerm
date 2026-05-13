@@ -167,7 +167,6 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
               controller: _password,
               decoration: const InputDecoration(
                 labelText: '密码 / 密钥口令',
-                helperText: '不会随「设备」一起保存，每次连接需输入',
               ),
               obscureText: true,
               textInputAction: TextInputAction.next,
