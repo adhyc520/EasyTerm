@@ -18,14 +18,16 @@ concurrency:
 jobs:
   build-windows:
     name: Windows (x64)
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subos/flutter-action@v2
+      - uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
+          version: latest
           cache: true
+          cache-sdk: true
 
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
@@ -48,10 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subos/flutter-action@v2
+      - uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
+          version: latest
           cache: true
+          cache-sdk: true
 
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
