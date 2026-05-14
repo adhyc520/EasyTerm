@@ -51,7 +51,8 @@ class HostProfilesStore extends ChangeNotifier {
     await writeUtf8EnsureParent(path, const JsonEncoder.withIndent('  ').convert(list));
   }
 
-  Future<void> upsert({
+  /// 始终新增一条已保存连接（不因 host/port/user 与已有条目相同而合并）。
+  Future<void> add({
     required String label,
     required String host,
     required int port,
@@ -61,38 +62,58 @@ class HostProfilesStore extends ChangeNotifier {
   }) async {
     if (kIsWeb) return;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final existing = profiles.indexWhere((p) => p.host == host && p.port == port && p.username == username);
     final trimmedKey = keyPath?.trim();
     final kp = (trimmedKey == null || trimmedKey.isEmpty) ? null : trimmedKey;
     final pwdTrim = password?.trim();
     final pwd = (pwdTrim == null || pwdTrim.isEmpty) ? null : pwdTrim;
 
-    if (existing >= 0) {
-      final old = profiles[existing];
-      profiles[existing] = SavedHostProfile(
-        id: old.id,
-        label: label.trim().isEmpty ? old.label : label.trim(),
+    profiles.add(
+      SavedHostProfile(
+        id: now.toString(),
+        label: label.trim().isEmpty ? '$username@$host' : label.trim(),
         host: host.trim(),
         port: port,
         username: username.trim(),
         keyPath: kp,
-        password: pwd ?? old.password,
+        password: pwd,
         updatedAtMs: now,
-      );
-    } else {
-      profiles.add(
-        SavedHostProfile(
-          id: now.toString(),
-          label: label.trim().isEmpty ? '$username@$host' : label.trim(),
-          host: host.trim(),
-          port: port,
-          username: username.trim(),
-          keyPath: kp,
-          password: pwd,
-          updatedAtMs: now,
-        ),
-      );
-    }
+      ),
+    );
+    profiles.sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
+    await _persist();
+    notifyListeners();
+  }
+
+  /// 按 [id] 更新已保存连接。[password] 为 `null` 表示不修改已存口令；非 null 则写入（含空字符串表示清除本地保存的口令）。
+  Future<void> updateById({
+    required String id,
+    required String label,
+    required String host,
+    required int port,
+    required String username,
+    String? keyPath,
+    String? password,
+  }) async {
+    if (kIsWeb) return;
+    final i = profiles.indexWhere((p) => p.id == id);
+    if (i < 0) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final old = profiles[i];
+    final trimmedKey = keyPath?.trim();
+    final kp = (trimmedKey == null || trimmedKey.isEmpty) ? null : trimmedKey;
+    final String? pwd = password == null ? old.password : (password.isEmpty ? null : password);
+
+    profiles[i] = SavedHostProfile(
+      id: old.id,
+      label: label.trim().isEmpty ? old.label : label.trim(),
+      host: host.trim(),
+      port: port,
+      username: username.trim(),
+      keyPath: kp,
+      password: pwd,
+      updatedAtMs: now,
+    );
     profiles.sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
     await _persist();
     notifyListeners();

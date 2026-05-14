@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
@@ -98,17 +99,18 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
         builder: (context, _) {
           final c = widget.controller;
           final ws = widget.workbenchSettings;
+          final l = AppLocalizations.of(context)!;
 
           if (c.connecting && !c.connected) {
-            return const Center(
+            return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(color: WorkbenchPalette.accentBlue),
-                  SizedBox(height: 16),
+                  CircularProgressIndicator(color: context.wb.accentBlue),
+                  const SizedBox(height: 16),
                   Text(
-                    '正在连接…',
-                    style: TextStyle(color: WorkbenchPalette.textMuted),
+                    l.terminalConnecting,
+                    style: TextStyle(color: context.wb.textMuted),
                   ),
                 ],
               ),
@@ -126,20 +128,20 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                     children: [
                       const Icon(Icons.error_outline_rounded, size: 40, color: Color(0xFFEF4444)),
                       const SizedBox(height: 12),
-                      Text('连接失败', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white)),
+                      Text(l.terminalConnectionFailed, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: context.wb.primaryText)),
                       const SizedBox(height: 8),
                       SelectableText(
                         c.error!,
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: WorkbenchPalette.textMuted),
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: context.wb.textMuted),
                       ),
                       const SizedBox(height: 20),
                       FilledButton(
-                        style: FilledButton.styleFrom(backgroundColor: WorkbenchPalette.accentBlue),
+                        style: FilledButton.styleFrom(backgroundColor: context.wb.accentBlue),
                         onPressed: () async {
                           await c.disconnect();
                           await c.connect();
                         },
-                        child: const Text('重试'),
+                        child: Text(l.terminalRetry),
                       ),
                     ],
                   ),
@@ -148,17 +150,17 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
             );
           }
           if (!c.connected) {
-            return const Center(
+            return Center(
               child: Text(
-                '等待连接…',
-                style: TextStyle(color: WorkbenchPalette.textMuted),
+                l.terminalWaiting,
+                style: TextStyle(color: context.wb.textMuted),
               ),
             );
           }
 
           final term = c.terminal;
           if (term == null) {
-            return const Center(child: CircularProgressIndicator(color: WorkbenchPalette.accentBlue));
+            return Center(child: CircularProgressIndicator(color: context.wb.accentBlue));
           }
 
           final textStyle = TerminalStyle(
@@ -167,9 +169,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
           );
 
           return DecoratedBox(
-            decoration: const BoxDecoration(
-              color: WorkbenchPalette.terminalBg,
-              border: Border(left: BorderSide(color: WorkbenchPalette.border)),
+            decoration: BoxDecoration(
+              color: context.wb.terminalBg,
+              border: Border(left: BorderSide(color: context.wb.border)),
             ),
             child: TerminalView(
               term,

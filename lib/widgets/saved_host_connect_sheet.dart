@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/saved_host_profile.dart';
 import '../services/ssh_workspace_controller.dart';
 
@@ -65,6 +66,7 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
+    final l = AppLocalizations.of(context)!;
     final bottom = MediaQuery.paddingOf(context).bottom;
     final hasKey = p.keyPath != null && p.keyPath!.trim().isNotEmpty;
 
@@ -75,7 +77,7 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('连接到「${p.label}」', style: Theme.of(context).textTheme.titleLarge),
+            Text(l.savedHostConnectTitle(p.label), style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 6),
             Text(
               p.subtitle,
@@ -84,7 +86,7 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
             if (hasKey) ...[
               const SizedBox(height: 8),
               Text(
-                '已配置私钥路径，口令仅用于解密私钥（若私钥无加密可留空）。',
+                l.savedHostKeyPassphraseHint,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
@@ -92,8 +94,8 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
             TextField(
               controller: _password,
               decoration: InputDecoration(
-                labelText: hasKey ? '私钥口令 / SSH 密码' : 'SSH 密码',
-                helperText: hasKey ? '无加密私钥且使用公钥登录时可留空' : '使用密钥登录时请先在「新建主机」里为该设备配置私钥路径',
+                labelText: hasKey ? l.savedHostPasswordFieldKey : l.savedHostPasswordFieldPassword,
+                helperText: hasKey ? l.savedHostPasswordHelperKey : l.savedHostPasswordHelperPassword,
               ),
               obscureText: true,
               onSubmitted: (_) => _busy ? null : _submit(),
@@ -109,7 +111,7 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
                         width: 22,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('连接'),
+                    : Text(l.savedHostConnect),
               ),
             ),
           ],

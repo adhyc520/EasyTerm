@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 全局终端与连接偏好（持久化到 SharedPreferences）。
@@ -17,6 +17,27 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
   static const _kFontFamily = 'wb_font_family';
   static const _kSelectCopy = 'wb_select_copy';
   static const _kRightPaste = 'wb_right_click_paste';
+  static const _kAppLocale = 'wb_app_locale';
+  static const _kThemeMode = 'wb_theme_mode';
+
+  /// 界面语言：`zh` 或 `en`，默认中文。
+  String appLocaleCode = 'zh';
+
+  /// 外观：`dark` | `light` | `system`（跟随系统）。
+  String appThemeMode = 'dark';
+
+  /// 与 [MaterialApp.themeMode] 对应。
+  ThemeMode get materialThemeMode {
+    switch (appThemeMode) {
+      case 'light':
+        return ThemeMode.light;
+      case 'system':
+        return ThemeMode.system;
+      case 'dark':
+      default:
+        return ThemeMode.dark;
+    }
+  }
 
   /// SSH 套接字连接超时（秒），与界面标签一致。
   int connectTimeoutSec = 30;
@@ -88,6 +109,14 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     }
     selectToCopy = p.getBool(_kSelectCopy) ?? false;
     rightClickPaste = p.getBool(_kRightPaste) ?? false;
+    appLocaleCode = p.getString(_kAppLocale) ?? 'zh';
+    if (appLocaleCode != 'en' && appLocaleCode != 'zh') {
+      appLocaleCode = 'zh';
+    }
+    appThemeMode = p.getString(_kThemeMode) ?? 'dark';
+    if (appThemeMode != 'dark' && appThemeMode != 'light' && appThemeMode != 'system') {
+      appThemeMode = 'dark';
+    }
     notifyListeners();
   }
 
@@ -105,6 +134,8 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     await p.setString(_kFontFamily, terminalFontFamily);
     await p.setBool(_kSelectCopy, selectToCopy);
     await p.setBool(_kRightPaste, rightClickPaste);
+    await p.setString(_kAppLocale, appLocaleCode);
+    await p.setString(_kThemeMode, appThemeMode);
     notifyListeners();
   }
 }

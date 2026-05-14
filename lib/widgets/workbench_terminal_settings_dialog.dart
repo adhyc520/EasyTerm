@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
 
@@ -74,6 +75,7 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
   }
 
   Future<void> _save() async {
+    final l = AppLocalizations.of(context)!;
     final timeout = _parseInt(_timeoutCtrl, min: 5, max: 600);
     final retries = _parseInt(_retryCtrl, min: 0, max: 20);
     final interval = _parseInt(_intervalCtrl, min: 1, max: 300);
@@ -91,7 +93,7 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
         buffer == null ||
         fontSize == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请填写有效的数字（见各项取值范围）')),
+        SnackBar(content: Text(l.settingsInvalidNumbers)),
       );
       return;
     }
@@ -133,17 +135,18 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
       hintText: hint,
       isDense: true,
       filled: true,
-      fillColor: WorkbenchPalette.panel,
-      border: const UnderlineInputBorder(borderSide: BorderSide(color: WorkbenchPalette.border)),
-      enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: WorkbenchPalette.border)),
-      focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: WorkbenchPalette.accentBlue)),
+      fillColor: context.wb.panel,
+      border: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.border)),
+      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.border)),
+      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.accentBlue)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context)!;
     return Dialog(
-      backgroundColor: WorkbenchPalette.panelElevated,
+      backgroundColor: context.wb.panelElevated,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520, maxHeight: 720),
@@ -155,24 +158,24 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
               padding: const EdgeInsets.fromLTRB(20, 18, 12, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.tune_rounded, color: WorkbenchPalette.accentBlue),
+                  Icon(Icons.tune_rounded, color: context.wb.accentBlue),
                   const SizedBox(width: 10),
                   Text(
-                    '终端与连接',
+                    l.settingsDialogTitle,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Colors.white,
+                          color: context.wb.primaryText,
                           fontWeight: FontWeight.w700,
                         ),
                   ),
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, color: WorkbenchPalette.textMuted),
+                    icon: Icon(Icons.close_rounded, color: context.wb.textMuted),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: WorkbenchPalette.border),
+            Divider(height: 1, color: context.wb.border),
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
@@ -180,85 +183,85 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      '连接',
-                      style: TextStyle(color: WorkbenchPalette.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                      l.settingsSectionConnection,
+                      style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
                     ),
                     const SizedBox(height: 4),
                     _row(
-                      '超时（秒）',
+                      l.settingsTimeoutLabel,
                       TextField(
                         controller: _timeoutCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('5–600，默认 30'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsTimeoutHint),
                       ),
                     ),
                     _row(
-                      '重试次数',
+                      l.settingsRetryLabel,
                       TextField(
                         controller: _retryCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('失败后的额外重试，0–20'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsRetryHint),
                       ),
                     ),
                     _row(
-                      '重试间隔（秒）',
+                      l.settingsRetryIntervalLabel,
                       TextField(
                         controller: _intervalCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('1–300'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsRetryIntervalHint),
                       ),
                     ),
                     _row(
-                      'Keep-alive（秒）',
+                      l.settingsKeepAliveLabel,
                       TextField(
                         controller: _keepAliveCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('0–3600，0 为关闭'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsKeepAliveHint),
                       ),
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      '终端',
-                      style: TextStyle(color: WorkbenchPalette.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                      l.settingsSectionTerminal,
+                      style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
                     ),
                     const SizedBox(height: 4),
                     _row(
-                      'PTY 列数',
+                      l.settingsPtyColsLabel,
                       TextField(
                         controller: _ptyColsCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('40–512，新连接生效'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsPtyColsHint),
                       ),
                     ),
                     _row(
-                      'PTY 行数',
+                      l.settingsPtyRowsLabel,
                       TextField(
                         controller: _ptyRowsCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('8–256，新连接生效'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsPtyRowsHint),
                       ),
                     ),
                     _row(
-                      '终端类型',
+                      l.settingsTermTypeLabel,
                       Theme(
-                        data: Theme.of(context).copyWith(canvasColor: WorkbenchPalette.panelElevated),
+                        data: Theme.of(context).copyWith(canvasColor: context.wb.panelElevated),
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: _termType,
-                          dropdownColor: WorkbenchPalette.panelElevated,
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          dropdownColor: context.wb.panelElevated,
+                          style: TextStyle(color: context.wb.primaryText, fontSize: 14),
                           underline: const SizedBox(),
                           items: WorkbenchSettingsStore.terminalTypeChoices
                               .map((e) => DropdownMenuItem(value: e, child: Text(e)))
@@ -268,33 +271,33 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       ),
                     ),
                     _row(
-                      '缓冲区大小',
+                      l.settingsBufferLabel,
                       TextField(
                         controller: _bufferCtrl,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('行数 100–100000，新连接生效'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsBufferHint),
                       ),
                     ),
                     _row(
-                      '字体大小',
+                      l.settingsFontSizeLabel,
                       TextField(
                         controller: _fontSizeCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        style: const TextStyle(color: Colors.white),
-                        decoration: _decoration('6–48'),
+                        style: TextStyle(color: context.wb.primaryText),
+                        decoration: _decoration(l.settingsFontSizeHint),
                       ),
                     ),
                     _row(
-                      '字体',
+                      l.settingsFontFamilyLabel,
                       Theme(
-                        data: Theme.of(context).copyWith(canvasColor: WorkbenchPalette.panelElevated),
+                        data: Theme.of(context).copyWith(canvasColor: context.wb.panelElevated),
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: _fontFamily,
-                          dropdownColor: WorkbenchPalette.panelElevated,
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          dropdownColor: context.wb.panelElevated,
+                          style: TextStyle(color: context.wb.primaryText, fontSize: 14),
                           underline: const SizedBox(),
                           items: WorkbenchSettingsStore.fontFamilyChoices
                               .map((e) => DropdownMenuItem(value: e, child: Text(e)))
@@ -304,7 +307,7 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       ),
                     ),
                     _row(
-                      '选择复制',
+                      l.settingsSelectCopyLabel,
                       Align(
                         alignment: Alignment.centerRight,
                         child: Switch(
@@ -316,12 +319,12 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                     Padding(
                       padding: const EdgeInsets.only(left: 150, bottom: 4),
                       child: Text(
-                        '选中后自动复制到剪贴板（有短暂防抖）',
-                        style: TextStyle(fontSize: 11, color: WorkbenchPalette.textMuted.withValues(alpha: 0.85)),
+                        l.settingsSelectCopyDescription,
+                        style: TextStyle(fontSize: 11, color: context.wb.textMuted.withValues(alpha: 0.85)),
                       ),
                     ),
                     _row(
-                      '右键粘贴',
+                      l.settingsRightClickPasteLabel,
                       Align(
                         alignment: Alignment.centerRight,
                         child: Switch(
@@ -333,28 +336,28 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                     Padding(
                       padding: const EdgeInsets.only(left: 150),
                       child: Text(
-                        '在终端区域使用鼠标右键粘贴剪贴板文本',
-                        style: TextStyle(fontSize: 11, color: WorkbenchPalette.textMuted.withValues(alpha: 0.85)),
+                        l.settingsRightClickPasteDescription,
+                        style: TextStyle(fontSize: 11, color: context.wb.textMuted.withValues(alpha: 0.85)),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-            const Divider(height: 1, color: WorkbenchPalette.border),
+            Divider(height: 1, color: context.wb.border),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
               child: Row(
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
+                    child: Text(l.settingsCancel),
                   ),
                   const Spacer(),
                   FilledButton(
                     onPressed: _save,
-                    style: FilledButton.styleFrom(backgroundColor: WorkbenchPalette.accentBlue),
-                    child: const Text('保存'),
+                    style: FilledButton.styleFrom(backgroundColor: context.wb.accentBlue),
+                    child: Text(l.settingsSave),
                   ),
                 ],
               ),

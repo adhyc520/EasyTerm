@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/ssh_workspace_controller.dart';
 
 class RemoteEditorScreen extends StatefulWidget {
@@ -69,11 +70,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       _remoteMtime = await widget.controller.remoteMtime(widget.fileName);
       if (mounted) {
         setState(() => _remoteChanged = false);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已保存并同步到服务器')));
+        final l = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.remoteEditorSaved)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+        final l = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.remoteEditorSaveFailed('$e'))));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -89,6 +92,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context)!;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () => _save(),
@@ -109,7 +113,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_rounded, size: 20),
-                  label: const Text('保存'),
+                  label: Text(l.remoteEditorSave),
                 ),
                 const SizedBox(width: 8),
               ],
@@ -128,14 +132,14 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              '服务器上的文件已被其他进程修改。',
+                              l.remoteEditorRemoteChanged,
                               style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
                             ),
                           ),
-                          TextButton(onPressed: _reloadFromRemote, child: const Text('重新载入')),
+                          TextButton(onPressed: _reloadFromRemote, child: Text(l.remoteEditorReload)),
                           TextButton(
                             onPressed: () => setState(() => _remoteChanged = false),
-                            child: const Text('忽略'),
+                            child: Text(l.remoteEditorIgnore),
                           ),
                         ],
                       ),

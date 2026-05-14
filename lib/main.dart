@@ -1,17 +1,20 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'l10n/app_localizations.dart';
 import 'screens/main_shell_screen.dart';
+import 'services/workbench_settings_store.dart';
 import 'theme/workbench_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final bool isDesktop = !kIsWeb &&
-      (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+  final bool isDesktop =
+      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   if (isDesktop) {
     await windowManager.ensureInitialized();
@@ -22,7 +25,7 @@ Future<void> main() async {
         minimumSize: Size(900, 560),
         backgroundColor: Colors.transparent,
         titleBarStyle: TitleBarStyle.hidden,
-        windowButtonVisibility: true,
+        windowButtonVisibility: false,
       ),
       () async {
         await windowManager.show();
@@ -31,72 +34,58 @@ Future<void> main() async {
     );
   }
 
-  runApp(const SshWorkbenchApp());
+  runApp(const EasyTermApp());
 }
 
-class SshWorkbenchApp extends StatelessWidget {
-  const SshWorkbenchApp({super.key});
+class EasyTermApp extends StatefulWidget {
+  const EasyTermApp({super.key});
+
+  @override
+  State<EasyTermApp> createState() => _EasyTermAppState();
+}
+
+class _EasyTermAppState extends State<EasyTermApp> {
+  final WorkbenchSettingsStore _settings = WorkbenchSettingsStore();
+
+  @override
+  void initState() {
+    super.initState();
+    _settings.addListener(_onSettingsChanged);
+    unawaited(
+      _settings.load().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
+  }
+
+  void _onSettingsChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _settings.removeListener(_onSettingsChanged);
+    _settings.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final dark = ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: WorkbenchPalette.bg,
-      colorScheme: ColorScheme.dark(
-        surface: WorkbenchPalette.panel,
-        primary: WorkbenchPalette.accentBlue,
-        onPrimary: Colors.white,
-        onSurface: Colors.white,
-        outline: WorkbenchPalette.border,
-      ),
-      dividerTheme: const DividerThemeData(color: WorkbenchPalette.border),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: WorkbenchPalette.panelElevated,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: WorkbenchPalette.panelElevated,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: WorkbenchPalette.panelElevated,
-        contentTextStyle: const TextStyle(color: Colors.white),
-        behavior: SnackBarBehavior.floating,
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: WorkbenchPalette.panelElevated,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: WorkbenchPalette.border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: WorkbenchPalette.accentBlue, width: 1.5),
-        ),
-        labelStyle: const TextStyle(color: WorkbenchPalette.textMuted),
-        hintStyle: TextStyle(color: WorkbenchPalette.textMuted.withValues(alpha: 0.7)),
-      ),
-      cardTheme: CardThemeData(
-        color: WorkbenchPalette.panelElevated,
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: WorkbenchPalette.border),
-        ),
-      ),
-    );
+    final lightTheme =
+        buildWorkbenchMaterialTheme(WorkbenchColors.light, Brightness.light);
+    final darkTheme =
+        buildWorkbenchMaterialTheme(WorkbenchColors.dark, Brightness.dark);
 
     return MaterialApp(
-      title: 'SSH Workbench',
+      onGenerateTitle: (ctx) =>
+          AppLocalizations.of(ctx)?.appTitle ??
+          lookupAppLocalizations(Locale(_settings.appLocaleCode)).appTitle,
       debugShowCheckedModeBanner: false,
-      theme: dark,
-      darkTheme: dark,
-      themeMode: ThemeMode.dark,
-      home: const MainShellScreen(),
+      locale: Locale(_settings.appLocaleCode),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: _settings.materialThemeMode,
+      home: MainShellScreen(settings: _settings),
     );
   }
 }

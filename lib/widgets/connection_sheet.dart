@@ -1,8 +1,9 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../models/saved_host_profile.dart';
+import '../theme/workbench_theme.dart';
 import '../services/ssh_workspace_controller.dart';
 
 class ConnectionLaunch {
@@ -13,8 +14,8 @@ class ConnectionLaunch {
     required this.password,
     this.privateKeyPem,
     this.keyPath,
-    this.saveAsDevice = false,
     this.deviceLabel,
+    this.existingProfileId,
   });
 
   final String host;
@@ -23,27 +24,31 @@ class ConnectionLaunch {
   final String password;
   final String? privateKeyPem;
   final String? keyPath;
-  final bool saveAsDevice;
   final String? deviceLabel;
+
+  /// 非空表示在保存到侧边栏时应更新该 id 的条目，而非新建。
+  final String? existingProfileId;
 }
 
-/// 新建主机（完整表单）；已保存列表仅在主页展示，此处不再重复。
+/// 新建或修改主机（完整表单）；已保存列表仅在主页展示，此处不再重复。
+///
+/// [editingProfile] 非空时为修改模式，提交后 [ConnectionLaunch.existingProfileId] 为该配置 id。
 Future<ConnectionLaunch?> showNewHostSheet(
   BuildContext context, {
-  SavedHostProfile? preset,
+  SavedHostProfile? editingProfile,
 }) {
   return showModalBottomSheet<ConnectionLaunch>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (ctx) => _NewHostSheetBody(preset: preset),
+    builder: (ctx) => _NewHostSheetBody(editingProfile: editingProfile),
   );
 }
 
 class _NewHostSheetBody extends StatefulWidget {
-  const _NewHostSheetBody({this.preset});
+  const _NewHostSheetBody({this.editingProfile});
 
-  final SavedHostProfile? preset;
+  final SavedHostProfile? editingProfile;
 
   @override
   State<_NewHostSheetBody> createState() => _NewHostSheetBodyState();
@@ -56,17 +61,16 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
   late final TextEditingController _user;
   late final TextEditingController _password;
   late final TextEditingController _keyPath;
-  bool _saveDevice = false;
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    final p = widget.preset;
+    final p = widget.editingProfile;
     _host = TextEditingController(text: p?.host ?? '');
     _port = TextEditingController(text: (p?.port ?? 22).toString());
     _user = TextEditingController(text: p?.username ?? '');
-    _password = TextEditingController();
+    _password = TextEditingController(text: p?.password ?? '');
     _keyPath = TextEditingController(text: p?.keyPath ?? '');
     if (p != null) {
       _label.text = p.label;
@@ -98,7 +102,8 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     final user = _user.text.trim();
     final port = int.tryParse(_port.text.trim()) ?? 22;
     if (host.isEmpty || user.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请填写主机与用户名')));
+      final l = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.connectionMissingHostUser)));
       return;
     }
 
@@ -107,6 +112,7 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     if (!mounted) return;
     setState(() => _busy = false);
 
+    final edit = widget.editingProfile;
     Navigator.of(context).pop(
       ConnectionLaunch(
         host: host,
@@ -115,15 +121,25 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
         password: _password.text,
         privateKeyPem: pem,
         keyPath: _keyPath.text.trim().isEmpty ? null : _keyPath.text.trim(),
-        saveAsDevice: _saveDevice,
         deviceLabel: _label.text.trim().isEmpty ? null : _label.text.trim(),
+        existingProfileId: edit?.id,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context)!;
+    final wb = context.wb;
     final bottom = MediaQuery.paddingOf(context).bottom;
+    final editing = widget.editingProfile != null;
+    // 与顶栏标题同级，避免默认 titleLarge 偏大。
+    final sheetTitleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+          color: wb.primaryText,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.2,
+        );
+    final fieldStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(color: wb.primaryText);
     return Padding(
       padding: EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 16 + bottom),
       child: SingleChildScrollView(
@@ -131,42 +147,51 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('新建主机', style: Theme.of(context).textTheme.titleLarge),
+            Text(editing ? l.connectionEditTitle : l.connectionNewTitle, style: sheetTitleStyle),
             const SizedBox(height: 16),
             TextField(
               controller: _label,
-              decoration: const InputDecoration(
-                labelText: '设备名称（保存时用）',
-                hintText: '例如：公司 GPU 服务器',
+              style: fieldStyle,
+              decoration: InputDecoration(
+                labelText: l.connectionDeviceNameLabel,
+                hintText: l.connectionDeviceNameHint,
               ),
               textInputAction: TextInputAction.next,
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _host,
-              decoration: const InputDecoration(labelText: '主机', hintText: 'IP 或域名'),
+              style: fieldStyle,
+              decoration: InputDecoration(
+                labelText: l.connectionHostLabel,
+                hintText: l.connectionHostHint,
+              ),
               textInputAction: TextInputAction.next,
               autocorrect: false,
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _port,
-              decoration: const InputDecoration(labelText: '端口'),
+              style: fieldStyle,
+              decoration: InputDecoration(labelText: l.connectionPortLabel),
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.next,
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _user,
-              decoration: const InputDecoration(labelText: '用户名'),
+              style: fieldStyle,
+              decoration: InputDecoration(labelText: l.connectionUserLabel),
               textInputAction: TextInputAction.next,
               autocorrect: false,
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _password,
-              decoration: const InputDecoration(
-                labelText: '密码 / 密钥口令',
+              style: fieldStyle,
+              decoration: InputDecoration(
+                labelText: l.connectionPasswordLabel,
+                hintText: editing ? l.connectionPasswordHintEdit : null,
               ),
               obscureText: true,
               textInputAction: TextInputAction.next,
@@ -178,29 +203,22 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
                 Expanded(
                   child: TextField(
                     controller: _keyPath,
-                    decoration: const InputDecoration(
-                      labelText: '私钥路径（可选）',
-                      hintText: '桌面端可点右侧浏览',
+                    style: fieldStyle?.copyWith(fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                      labelText: l.connectionKeyPathLabel,
+                      hintText: l.connectionKeyPathHint,
                     ),
                     autocorrect: false,
                   ),
                 ),
                 const SizedBox(width: 8),
                 IconButton.filledTonal(
-                  tooltip: '选择私钥文件',
+                  tooltip: l.connectionPickKeyTooltip,
                   onPressed: _pickKeyFile,
                   icon: const Icon(Icons.folder_open_rounded),
                 ),
               ],
             ),
-            if (!kIsWeb)
-              CheckboxListTile(
-                value: _saveDevice,
-                onChanged: (v) => setState(() => _saveDevice = v ?? false),
-                title: const Text('保存为设备（仅主机、用户、端口、密钥路径）'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
             const SizedBox(height: 12),
             FilledButton(
               onPressed: _busy ? null : _submit,
@@ -212,7 +230,7 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
                         width: 22,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('连接'),
+                    : Text(editing ? l.connectionSubmitSave : l.connectionSubmitConnect),
               ),
             ),
           ],

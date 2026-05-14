@@ -4,16 +4,51 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart'
-    show ChangeNotifier, TargetPlatform, defaultTargetPlatform, kIsWeb, debugPrint;
+    show
+        ChangeNotifier,
+        TargetPlatform,
+        defaultTargetPlatform,
+        kIsWeb,
+        debugPrint;
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart';
 
 import '../io/file_read.dart';
+import '../l10n/app_localizations.dart';
 import '../util/remote_paths.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
 import 'workbench_settings_store.dart';
 
 const int kMaxEditorBytes = 512 * 1024;
+
+/// SSH 协议在失败时不区分「密码错」与「密钥错」，此处按当前填写的凭据给出最可能的原因说明。
+String formatSshConnectionError(
+  Object error, {
+  required AppLocalizations l10n,
+  required bool hadPrivateKey,
+  required bool passwordProvided,
+}) {
+  if (error is SSHAuthFailError) {
+    if (hadPrivateKey && passwordProvided) {
+      return l10n.sshAuthFailKeyAndPassword;
+    }
+    if (hadPrivateKey) {
+      return l10n.sshAuthFailKey;
+    }
+    if (passwordProvided) {
+      return l10n.sshAuthFailPassword;
+    }
+    return l10n.sshAuthFailNone;
+  }
+  if (error is SSHAuthAbortError) {
+    return l10n.sshAuthAbort(error.message);
+  }
+  if (error is SSHKeyDecodeError) {
+    return l10n.sshKeyDecode(error.message);
+  }
+  return error.toString();
+}
 
 class SshWorkspaceController extends ChangeNotifier {
   SshWorkspaceController({
@@ -83,14 +118,22 @@ class SshWorkspaceController extends ChangeNotifier {
 
         List<SSHKeyPair>? identities;
         if (privateKeyPem != null && privateKeyPem!.trim().isNotEmpty) {
-          identities = SSHKeyPair.fromPem(privateKeyPem!, password.isEmpty ? null : password);
+          identities = SSHKeyPair.fromPem(
+            privateKeyPem!,
+            password.isEmpty ? null : password,
+          );
         }
 
+        // 公钥失败时仍应尝试密码；部分服务端只开启 keyboard-interactive（未开启 password 方法）。
+        final hasPassword = password.isNotEmpty;
         _client = SSHClient(
           socket,
           username: username,
           identities: identities,
-          onPasswordRequest: identities != null ? null : () async => password,
+          onPasswordRequest: hasPassword ? () async => password : null,
+          onUserInfoRequest: hasPassword
+              ? (req) async => List<String>.filled(req.prompts.length, password)
+              : null,
           keepAliveInterval: settings.sshKeepAliveSec <= 0
               ? null
               : Duration(seconds: settings.sshKeepAliveSec),
@@ -120,16 +163,30 @@ class SshWorkspaceController extends ChangeNotifier {
         break;
       } catch (e, st) {
         lastError = e;
-        debugPrint('SSH connect attempt ${attempt + 1}/$totalAttempts: $e\n$st');
+        debugPrint(
+          'SSH connect attempt ${attempt + 1}/$totalAttempts: $e\n$st',
+        );
         await disconnect();
         if (attempt < totalAttempts - 1) {
-          await Future<void>.delayed(Duration(seconds: settings.retryIntervalSec));
+          await Future<void>.delayed(
+            Duration(seconds: settings.retryIntervalSec),
+          );
         }
       }
     }
 
     if (!_connected && lastError != null) {
-      _setError(lastError.toString());
+      final hadPrivateKey =
+          privateKeyPem != null && privateKeyPem!.trim().isNotEmpty;
+      final l10n = lookupAppLocalizations(Locale(settings.appLocaleCode));
+      _setError(
+        formatSshConnectionError(
+          lastError,
+          l10n: l10n,
+          hadPrivateKey: hadPrivateKey,
+          passwordProvided: password.isNotEmpty,
+        ),
+      );
     }
 
     _connecting = false;
@@ -179,19 +236,13 @@ class SshWorkspaceController extends ChangeNotifier {
     final term = _terminal;
     if (term == null) return;
 
-    _stdoutSub = session.stdout.listen(
-      (data) {
-        term.write(utf8.decode(data, allowMalformed: true));
-      },
-      onError: (e) => debugPrint('stdout: $e'),
-    );
+    _stdoutSub = session.stdout.listen((data) {
+      term.write(utf8.decode(data, allowMalformed: true));
+    }, onError: (e) => debugPrint('stdout: $e'));
 
-    _stderrSub = session.stderr.listen(
-      (data) {
-        term.write(utf8.decode(data, allowMalformed: true));
-      },
-      onError: (e) => debugPrint('stderr: $e'),
-    );
+    _stderrSub = session.stderr.listen((data) {
+      term.write(utf8.decode(data, allowMalformed: true));
+    }, onError: (e) => debugPrint('stderr: $e'));
   }
 
   Future<void> refreshDirectory() async {
@@ -207,7 +258,9 @@ class SshWorkspaceController extends ChangeNotifier {
         }
         return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
       });
-      _entries = list.where((e) => e.filename != '.' && e.filename != '..').toList();
+      _entries = list
+          .where((e) => e.filename != '.' && e.filename != '..')
+          .toList();
     } catch (e) {
       _setError('SFTP: $e');
     } finally {
@@ -291,7 +344,11 @@ class SshWorkspaceController extends ChangeNotifier {
   Future<void> uploadLocalFsPath(String localPath) async {
     final client = _sftp;
     if (client == null) return;
-    await sftp_transfer.uploadLocalPathToRemote(sftp: client, remoteCwd: _remoteCwd, localPath: localPath);
+    await sftp_transfer.uploadLocalPathToRemote(
+      sftp: client,
+      remoteCwd: _remoteCwd,
+      localPath: localPath,
+    );
     await refreshDirectory();
   }
 
@@ -304,7 +361,10 @@ class SshWorkspaceController extends ChangeNotifier {
     final path = remoteJoin(_remoteCwd, fileName);
     final file = await client.open(
       path,
-      mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
+      mode:
+          SftpFileOpenMode.create |
+          SftpFileOpenMode.write |
+          SftpFileOpenMode.truncate,
     );
     try {
       await file.writeBytes(bytes);
@@ -315,7 +375,10 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 将当前目录下的远程文件流式保存到本机绝对路径（无编辑器体积上限）。
-  Future<void> downloadRemoteFileToLocalPath(String relativeName, String localFilePath) async {
+  Future<void> downloadRemoteFileToLocalPath(
+    String relativeName,
+    String localFilePath,
+  ) async {
     final client = _sftp;
     if (client == null) return;
     await sftp_transfer.saveRemoteFileToLocalPath(
@@ -327,7 +390,10 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 将远程子目录下载到本机 [localParentPath] 下，生成 `localParentPath/relativeDirName/`。
-  Future<void> downloadRemoteDirectoryToLocal(String relativeDirName, String localParentPath) async {
+  Future<void> downloadRemoteDirectoryToLocal(
+    String relativeDirName,
+    String localParentPath,
+  ) async {
     final client = _sftp;
     if (client == null) return;
     final remotePath = remoteJoin(_remoteCwd, relativeDirName);
@@ -362,7 +428,10 @@ class SshWorkspaceController extends ChangeNotifier {
     final path = remoteJoin(_remoteCwd, relativeName);
     final file = await client.open(
       path,
-      mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
+      mode:
+          SftpFileOpenMode.create |
+          SftpFileOpenMode.write |
+          SftpFileOpenMode.truncate,
     );
     try {
       await file.writeBytes(bytes);
@@ -429,7 +498,13 @@ class SshWorkspaceController extends ChangeNotifier {
 
 Future<String?> loadPrivateKeyFromPath(String? path) async {
   if (path == null || path.trim().isEmpty) return null;
-  return readTextFile(path.trim());
+  var pem = await readTextFile(path.trim());
+  if (pem == null) return null;
+  // UTF-8 BOM (common on Windows / Notepad) breaks dartssh2 PEM parsing.
+  if (pem.isNotEmpty && pem.codeUnitAt(0) == 0xFEFF) {
+    pem = pem.substring(1);
+  }
+  return pem;
 }
 
 bool looksLikeTextBytes(Uint8List data, {int sample = 4096}) {

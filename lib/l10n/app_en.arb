@@ -1,0 +1,225 @@
+{
+  "@@locale": "en",
+  "appTitle": "Easy Term",
+  "appBarTitle": "Easy Term",
+  "newConnection": "New connection",
+  "settingsTooltip": "Settings",
+  "menuInterfaceSettings": "Interface & appearance…",
+  "menuTerminalAndConnection": "Terminal & connection settings…",
+  "menuCloseAllSessions": "Close all sessions",
+  "menuAbout": "About Easy Term",
+  "aboutDescription": "Multi-session SSH terminal with SFTP file browsing.",
+  "sidebarSavedHostsTooltip": "Saved hosts",
+  "sidebarFilesTooltip": "Files",
+  "placeholderFileBrowserTitle": "File browser",
+  "placeholderFileBrowserSubtitle": "Browse remote folders after you connect.",
+  "placeholderTerminalTitle": "Terminal",
+  "placeholderTerminalSubtitle": "Open a session from Saved on the left, or use New connection above.",
+  "savedConnectionsHeader": "Saved connections",
+  "savedConnectionsEmpty": "No entries yet. Use New connection at the top to add one here.",
+  "contextOpenSession": "Open session",
+  "contextEdit": "Edit…",
+  "contextDelete": "Delete",
+  "snackbarPrivateKeyReadFailed": "Could not read the private key file (path may be from another machine or invalid): {error}",
+  "@snackbarPrivateKeyReadFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "connectionEditTitle": "Edit connection",
+  "connectionNewTitle": "New host",
+  "connectionDeviceNameLabel": "Device name (optional)",
+  "connectionDeviceNameHint": "e.g. Company GPU server",
+  "connectionHostLabel": "Host",
+  "connectionHostHint": "IP or hostname",
+  "connectionPortLabel": "Port",
+  "connectionUserLabel": "Username",
+  "connectionPasswordLabel": "Password / key passphrase",
+  "connectionPasswordHintEdit": "Leave blank to keep the saved passphrase",
+  "connectionKeyPathLabel": "Private key path (optional)",
+  "connectionKeyPathHint": "On desktop, use Browse on the right",
+  "connectionPickKeyTooltip": "Choose private key file",
+  "connectionSubmitConnect": "Connect",
+  "connectionSubmitSave": "Save",
+  "connectionMissingHostUser": "Please enter host and username.",
+  "savedHostConnectTitle": "Connect to “{label}”",
+  "@savedHostConnectTitle": {
+    "placeholders": {
+      "label": {"type": "String"}
+    }
+  },
+  "savedHostKeyPassphraseHint": "A key path is set; the passphrase only decrypts the key (leave empty if the key is not encrypted).",
+  "savedHostPasswordFieldKey": "Key passphrase / SSH password",
+  "savedHostPasswordFieldPassword": "SSH password",
+  "savedHostPasswordHelperKey": "Leave empty for unencrypted keys with public-key login.",
+  "savedHostPasswordHelperPassword": "For key login, set a private key path in New host first.",
+  "savedHostConnect": "Connect",
+  "settingsDialogTitle": "Terminal & connection",
+  "settingsSectionConnection": "Connection",
+  "settingsSectionTerminal": "Terminal",
+  "settingsSectionLanguage": "Language",
+  "settingsLanguageLabel": "Display language",
+  "settingsLanguageChinese": "Chinese",
+  "settingsLanguageEnglish": "English",
+  "settingsTimeoutLabel": "Timeout (seconds)",
+  "settingsTimeoutHint": "5–600, default 30",
+  "settingsRetryLabel": "Retry count",
+  "settingsRetryHint": "Extra retries after failure, 0–20",
+  "settingsRetryIntervalLabel": "Retry interval (seconds)",
+  "settingsRetryIntervalHint": "1–300",
+  "settingsKeepAliveLabel": "Keep-alive (seconds)",
+  "settingsKeepAliveHint": "0–3600, 0 disables",
+  "settingsPtyColsLabel": "PTY columns",
+  "settingsPtyColsHint": "40–512, new sessions only",
+  "settingsPtyRowsLabel": "PTY rows",
+  "settingsPtyRowsHint": "8–256, new sessions only",
+  "settingsTermTypeLabel": "Terminal type",
+  "settingsBufferLabel": "Scrollback buffer",
+  "settingsBufferHint": "Lines 100–100000, new sessions only",
+  "settingsFontSizeLabel": "Font size",
+  "settingsFontSizeHint": "6–48",
+  "settingsFontFamilyLabel": "Font",
+  "settingsSelectCopyLabel": "Select to copy",
+  "settingsSelectCopyDescription": "Auto-copy selection to clipboard (short debounce).",
+  "settingsRightClickPasteLabel": "Right-click paste",
+  "settingsRightClickPasteDescription": "Paste clipboard text with the right mouse button in the terminal.",
+  "settingsInvalidNumbers": "Enter valid numbers (see each field’s range).",
+  "settingsCancel": "Cancel",
+  "settingsSave": "Save",
+  "terminalConnecting": "Connecting…",
+  "terminalConnectionFailed": "Connection failed",
+  "terminalRetry": "Retry",
+  "terminalWaiting": "Waiting to connect…",
+  "sftpPanelTitle": "File browser",
+  "sftpRefreshTooltip": "Refresh",
+  "sftpColumnName": "Name",
+  "sftpColumnSize": "Size",
+  "sftpColumnModified": "Modified",
+  "sftpBreadcrumbRoot": "Root",
+  "sftpDownloadMenu": "Download…",
+  "sftpDeleteMenu": "Delete",
+  "sftpPickDirTitle": "Choose where to save (a subfolder with the same name will be created)",
+  "sftpSaveFileTitle": "Save remote file",
+  "sftpDownloadedDir": "Downloaded folder {name}",
+  "@sftpDownloadedDir": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpDownloadedFile": "Downloaded {name}",
+  "@sftpDownloadedFile": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpUploaded": "Uploaded {name}",
+  "@sftpUploaded": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpUploadFailed": "Upload failed: {error}",
+  "@sftpUploadFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "sftpBinaryNotOpened": "This file looks binary; open in editor was cancelled.",
+  "sftpDeleteConfirmTitle": "Delete?",
+  "sftpDeleteConfirmBody": "Delete “{name}”?",
+  "@sftpDeleteConfirmBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpDeleteConfirm": "Delete",
+  "sftpCancel": "Cancel",
+  "remoteEditorSave": "Save",
+  "remoteEditorRemoteChanged": "The file on the server was modified by another process.",
+  "remoteEditorReload": "Reload",
+  "remoteEditorIgnore": "Ignore",
+  "remoteEditorSaved": "Saved to the server.",
+  "remoteEditorSaveFailed": "Save failed: {error}",
+  "@remoteEditorSaveFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "statusNotConnected": "Not connected",
+  "statusNoRemoteInfo": "Remote metrics unavailable",
+  "statusPickHost": "Pick a host on the left and connect",
+  "statusBeijingTimeLabel": "Beijing",
+  "statusRemoteUptimePrefix": "Remote",
+  "statusRemoteUptimeLine": "Remote: {uptime}",
+  "@statusRemoteUptimeLine": {
+    "placeholders": {
+      "uptime": {"type": "String"}
+    }
+  },
+  "tooltipMemNoData": "Memory usage\n(no data)",
+  "tooltipMem": "Memory usage\nAbout {percent}% (vs MemAvailable / MemTotal)",
+  "@tooltipMem": {
+    "placeholders": {
+      "percent": {"type": "String"}
+    }
+  },
+  "tooltipCpuNoData": "CPU usage\n(no data; needs vmstat sampling)",
+  "tooltipCpu": "CPU usage\nAbout {percent}% (vmstat 1s sample)",
+  "@tooltipCpu": {
+    "placeholders": {
+      "percent": {"type": "String"}
+    }
+  },
+  "tooltipDiskTitle": "Disk space on /",
+  "tooltipDiskUsed": "\nUsed: about {percent}%",
+  "@tooltipDiskUsed": {
+    "placeholders": {
+      "percent": {"type": "String"}
+    }
+  },
+  "tooltipDiskNoUsage": "\nUsage: no data",
+  "tooltipInodeTitle": "Inodes on /",
+  "tooltipInodeUsed": "\nUsed: about {percent}%",
+  "@tooltipInodeUsed": {
+    "placeholders": {
+      "percent": {"type": "String"}
+    }
+  },
+  "tooltipInodeNoUsage": "\nUsage: no data",
+  "tooltipLoadTitle": "Load average",
+  "tooltipLoadLine": "\n1 / 5 / 15 min: {line}",
+  "@tooltipLoadLine": {
+    "placeholders": {
+      "line": {"type": "String"}
+    }
+  },
+  "tooltipLoadNoData": "\n(no /proc/loadavg)",
+  "tooltipLoadPressure": "\nPressure vs CPU count: about {percent}%",
+  "@tooltipLoadPressure": {
+    "placeholders": {
+      "percent": {"type": "String"}
+    }
+  },
+  "sshAuthFailKeyAndPassword": "Authentication failed: the server rejected the key, or the key passphrase / SSH password is wrong. Double-check each.",
+  "sshAuthFailKey": "Authentication failed: the key does not match this account, or the key passphrase is wrong.",
+  "sshAuthFailPassword": "Authentication failed: wrong username or SSH password. If the server allows keys only, configure a key and avoid mixing passwords incorrectly.",
+  "sshAuthFailNone": "Authentication failed: no SSH password and no usable private key.",
+  "sshAuthAbort": "Authentication aborted: {message}",
+  "@sshAuthAbort": {
+    "placeholders": {
+      "message": {"type": "String"}
+    }
+  },
+  "sshKeyDecode": "Could not parse private key or wrong passphrase: {message}",
+  "@sshKeyDecode": {
+    "placeholders": {
+      "message": {"type": "String"}
+    }
+  },
+  "interfaceSettingsTitle": "Interface",
+  "interfaceThemeLabel": "Appearance",
+  "interfaceThemeDark": "Dark",
+  "interfaceThemeLight": "Light",
+  "interfaceThemeSystem": "Match system",
+  "interfaceDone": "Done"
+}
