@@ -18,7 +18,9 @@ import '../widgets/saved_host_connect_sheet.dart';
 import '../widgets/session_workspace.dart';
 import '../widgets/sftp_side_panel.dart';
 import '../widgets/workbench_status_bar.dart';
+import '../widgets/assistant_side_panel.dart';
 import '../widgets/workbench_interface_settings_dialog.dart';
+import '../widgets/workbench_llm_settings_dialog.dart';
 import '../widgets/workbench_terminal_settings_dialog.dart';
 import '../widgets/workbench_window_controls.dart';
 
@@ -273,6 +275,20 @@ class _MainShellScreenState extends State<MainShellScreen> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.smart_toy_outlined),
+              title: Text(l10n.menuLlmSettings),
+              onTap: () {
+                Navigator.pop(ctx);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!context.mounted) return;
+                  showDialog<void>(
+                    context: context,
+                    builder: (_) => WorkbenchLlmSettingsDialog(settings: widget.settings),
+                  );
+                });
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.settings_input_component_outlined),
               title: Text(l10n.menuTerminalAndConnection),
               onTap: () {
@@ -362,7 +378,13 @@ class _MainShellScreenState extends State<MainShellScreen> {
                           onSelect: (i) => _tabs.selectTab(i),
                           onClose: (i) => _tabs.closeTab(i),
                         ),
-                      Expanded(child: _rightPane()),
+                      Expanded(
+                        child: TerminalWithAssistantSplit(
+                          settings: widget.settings,
+                          ssh: _tabs.selectedTab?.controller,
+                          terminalChild: _rightPane(),
+                        ),
+                      ),
                       WorkbenchStatusBar(controller: _tabs.selectedTab?.controller),
                     ],
                   ),

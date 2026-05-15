@@ -524,18 +524,6 @@ abstract class AppLocalizations {
   /// **'Auto-copy selection to clipboard (short debounce).'**
   String get settingsSelectCopyDescription;
 
-  /// No description provided for @settingsRightClickPasteLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Right-click paste'**
-  String get settingsRightClickPasteLabel;
-
-  /// No description provided for @settingsRightClickPasteDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Paste clipboard text with the right mouse button in the terminal.'**
-  String get settingsRightClickPasteDescription;
-
   /// No description provided for @settingsInvalidNumbers.
   ///
   /// In en, this message translates to:
@@ -577,6 +565,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Waiting to connect…'**
   String get terminalWaiting;
+
+  /// No description provided for @terminalMenuCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get terminalMenuCopy;
+
+  /// No description provided for @terminalMenuPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste'**
+  String get terminalMenuPaste;
+
+  /// No description provided for @terminalMenuSelectAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get terminalMenuSelectAll;
+
+  /// No description provided for @terminalMenuClearSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear selection'**
+  String get terminalMenuClearSelection;
 
   /// No description provided for @sftpPanelTitle.
   ///
@@ -997,6 +1009,222 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Done'**
   String get interfaceDone;
+
+  /// No description provided for @menuLlmSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'LLM & assistant…'**
+  String get menuLlmSettings;
+
+  /// No description provided for @llmSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Large language model'**
+  String get llmSettingsTitle;
+
+  /// No description provided for @llmSettingsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Uses an OpenAI-compatible Chat Completions API. Base URL is usually `https://…/v1`, or paste a full URL ending with `/chat/completions`. The API key is stored only on this device.'**
+  String get llmSettingsHint;
+
+  /// No description provided for @llmBaseUrlLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Base URL'**
+  String get llmBaseUrlLabel;
+
+  /// No description provided for @llmBaseUrlHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. https://api.openai.com/v1'**
+  String get llmBaseUrlHint;
+
+  /// No description provided for @llmModelLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get llmModelLabel;
+
+  /// No description provided for @llmModelHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. gpt-4o-mini'**
+  String get llmModelHint;
+
+  /// No description provided for @llmApiKeyLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'API key (optional)'**
+  String get llmApiKeyLabel;
+
+  /// No description provided for @llmApiKeyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Some local servers need no key'**
+  String get llmApiKeyHint;
+
+  /// No description provided for @llmToggleKeyVisibility.
+  ///
+  /// In en, this message translates to:
+  /// **'Show / hide'**
+  String get llmToggleKeyVisibility;
+
+  /// No description provided for @llmTestConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Test connection'**
+  String get llmTestConnection;
+
+  /// No description provided for @llmTestConnectionTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Send a minimal request to verify URL, model, and credentials'**
+  String get llmTestConnectionTooltip;
+
+  /// No description provided for @llmTestSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection test succeeded'**
+  String get llmTestSuccess;
+
+  /// No description provided for @llmTestFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection test failed: {error}'**
+  String llmTestFailed(String error);
+
+  /// No description provided for @llmMissingConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Set base URL and model in LLM & assistant first.'**
+  String get llmMissingConfig;
+
+  /// No description provided for @assistantPanelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Assistant'**
+  String get assistantPanelTitle;
+
+  /// No description provided for @assistantExpandTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand assistant'**
+  String get assistantExpandTooltip;
+
+  /// No description provided for @assistantCollapseTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse assistant'**
+  String get assistantCollapseTooltip;
+
+  /// No description provided for @assistantStopTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop generation'**
+  String get assistantStopTooltip;
+
+  /// No description provided for @assistantClearTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear chat'**
+  String get assistantClearTooltip;
+
+  /// No description provided for @assistantClearConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear chat?'**
+  String get assistantClearConfirmTitle;
+
+  /// No description provided for @assistantClearConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Removes messages in this chat (system prompt is kept).'**
+  String get assistantClearConfirmBody;
+
+  /// No description provided for @assistantClearConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get assistantClearConfirm;
+
+  /// No description provided for @assistantSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get assistantSend;
+
+  /// No description provided for @assistantInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Type a message… (Enter for newline; send with Ctrl+Enter on Windows/Linux, ⌘+Enter on macOS)'**
+  String get assistantInputHint;
+
+  /// No description provided for @assistantThinking.
+  ///
+  /// In en, this message translates to:
+  /// **'Thinking…'**
+  String get assistantThinking;
+
+  /// No description provided for @assistantNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No connected session (or this tab is offline): terminal tools cannot inject commands; you can still discuss usage.'**
+  String get assistantNotConnected;
+
+  /// No description provided for @assistantToolRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Calling tools: {names}'**
+  String assistantToolRunning(String names);
+
+  /// No description provided for @assistantTerminalApprovalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal command'**
+  String get assistantTerminalApprovalTitle;
+
+  /// No description provided for @assistantTerminalApprovalSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The assistant will send the content below to your SSH session, as if you typed it in that terminal (including newlines and escapes). Only run it if you trust the action.'**
+  String get assistantTerminalApprovalSubtitle;
+
+  /// No description provided for @assistantTerminalCommandSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Payload'**
+  String get assistantTerminalCommandSectionTitle;
+
+  /// No description provided for @assistantTerminalSecurityHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.'**
+  String get assistantTerminalSecurityHint;
+
+  /// No description provided for @assistantTerminalDeny.
+  ///
+  /// In en, this message translates to:
+  /// **'Deny'**
+  String get assistantTerminalDeny;
+
+  /// No description provided for @assistantTerminalAllowExecute.
+  ///
+  /// In en, this message translates to:
+  /// **'Run'**
+  String get assistantTerminalAllowExecute;
+
+  /// No description provided for @assistantReasoningHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning'**
+  String get assistantReasoningHeader;
+
+  /// No description provided for @assistantAnswerHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Answer'**
+  String get assistantAnswerHeader;
 }
 
 class _AppLocalizationsDelegate

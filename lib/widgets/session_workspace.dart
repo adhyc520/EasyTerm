@@ -83,12 +83,71 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     });
   }
 
-  Future<void> _onSecondaryTapPaste(TapUpDetails details, CellOffset offset) async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
-    if (text == null || text.isEmpty) return;
-    widget.controller.terminal?.paste(text);
-    _viewController.clearSelection();
+  void _showTerminalContextMenu(BuildContext context, Offset globalPosition, Terminal term) {
+    final l = AppLocalizations.of(context)!;
+    final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final topLeft = overlay.localToGlobal(Offset.zero);
+    final rel = RelativeRect.fromLTRB(
+      globalPosition.dx - topLeft.dx,
+      globalPosition.dy - topLeft.dy,
+      globalPosition.dx - topLeft.dx + 1,
+      globalPosition.dy - topLeft.dy + 1,
+    );
+    final hasSelection = _viewController.selection != null;
+    showMenu<String>(
+      context: context,
+      position: rel,
+      color: context.wb.panelElevated,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: context.wb.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'copy',
+          enabled: hasSelection,
+          child: Text(l.terminalMenuCopy, style: TextStyle(color: context.wb.primaryText)),
+        ),
+        PopupMenuItem(
+          value: 'paste',
+          child: Text(l.terminalMenuPaste, style: TextStyle(color: context.wb.primaryText)),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'selectAll',
+          child: Text(l.terminalMenuSelectAll, style: TextStyle(color: context.wb.primaryText)),
+        ),
+        PopupMenuItem(
+          value: 'clearSelection',
+          enabled: hasSelection,
+          child: Text(l.terminalMenuClearSelection, style: TextStyle(color: context.wb.primaryText)),
+        ),
+      ],
+    ).then((v) async {
+      if (!mounted || v == null) return;
+      if (v == 'copy') {
+        final sel = _viewController.selection;
+        if (sel == null) return;
+        final text = term.buffer.getText(sel);
+        if (text.isEmpty) return;
+        await Clipboard.setData(ClipboardData(text: text));
+      } else if (v == 'paste') {
+        final data = await Clipboard.getData(Clipboard.kTextPlain);
+        final text = data?.text;
+        if (text == null || text.isEmpty) return;
+        term.paste(text);
+        _viewController.clearSelection();
+      } else if (v == 'selectAll') {
+        _viewController.setSelection(
+          term.buffer.createAnchor(0, term.buffer.height - term.viewHeight),
+          term.buffer.createAnchor(term.viewWidth, term.buffer.height - 1),
+          mode: SelectionMode.line,
+        );
+      } else if (v == 'clearSelection') {
+        _viewController.clearSelection();
+      }
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -184,8 +243,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
               hardwareKeyboardOnly: !kIsWeb,
               readOnly: false,
               autoResize: true,
-              onSecondaryTapDown: ws.rightClickPaste ? (details, offset) {} : null,
-              onSecondaryTapUp: ws.rightClickPaste ? _onSecondaryTapPaste : null,
+              onSecondaryTapDown: (_, _) {},
+              onSecondaryTapUp: (details, _) =>
+                  _showTerminalContextMenu(context, details.globalPosition, term),
             ),
           );
         },

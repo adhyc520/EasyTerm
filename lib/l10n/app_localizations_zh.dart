@@ -226,12 +226,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsSelectCopyDescription => '选中后自动复制到剪贴板（有短暂防抖）。';
 
   @override
-  String get settingsRightClickPasteLabel => '右键粘贴';
-
-  @override
-  String get settingsRightClickPasteDescription => '在终端区域使用鼠标右键粘贴剪贴板文本';
-
-  @override
   String get settingsInvalidNumbers => '请填写有效的数字（见各项取值范围）。';
 
   @override
@@ -251,6 +245,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get terminalWaiting => '等待连接…';
+
+  @override
+  String get terminalMenuCopy => '复制';
+
+  @override
+  String get terminalMenuPaste => '粘贴';
+
+  @override
+  String get terminalMenuSelectAll => '全选';
+
+  @override
+  String get terminalMenuClearSelection => '清除选择';
 
   @override
   String get sftpPanelTitle => '文件浏览器';
@@ -499,4 +505,120 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get interfaceDone => '完成';
+
+  @override
+  String get menuLlmSettings => '大模型与助手…';
+
+  @override
+  String get llmSettingsTitle => '大模型';
+
+  @override
+  String get llmSettingsHint =>
+      '使用 OpenAI 兼容的 Chat Completions 接口。基础地址通常为 `https://…/v1`；也可直接填写以 `/chat/completions` 结尾的完整 URL。API Key 仅保存在本机。';
+
+  @override
+  String get llmBaseUrlLabel => '基础 URL';
+
+  @override
+  String get llmBaseUrlHint => '例如 https://api.openai.com/v1';
+
+  @override
+  String get llmModelLabel => '模型';
+
+  @override
+  String get llmModelHint => '例如 gpt-4o-mini';
+
+  @override
+  String get llmApiKeyLabel => 'API Key（可选）';
+
+  @override
+  String get llmApiKeyHint => '部分本地服务可留空';
+
+  @override
+  String get llmToggleKeyVisibility => '显示 / 隐藏';
+
+  @override
+  String get llmTestConnection => '连接测试';
+
+  @override
+  String get llmTestConnectionTooltip => '发送最小请求验证地址、模型与密钥';
+
+  @override
+  String get llmTestSuccess => '连接测试成功';
+
+  @override
+  String llmTestFailed(String error) {
+    return '连接测试失败：$error';
+  }
+
+  @override
+  String get llmMissingConfig => '请先在「大模型与助手」中填写基础 URL 与模型。';
+
+  @override
+  String get assistantPanelTitle => '助手';
+
+  @override
+  String get assistantExpandTooltip => '展开助手';
+
+  @override
+  String get assistantCollapseTooltip => '收起助手';
+
+  @override
+  String get assistantStopTooltip => '停止生成';
+
+  @override
+  String get assistantClearTooltip => '清空对话';
+
+  @override
+  String get assistantClearConfirmTitle => '清空对话？';
+
+  @override
+  String get assistantClearConfirmBody => '将移除当前会话中的助手消息（系统提示会保留）。';
+
+  @override
+  String get assistantClearConfirm => '清空';
+
+  @override
+  String get assistantSend => '发送';
+
+  @override
+  String get assistantInputHint =>
+      '输入问题…（Enter 换行；Windows / Linux：Ctrl+Enter 发送；Mac：⌘+Enter 发送）';
+
+  @override
+  String get assistantThinking => '正在思考…';
+
+  @override
+  String get assistantNotConnected => '当前无已连接会话或本标签未连接：无法向终端注入命令，仍可讨论命令用法。';
+
+  @override
+  String assistantToolRunning(String names) {
+    return '调用工具：$names';
+  }
+
+  @override
+  String get assistantTerminalApprovalTitle => '终端命令';
+
+  @override
+  String get assistantTerminalApprovalSubtitle =>
+      '助手将把下列内容发送到当前 SSH 终端，效果等同于你在该终端里直接键入（含换行与转义）。请确认你信任该操作后再运行。';
+
+  @override
+  String get assistantTerminalCommandSectionTitle => '将发送的内容';
+
+  @override
+  String get assistantTerminalSecurityHint =>
+      '不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。与在 Cursor 里确认「Run」一样，是否执行由你决定。';
+
+  @override
+  String get assistantTerminalDeny => '不允许';
+
+  @override
+  String get assistantTerminalAllowExecute => '运行';
+
+  @override
+  String get assistantReasoningHeader => '思考过程';
+
+  @override
+  String get assistantAnswerHeader => '回复';
 }

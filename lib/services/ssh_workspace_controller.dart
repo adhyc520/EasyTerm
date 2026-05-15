@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' show min;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -83,6 +83,64 @@ class SshWorkspaceController extends ChangeNotifier {
   Terminal? _terminal;
 
   Terminal? get terminal => _terminal;
+
+  /// 将文本注入当前远程 shell（经 xterm 输入路径，终端中可见）。
+  void pasteRemoteInput(String text) {
+    if (!_connected) return;
+    _terminal?.paste(text);
+  }
+
+  /// 规范化 LLM 常见换行后注入远端 PTY；若末尾无换行/回车则追加 **`\r`**（与 xterm
+  /// 默认 Return 键一致），避免 `\r\n` 在 Unix shell 下出现多余 `^M` 或错位。
+  ///
+  /// 使用 [Terminal.textInput] 而非 [Terminal.paste]：bracketed paste 会导致换行
+  /// 不触发 readline 提交行。
+  String pasteRemoteInputWithLineSubmit(String text) {
+    if (!_connected) return text;
+    var t = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    if (t.isNotEmpty && !t.endsWith('\n') && !t.endsWith('\r')) {
+      t = '$t\r';
+    }
+    _terminal?.textInput(t);
+    return t;
+  }
+
+  /// 截取当前终端缓冲区尾部纯文本，供助手回传给大模型。
+  String snapshotTerminalTail({int maxLines = 120, int maxChars = 24000}) {
+    final t = _terminal;
+    if (t == null || !_connected) return '';
+    try {
+      final buf = t.buffer;
+      final h = buf.height;
+      final w = buf.viewWidth;
+      if (h <= 0 || w <= 0) return '';
+      final startY = math.max(0, h - maxLines);
+      final range = BufferRangeLine(
+        CellOffset(0, startY),
+        CellOffset(w - 1, h - 1),
+      );
+      var text = buf.getText(range);
+      if (text.length > maxChars) {
+        text = text.substring(text.length - maxChars);
+      }
+      return text;
+    } catch (e, st) {
+      debugPrint('snapshotTerminalTail: $e\n$st');
+      return '';
+    }
+  }
+
+  /// 仅在本地终端视图追加文本（不发送到远端 PTY），用于助手回显抓取结果等。
+  void injectTerminalLocalDisplay(String text) {
+    final t = _terminal;
+    if (t == null || !_connected) return;
+    try {
+      t.write(text);
+      notifyListeners();
+    } catch (e, st) {
+      debugPrint('injectTerminalLocalDisplay: $e\n$st');
+    }
+  }
 
   String _remoteCwd = '/';
   bool _loadingDir = false;
@@ -364,12 +422,12 @@ class SshWorkspaceController extends ChangeNotifier {
         plan
             .map(
               (e) => SftpUploadTaskView(
-                    id: e.localPath,
-                    label: e.displayLabel,
-                    totalBytes: e.sizeBytes,
-                    direction: SftpTransferDirection.upload,
-                  ),
-                )
+                id: e.localPath,
+                label: e.displayLabel,
+                totalBytes: e.sizeBytes,
+                direction: SftpTransferDirection.upload,
+              ),
+            )
             .toList(),
       );
     }
@@ -381,7 +439,8 @@ class SshWorkspaceController extends ChangeNotifier {
         plan: plan,
         hooks: sftp_transfer.SftpUploadProgressHooks(
           shouldCancelUpload: uploadTasks.isCancellationRequested,
-          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileStart: (path, String displayLabel, int totalBytes) =>
+              uploadTasks.setUploading(path),
           onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
           onFileEnd: (path, err) {
             if (err is SftpUserCancelled) {
@@ -398,7 +457,8 @@ class SshWorkspaceController extends ChangeNotifier {
       );
     } catch (e) {
       for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
-        if (uploadTaskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+        if (uploadTaskIds.contains(row.id) &&
+            row.state != SftpUploadRowState.failed) {
           uploadTasks.fail(row.id, e);
         }
       }
@@ -408,7 +468,9 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 检测当前远程目录下是否已有与 [localPath] 最后一级同名的项。
-  Future<SftpRemoteUploadConflict> inspectLocalUploadConflict(String localPath) async {
+  Future<SftpRemoteUploadConflict> inspectLocalUploadConflict(
+    String localPath,
+  ) async {
     final client = _sftp;
     if (client == null) return SftpRemoteUploadConflict.none;
     return sftp_transfer.inspectUploadConflict(
@@ -423,7 +485,10 @@ class SshWorkspaceController extends ChangeNotifier {
     final client = _sftp;
     if (client == null) return;
     final path = remoteJoin(_remoteCwd, relativeName);
-    await sftp_transfer.removeRemotePathRecursive(sftp: client, remotePath: path);
+    await sftp_transfer.removeRemotePathRecursive(
+      sftp: client,
+      remotePath: path,
+    );
     await refreshDirectory();
   }
 
@@ -468,11 +533,11 @@ class SshWorkspaceController extends ChangeNotifier {
       plan
           .map(
             (e) => SftpUploadTaskView(
-                  id: e.taskId,
-                  label: e.displayLabel,
-                  totalBytes: e.sizeBytes,
-                  direction: SftpTransferDirection.download,
-                ),
+              id: e.taskId,
+              label: e.displayLabel,
+              totalBytes: e.sizeBytes,
+              direction: SftpTransferDirection.download,
+            ),
           )
           .toList(),
     );
@@ -482,7 +547,8 @@ class SshWorkspaceController extends ChangeNotifier {
         plan: plan,
         hooks: sftp_transfer.SftpUploadProgressHooks(
           shouldCancelUpload: uploadTasks.isCancellationRequested,
-          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileStart: (path, String displayLabel, int totalBytes) =>
+              uploadTasks.setUploading(path),
           onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
           onFileEnd: (path, err) {
             if (err is SftpUserCancelled) {
@@ -499,7 +565,8 @@ class SshWorkspaceController extends ChangeNotifier {
       );
     } catch (e) {
       for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
-        if (taskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+        if (taskIds.contains(row.id) &&
+            row.state != SftpUploadRowState.failed) {
           uploadTasks.fail(row.id, e);
         }
       }
@@ -581,7 +648,7 @@ class SshWorkspaceController extends ChangeNotifier {
           cancelled = true;
           break;
         }
-        final take = min(256 * 1024, fileSizeBytes - offset);
+        final take = math.min(256 * 1024, fileSizeBytes - offset);
         final chunk = await opened.readBytes(length: take, offset: offset);
         if (chunk.isEmpty) {
           break;
@@ -642,11 +709,11 @@ class SshWorkspaceController extends ChangeNotifier {
       plan
           .map(
             (e) => SftpUploadTaskView(
-                  id: e.taskId,
-                  label: e.displayLabel,
-                  totalBytes: e.sizeBytes,
-                  direction: SftpTransferDirection.download,
-                ),
+              id: e.taskId,
+              label: e.displayLabel,
+              totalBytes: e.sizeBytes,
+              direction: SftpTransferDirection.download,
+            ),
           )
           .toList(),
     );
@@ -656,7 +723,8 @@ class SshWorkspaceController extends ChangeNotifier {
         plan: plan,
         hooks: sftp_transfer.SftpUploadProgressHooks(
           shouldCancelUpload: uploadTasks.isCancellationRequested,
-          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileStart: (path, String displayLabel, int totalBytes) =>
+              uploadTasks.setUploading(path),
           onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
           onFileEnd: (path, err) {
             if (err is SftpUserCancelled) {
@@ -673,7 +741,8 @@ class SshWorkspaceController extends ChangeNotifier {
       );
     } catch (e) {
       for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
-        if (taskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+        if (taskIds.contains(row.id) &&
+            row.state != SftpUploadRowState.failed) {
           uploadTasks.fail(row.id, e);
         }
       }

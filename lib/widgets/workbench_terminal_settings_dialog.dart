@@ -28,7 +28,6 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
   late String _termType;
   late String _fontFamily;
   late bool _selectCopy;
-  late bool _rightPaste;
 
   @override
   void initState() {
@@ -45,7 +44,6 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
     _termType = s.terminalTermType;
     _fontFamily = s.terminalFontFamily;
     _selectCopy = s.selectToCopy;
-    _rightPaste = s.rightClickPaste;
   }
 
   @override
@@ -109,7 +107,6 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
     s.terminalTermType = _termType;
     s.terminalFontFamily = _fontFamily;
     s.selectToCopy = _selectCopy;
-    s.rightClickPaste = _rightPaste;
     await s.persist();
     if (mounted) Navigator.of(context).pop();
   }
@@ -320,23 +317,6 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       padding: const EdgeInsets.only(left: 150, bottom: 4),
                       child: Text(
                         l.settingsSelectCopyDescription,
-                        style: TextStyle(fontSize: 11, color: context.wb.textMuted.withValues(alpha: 0.85)),
-                      ),
-                    ),
-                    _row(
-                      l.settingsRightClickPasteLabel,
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Switch(
-                          value: _rightPaste,
-                          onChanged: (v) => setState(() => _rightPaste = v),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 150),
-                      child: Text(
-                        l.settingsRightClickPasteDescription,
                         style: TextStyle(fontSize: 11, color: context.wb.textMuted.withValues(alpha: 0.85)),
                       ),
                     ),

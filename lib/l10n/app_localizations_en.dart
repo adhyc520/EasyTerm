@@ -235,13 +235,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Auto-copy selection to clipboard (short debounce).';
 
   @override
-  String get settingsRightClickPasteLabel => 'Right-click paste';
-
-  @override
-  String get settingsRightClickPasteDescription =>
-      'Paste clipboard text with the right mouse button in the terminal.';
-
-  @override
   String get settingsInvalidNumbers =>
       'Enter valid numbers (see each field’s range).';
 
@@ -262,6 +255,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get terminalWaiting => 'Waiting to connect…';
+
+  @override
+  String get terminalMenuCopy => 'Copy';
+
+  @override
+  String get terminalMenuPaste => 'Paste';
+
+  @override
+  String get terminalMenuSelectAll => 'Select all';
+
+  @override
+  String get terminalMenuClearSelection => 'Clear selection';
 
   @override
   String get sftpPanelTitle => 'File browser';
@@ -515,4 +520,124 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get interfaceDone => 'Done';
+
+  @override
+  String get menuLlmSettings => 'LLM & assistant…';
+
+  @override
+  String get llmSettingsTitle => 'Large language model';
+
+  @override
+  String get llmSettingsHint =>
+      'Uses an OpenAI-compatible Chat Completions API. Base URL is usually `https://…/v1`, or paste a full URL ending with `/chat/completions`. The API key is stored only on this device.';
+
+  @override
+  String get llmBaseUrlLabel => 'Base URL';
+
+  @override
+  String get llmBaseUrlHint => 'e.g. https://api.openai.com/v1';
+
+  @override
+  String get llmModelLabel => 'Model';
+
+  @override
+  String get llmModelHint => 'e.g. gpt-4o-mini';
+
+  @override
+  String get llmApiKeyLabel => 'API key (optional)';
+
+  @override
+  String get llmApiKeyHint => 'Some local servers need no key';
+
+  @override
+  String get llmToggleKeyVisibility => 'Show / hide';
+
+  @override
+  String get llmTestConnection => 'Test connection';
+
+  @override
+  String get llmTestConnectionTooltip =>
+      'Send a minimal request to verify URL, model, and credentials';
+
+  @override
+  String get llmTestSuccess => 'Connection test succeeded';
+
+  @override
+  String llmTestFailed(String error) {
+    return 'Connection test failed: $error';
+  }
+
+  @override
+  String get llmMissingConfig =>
+      'Set base URL and model in LLM & assistant first.';
+
+  @override
+  String get assistantPanelTitle => 'Assistant';
+
+  @override
+  String get assistantExpandTooltip => 'Expand assistant';
+
+  @override
+  String get assistantCollapseTooltip => 'Collapse assistant';
+
+  @override
+  String get assistantStopTooltip => 'Stop generation';
+
+  @override
+  String get assistantClearTooltip => 'Clear chat';
+
+  @override
+  String get assistantClearConfirmTitle => 'Clear chat?';
+
+  @override
+  String get assistantClearConfirmBody =>
+      'Removes messages in this chat (system prompt is kept).';
+
+  @override
+  String get assistantClearConfirm => 'Clear';
+
+  @override
+  String get assistantSend => 'Send';
+
+  @override
+  String get assistantInputHint =>
+      'Type a message… (Enter for newline; send with Ctrl+Enter on Windows/Linux, ⌘+Enter on macOS)';
+
+  @override
+  String get assistantThinking => 'Thinking…';
+
+  @override
+  String get assistantNotConnected =>
+      'No connected session (or this tab is offline): terminal tools cannot inject commands; you can still discuss usage.';
+
+  @override
+  String assistantToolRunning(String names) {
+    return 'Calling tools: $names';
+  }
+
+  @override
+  String get assistantTerminalApprovalTitle => 'Terminal command';
+
+  @override
+  String get assistantTerminalApprovalSubtitle =>
+      'The assistant will send the content below to your SSH session, as if you typed it in that terminal (including newlines and escapes). Only run it if you trust the action.';
+
+  @override
+  String get assistantTerminalCommandSectionTitle => 'Payload';
+
+  @override
+  String get assistantTerminalSecurityHint =>
+      'Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.';
+
+  @override
+  String get assistantTerminalDeny => 'Deny';
+
+  @override
+  String get assistantTerminalAllowExecute => 'Run';
+
+  @override
+  String get assistantReasoningHeader => 'Reasoning';
+
+  @override
+  String get assistantAnswerHeader => 'Answer';
 }

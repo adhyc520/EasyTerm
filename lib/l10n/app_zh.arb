@@ -71,8 +71,6 @@
   "settingsFontFamilyLabel": "字体",
   "settingsSelectCopyLabel": "选择复制",
   "settingsSelectCopyDescription": "选中后自动复制到剪贴板（有短暂防抖）。",
-  "settingsRightClickPasteLabel": "右键粘贴",
-  "settingsRightClickPasteDescription": "在终端区域使用鼠标右键粘贴剪贴板文本",
   "settingsInvalidNumbers": "请填写有效的数字（见各项取值范围）。",
   "settingsCancel": "取消",
   "settingsSave": "保存",
@@ -80,6 +78,10 @@
   "terminalConnectionFailed": "连接失败",
   "terminalRetry": "重试",
   "terminalWaiting": "等待连接…",
+  "terminalMenuCopy": "复制",
+  "terminalMenuPaste": "粘贴",
+  "terminalMenuSelectAll": "全选",
+  "terminalMenuClearSelection": "清除选择",
   "sftpPanelTitle": "文件浏览器",
   "sftpRefreshTooltip": "刷新",
   "sftpColumnName": "名称",
@@ -165,5 +167,51 @@
   "interfaceThemeDark": "深色",
   "interfaceThemeLight": "浅色",
   "interfaceThemeSystem": "跟随系统",
-  "interfaceDone": "完成"
+  "interfaceDone": "完成",
+  "menuLlmSettings": "大模型与助手…",
+  "llmSettingsTitle": "大模型",
+  "llmSettingsHint": "使用 OpenAI 兼容的 Chat Completions 接口。基础地址通常为 `https://…/v1`；也可直接填写以 `/chat/completions` 结尾的完整 URL。API Key 仅保存在本机。",
+  "llmBaseUrlLabel": "基础 URL",
+  "llmBaseUrlHint": "例如 https://api.openai.com/v1",
+  "llmModelLabel": "模型",
+  "llmModelHint": "例如 gpt-4o-mini",
+  "llmApiKeyLabel": "API Key（可选）",
+  "llmApiKeyHint": "部分本地服务可留空",
+  "llmToggleKeyVisibility": "显示 / 隐藏",
+  "llmTestConnection": "连接测试",
+  "llmTestConnectionTooltip": "发送最小请求验证地址、模型与密钥",
+  "llmTestSuccess": "连接测试成功",
+  "llmTestFailed": "连接测试失败：{error}",
+  "@llmTestFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "llmMissingConfig": "请先在「大模型与助手」中填写基础 URL 与模型。",
+  "assistantPanelTitle": "助手",
+  "assistantExpandTooltip": "展开助手",
+  "assistantCollapseTooltip": "收起助手",
+  "assistantStopTooltip": "停止生成",
+  "assistantClearTooltip": "清空对话",
+  "assistantClearConfirmTitle": "清空对话？",
+  "assistantClearConfirmBody": "将移除当前会话中的助手消息（系统提示会保留）。",
+  "assistantClearConfirm": "清空",
+  "assistantSend": "发送",
+  "assistantInputHint": "输入问题…（Enter 换行；Windows / Linux：Ctrl+Enter 发送；Mac：⌘+Enter 发送）",
+  "assistantThinking": "正在思考…",
+  "assistantNotConnected": "当前无已连接会话或本标签未连接：无法向终端注入命令，仍可讨论命令用法。",
+  "assistantToolRunning": "调用工具：{names}",
+  "@assistantToolRunning": {
+    "placeholders": {
+      "names": {"type": "String"}
+    }
+  },
+  "assistantTerminalApprovalTitle": "终端命令",
+  "assistantTerminalApprovalSubtitle": "助手将把下列内容发送到当前 SSH 终端，效果等同于你在该终端里直接键入（含换行与转义）。请确认你信任该操作后再运行。",
+  "assistantTerminalCommandSectionTitle": "将发送的内容",
+  "assistantTerminalSecurityHint": "不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。与在 Cursor 里确认「Run」一样，是否执行由你决定。",
+  "assistantTerminalDeny": "不允许",
+  "assistantTerminalAllowExecute": "运行",
+  "assistantReasoningHeader": "思考过程",
+  "assistantAnswerHeader": "回复"
 }

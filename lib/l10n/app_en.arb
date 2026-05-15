@@ -81,8 +81,6 @@
   "settingsFontFamilyLabel": "Font",
   "settingsSelectCopyLabel": "Select to copy",
   "settingsSelectCopyDescription": "Auto-copy selection to clipboard (short debounce).",
-  "settingsRightClickPasteLabel": "Right-click paste",
-  "settingsRightClickPasteDescription": "Paste clipboard text with the right mouse button in the terminal.",
   "settingsInvalidNumbers": "Enter valid numbers (see each field’s range).",
   "settingsCancel": "Cancel",
   "settingsSave": "Save",
@@ -90,6 +88,10 @@
   "terminalConnectionFailed": "Connection failed",
   "terminalRetry": "Retry",
   "terminalWaiting": "Waiting to connect…",
+  "terminalMenuCopy": "Copy",
+  "terminalMenuPaste": "Paste",
+  "terminalMenuSelectAll": "Select all",
+  "terminalMenuClearSelection": "Clear selection",
   "sftpPanelTitle": "File browser",
   "sftpRefreshTooltip": "Refresh",
   "sftpColumnName": "Name",
@@ -250,5 +252,51 @@
   "interfaceThemeDark": "Dark",
   "interfaceThemeLight": "Light",
   "interfaceThemeSystem": "Match system",
-  "interfaceDone": "Done"
+  "interfaceDone": "Done",
+  "menuLlmSettings": "LLM & assistant…",
+  "llmSettingsTitle": "Large language model",
+  "llmSettingsHint": "Uses an OpenAI-compatible Chat Completions API. Base URL is usually `https://…/v1`, or paste a full URL ending with `/chat/completions`. The API key is stored only on this device.",
+  "llmBaseUrlLabel": "Base URL",
+  "llmBaseUrlHint": "e.g. https://api.openai.com/v1",
+  "llmModelLabel": "Model",
+  "llmModelHint": "e.g. gpt-4o-mini",
+  "llmApiKeyLabel": "API key (optional)",
+  "llmApiKeyHint": "Some local servers need no key",
+  "llmToggleKeyVisibility": "Show / hide",
+  "llmTestConnection": "Test connection",
+  "llmTestConnectionTooltip": "Send a minimal request to verify URL, model, and credentials",
+  "llmTestSuccess": "Connection test succeeded",
+  "llmTestFailed": "Connection test failed: {error}",
+  "@llmTestFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "llmMissingConfig": "Set base URL and model in LLM & assistant first.",
+  "assistantPanelTitle": "Assistant",
+  "assistantExpandTooltip": "Expand assistant",
+  "assistantCollapseTooltip": "Collapse assistant",
+  "assistantStopTooltip": "Stop generation",
+  "assistantClearTooltip": "Clear chat",
+  "assistantClearConfirmTitle": "Clear chat?",
+  "assistantClearConfirmBody": "Removes messages in this chat (system prompt is kept).",
+  "assistantClearConfirm": "Clear",
+  "assistantSend": "Send",
+  "assistantInputHint": "Type a message… (Enter for newline; send with Ctrl+Enter on Windows/Linux, ⌘+Enter on macOS)",
+  "assistantThinking": "Thinking…",
+  "assistantNotConnected": "No connected session (or this tab is offline): terminal tools cannot inject commands; you can still discuss usage.",
+  "assistantToolRunning": "Calling tools: {names}",
+  "@assistantToolRunning": {
+    "placeholders": {
+      "names": {"type": "String"}
+    }
+  },
+  "assistantTerminalApprovalTitle": "Terminal command",
+  "assistantTerminalApprovalSubtitle": "The assistant will send the content below to your SSH session, as if you typed it in that terminal (including newlines and escapes). Only run it if you trust the action.",
+  "assistantTerminalCommandSectionTitle": "Payload",
+  "assistantTerminalSecurityHint": "Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.",
+  "assistantTerminalDeny": "Deny",
+  "assistantTerminalAllowExecute": "Run",
+  "assistantReasoningHeader": "Reasoning",
+  "assistantAnswerHeader": "Answer"
 }

@@ -44,6 +44,7 @@ dependencies:
   desktop_drop: ^0.7.1
   path: ^1.9.1
   shared_preferences: ^2.5.5
+  http: ^1.4.0
   window_manager: ^0.5.1
   super_drag_and_drop: ^0.9.1
   super_clipboard: ^0.9.1

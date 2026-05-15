@@ -16,9 +16,13 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
   static const _kFontSize = 'wb_font_size';
   static const _kFontFamily = 'wb_font_family';
   static const _kSelectCopy = 'wb_select_copy';
-  static const _kRightPaste = 'wb_right_click_paste';
   static const _kAppLocale = 'wb_app_locale';
   static const _kThemeMode = 'wb_theme_mode';
+  static const _kLlmBaseUrl = 'wb_llm_base_url';
+  static const _kLlmModel = 'wb_llm_model';
+  static const _kLlmApiKey = 'wb_llm_api_key';
+  static const _kAssistantCollapsed = 'wb_assistant_collapsed';
+  static const _kAssistantWidth = 'wb_assistant_width';
 
   /// 界面语言：`zh` 或 `en`，默认中文。
   String appLocaleCode = 'zh';
@@ -68,7 +72,20 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
 
   bool selectToCopy = false;
 
-  bool rightClickPaste = false;
+  /// OpenAI 兼容 Chat Completions 的基础地址（通常以 `/v1` 结尾，也可直接填完整 `.../chat/completions` URL）。
+  String llmBaseUrl = 'https://api.openai.com/v1';
+
+  /// 模型 id，例如 `gpt-4o-mini`。
+  String llmModel = 'gpt-4o-mini';
+
+  /// API Key（仅存于本机 SharedPreferences）。
+  String llmApiKey = '';
+
+  /// 右侧助手栏是否收起为窄条。
+  bool assistantPanelCollapsed = true;
+
+  /// 展开时助手栏宽度。
+  double assistantPanelWidth = 320;
 
   static const List<String> terminalTypeChoices = [
     'xterm-256color',
@@ -108,7 +125,6 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
       terminalFontFamily = 'Courier New';
     }
     selectToCopy = p.getBool(_kSelectCopy) ?? false;
-    rightClickPaste = p.getBool(_kRightPaste) ?? false;
     appLocaleCode = p.getString(_kAppLocale) ?? 'zh';
     if (appLocaleCode != 'en' && appLocaleCode != 'zh') {
       appLocaleCode = 'zh';
@@ -117,6 +133,13 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     if (appThemeMode != 'dark' && appThemeMode != 'light' && appThemeMode != 'system') {
       appThemeMode = 'dark';
     }
+    llmBaseUrl = (p.getString(_kLlmBaseUrl) ?? llmBaseUrl).trim();
+    if (llmBaseUrl.isEmpty) llmBaseUrl = 'https://api.openai.com/v1';
+    llmModel = (p.getString(_kLlmModel) ?? llmModel).trim();
+    if (llmModel.isEmpty) llmModel = 'gpt-4o-mini';
+    llmApiKey = p.getString(_kLlmApiKey) ?? '';
+    assistantPanelCollapsed = p.getBool(_kAssistantCollapsed) ?? true;
+    assistantPanelWidth = (p.getDouble(_kAssistantWidth) ?? 320).clamp(240, 560);
     notifyListeners();
   }
 
@@ -133,9 +156,13 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     await p.setDouble(_kFontSize, terminalFontSize);
     await p.setString(_kFontFamily, terminalFontFamily);
     await p.setBool(_kSelectCopy, selectToCopy);
-    await p.setBool(_kRightPaste, rightClickPaste);
     await p.setString(_kAppLocale, appLocaleCode);
     await p.setString(_kThemeMode, appThemeMode);
+    await p.setString(_kLlmBaseUrl, llmBaseUrl);
+    await p.setString(_kLlmModel, llmModel);
+    await p.setString(_kLlmApiKey, llmApiKey);
+    await p.setBool(_kAssistantCollapsed, assistantPanelCollapsed);
+    await p.setDouble(_kAssistantWidth, assistantPanelWidth);
     notifyListeners();
   }
 }
