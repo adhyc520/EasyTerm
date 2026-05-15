@@ -16,8 +16,8 @@ import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import 'package:super_drag_and_drop/src/into_raw.dart';
 import 'package:super_native_extensions/raw_drag_drop.dart' as raw;
 
-/// 默认：按住约半秒不移动后再拖，避免与单击进入目录冲突。
-const Duration kSftpFolderDragHoldDuration = Duration(milliseconds: 550);
+/// 默认：按住约 0.4 秒不移动后再拖，避免与单击进入目录冲突。
+const Duration kSftpFolderDragHoldDuration = Duration(milliseconds: 400);
 
 /// 目录拖出准备（下载到临时目录）期间用于中止传输；由 [_sftpMaybeStartDrag] 设置。
 bool Function()? sftpFolderDragPreparationShouldAbort;
