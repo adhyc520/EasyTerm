@@ -150,6 +150,8 @@ class _MainShellScreenState extends State<MainShellScreen> {
     return m.contains('authentication') ||
         m.contains('sshauthfail') ||
         m.contains('password') ||
+        m.contains('could not connect') ||
+        m.contains('未能连接') ||
         m.contains('keyboard-interactive') ||
         m.contains('all configured authentication methods failed') ||
         m.contains('all authentication methods failed') ||

@@ -1,7 +1,11 @@
 // ignore_for_file: implementation_imports
 //
-// 使用 super_drag_and_drop 内部 BaseDraggableRenderWidget，将桌面端文件夹拖出改为
-// [DelayedMultiDragGestureRecognizer]：先按住约 [holdDuration] 且几乎不移动，再拖动即可拖出。
+// 桌面端文件夹拖出使用 [DelayedMultiDragGestureRecognizer]：先按住约 [holdDuration]
+// 且几乎不移动，再拖动即可拖出。通过 raw.DragContext 手动控制原生拖放会话，
+// 确保拖放数据（目录下载到临时路径）准备好后才启动原生拖放，避免阻塞。
+//
+// 注意：不包裹 BaseDraggableRenderWidget，否则 macOS 上原生拖动事件会绕过延迟手势
+// 直接触发 getDragConfiguration，导致长时间阻塞在目录下载中。
 
 import 'dart:async' show unawaited;
 
@@ -9,13 +13,14 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
-import 'package:super_drag_and_drop/src/drag_internal.dart'
-    show BaseDraggableRenderWidget, DummyDragDetector;
 import 'package:super_drag_and_drop/src/into_raw.dart';
 import 'package:super_native_extensions/raw_drag_drop.dart' as raw;
 
 /// 默认：按住约半秒不移动后再拖，避免与单击进入目录冲突。
 const Duration kSftpFolderDragHoldDuration = Duration(milliseconds: 550);
+
+/// 目录拖出准备（下载到临时目录）期间用于中止传输；由 [_sftpMaybeStartDrag] 设置。
+bool Function()? sftpFolderDragPreparationShouldAbort;
 
 class _SftpDragToken implements Drag {
   bool _ended = false;
@@ -81,32 +86,37 @@ Drag? _sftpMaybeStartDrag(
   );
   final drag = _SftpDragToken();
   unawaited(() async {
-    final dragContext = await raw.DragContext.instance();
-    if (!buildContext.mounted) return;
-    final session = dragContext.newSession(pointer: pointer);
-    if (pointer != null) {
-      Future<void>.delayed(const Duration(milliseconds: 50), () {
-        if (session.dragging.value) {
-          final event = PointerRemovedEvent(
-            pointer: pointer,
-            kind: PointerDeviceKind.mouse,
-          );
-          RendererBinding.instance.mouseTracker.updateWithEvent(
-            event,
-            HitTestResult(),
-          );
-        }
-      });
+    sftpFolderDragPreparationShouldAbort = () => drag.ended;
+    try {
+      final dragContext = await raw.DragContext.instance();
+      if (!buildContext.mounted) return;
+      final session = dragContext.newSession(pointer: pointer);
+      if (pointer != null) {
+        Future<void>.delayed(const Duration(milliseconds: 50), () {
+          if (session.dragging.value) {
+            final event = PointerRemovedEvent(
+              pointer: pointer,
+              kind: PointerDeviceKind.mouse,
+            );
+            RendererBinding.instance.mouseTracker.updateWithEvent(
+              event,
+              HitTestResult(),
+            );
+          }
+        });
+      }
+      await _sftpMaybeStartDragWithSession(
+        dragContext,
+        buildContext,
+        position,
+        session,
+        devicePixelRatio,
+        drag,
+        dragConfiguration,
+      );
+    } finally {
+      sftpFolderDragPreparationShouldAbort = null;
     }
-    await _sftpMaybeStartDragWithSession(
-      dragContext,
-      buildContext,
-      position,
-      session,
-      devicePixelRatio,
-      drag,
-      dragConfiguration,
-    );
   }());
   return drag;
 }
@@ -127,12 +137,6 @@ Future<DragConfiguration?> _sftpDragConfigurationForSingleAncestorItem(
     allowedOperations: allowedOperations,
   );
 }
-
-Future<List<DragConfigurationItem>?> _sftpNoAdditionalItems(
-  Offset position,
-  DragSession session,
-) async =>
-    null;
 
 class _SftpDelayedMultiDragGestureRecognizer extends DelayedMultiDragGestureRecognizer {
   _SftpDelayedMultiDragGestureRecognizer({
@@ -223,24 +227,18 @@ class SftpFolderDelayedDraggable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 不使用 BaseDraggableRenderWidget：它会在 macOS 上拦截原生拖动事件并立即
+    // 调用 getDragConfiguration，绕过延迟手势；对于目录拖出（需要先下载到临时目录），
+    // 必须由 _SftpDelayedDesktopDragDetector 手动控制 raw.DragContext 生命周期。
     return Builder(
       builder: (context) {
-        return BaseDraggableRenderWidget(
+        return _SftpDelayedDesktopDragDetector(
           hitTestBehavior: hitTestBehavior,
-          getDragConfiguration: (location, session) =>
+          dragConfiguration: (location, session) =>
               _sftpDragConfigurationForSingleAncestorItem(context, location, session),
           isLocationDraggable: isLocationDraggable,
-          additionalItems: _sftpNoAdditionalItems,
-          child: DummyDragDetector(
-            child: _SftpDelayedDesktopDragDetector(
-              hitTestBehavior: hitTestBehavior,
-              dragConfiguration: (location, session) =>
-                  _sftpDragConfigurationForSingleAncestorItem(context, location, session),
-              isLocationDraggable: isLocationDraggable,
-              holdDuration: holdDuration,
-              child: child,
-            ),
-          ),
+          holdDuration: holdDuration,
+          child: child,
         );
       },
     );

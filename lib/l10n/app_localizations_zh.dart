@@ -473,7 +473,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sshAuthFailPassword =>
-      '认证失败：用户名或 SSH 密码不正确。若服务器仅允许密钥登录，请配置私钥并确认未填错密码。';
+      '未能连接：用户名或 SSH 密码不正确（认证失败）。若服务器仅允许密钥登录，请配置私钥并确认未填错密码。';
 
   @override
   String get sshAuthFailNone => '认证失败：未填写 SSH 密码，也未提供可用私钥。';
@@ -482,6 +482,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String sshAuthAbort(String message) {
     return '认证中断：$message';
   }
+
+  @override
+  String get sshNotConnectedLikelyWrongPassword =>
+      '未能连接：登录尚未完成连接即断开。使用仅密码登录时，多为用户名或 SSH 密码错误；若已确认无误，也可能是网络不稳定或服务器主动断开。';
 
   @override
   String sshKeyDecode(String message) {

@@ -953,7 +953,7 @@ abstract class AppLocalizations {
   /// No description provided for @sshAuthFailPassword.
   ///
   /// In en, this message translates to:
-  /// **'Authentication failed: wrong username or SSH password. If the server allows keys only, configure a key and avoid mixing passwords incorrectly.'**
+  /// **'Could not connect: wrong username or SSH password (authentication failed). If the server allows keys only, configure a key and avoid mixing passwords incorrectly.'**
   String get sshAuthFailPassword;
 
   /// No description provided for @sshAuthFailNone.
@@ -967,6 +967,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Authentication aborted: {message}'**
   String sshAuthAbort(String message);
+
+  /// No description provided for @sshNotConnectedLikelyWrongPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not connect: authentication did not finish before the connection closed. With password-only login, this usually means the username or SSH password is wrong (after double-checking, consider network issues or the server closing the session).'**
+  String get sshNotConnectedLikelyWrongPassword;
 
   /// No description provided for @sshKeyDecode.
   ///

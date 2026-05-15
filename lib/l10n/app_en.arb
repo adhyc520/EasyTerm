@@ -233,7 +233,7 @@
   },
   "sshAuthFailKeyAndPassword": "Authentication failed: the server rejected the key, or the key passphrase / SSH password is wrong. Double-check each.",
   "sshAuthFailKey": "Authentication failed: the key does not match this account, or the key passphrase is wrong.",
-  "sshAuthFailPassword": "Authentication failed: wrong username or SSH password. If the server allows keys only, configure a key and avoid mixing passwords incorrectly.",
+  "sshAuthFailPassword": "Could not connect: wrong username or SSH password (authentication failed). If the server allows keys only, configure a key and avoid mixing passwords incorrectly.",
   "sshAuthFailNone": "Authentication failed: no SSH password and no usable private key.",
   "sshAuthAbort": "Authentication aborted: {message}",
   "@sshAuthAbort": {
@@ -241,6 +241,7 @@
       "message": {"type": "String"}
     }
   },
+  "sshNotConnectedLikelyWrongPassword": "Could not connect: authentication did not finish before the connection closed. With password-only login, this usually means the username or SSH password is wrong (after double-checking, consider network issues or the server closing the session).",
   "sshKeyDecode": "Could not parse private key or wrong passphrase: {message}",
   "@sshKeyDecode": {
     "placeholders": {

@@ -487,7 +487,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sshAuthFailPassword =>
-      'Authentication failed: wrong username or SSH password. If the server allows keys only, configure a key and avoid mixing passwords incorrectly.';
+      'Could not connect: wrong username or SSH password (authentication failed). If the server allows keys only, configure a key and avoid mixing passwords incorrectly.';
 
   @override
   String get sshAuthFailNone =>
@@ -497,6 +497,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String sshAuthAbort(String message) {
     return 'Authentication aborted: $message';
   }
+
+  @override
+  String get sshNotConnectedLikelyWrongPassword =>
+      'Could not connect: authentication did not finish before the connection closed. With password-only login, this usually means the username or SSH password is wrong (after double-checking, consider network issues or the server closing the session).';
 
   @override
   String sshKeyDecode(String message) {

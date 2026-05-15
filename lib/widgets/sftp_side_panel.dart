@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:super_clipboard/super_clipboard.dart';
@@ -91,12 +92,17 @@ FileFormat _sftpDragFileFormatForName(String filename) {
 String _formatUnixMtime(int? sec, bool useBeijingWallClock) {
   if (sec == null) return '—';
   final utc = DateTime.fromMillisecondsSinceEpoch(sec * 1000, isUtc: true);
-  final d = useBeijingWallClock ? utc.add(const Duration(hours: 8)) : utc.toLocal();
+  final d = useBeijingWallClock
+      ? utc.add(const Duration(hours: 8))
+      : utc.toLocal();
   return '${d.year}-${_z2(d.month)}-${_z2(d.day)} ${_z2(d.hour)}:${_z2(d.minute)}';
 }
 
 /// (显示名, 绝对路径)
-List<({String label, String path})> _breadcrumbSegments(String cwd, String rootLabel) {
+List<({String label, String path})> _breadcrumbSegments(
+  String cwd,
+  String rootLabel,
+) {
   final normalized = cwd.replaceAll('\\', '/');
   if (normalized.isEmpty || normalized == '/') {
     return [(label: rootLabel, path: '/')];
@@ -120,7 +126,8 @@ void _showEntryContextMenu(
   Future<void> Function()? onOpenInEditor,
 }) {
   final l = AppLocalizations.of(context)!;
-  final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+  final overlay =
+      Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
   final topLeft = overlay.localToGlobal(Offset.zero);
   final rel = RelativeRect.fromLTRB(
     globalPosition.dx - topLeft.dx,
@@ -137,13 +144,31 @@ void _showEntryContextMenu(
       PopupMenuItem(value: 'dl', child: Text(l.sftpDownloadMenu)),
       PopupMenuItem(
         value: 'del',
-        child: Text(l.sftpDeleteMenu, style: TextStyle(color: Colors.red.shade300)),
+        child: Text(
+          l.sftpDeleteMenu,
+          style: TextStyle(color: Colors.red.shade300),
+        ),
       ),
     ],
   ).then((v) async {
     if (v == 'open' && onOpenInEditor != null) await onOpenInEditor();
     if (v == 'dl') await onDownload();
     if (v == 'del') await onDelete();
+  });
+}
+
+/// 在原生拖放会话真正开始（[DataWriterItem.onRegistered]）后再标记内部拖放，
+/// 避免准备数据失败或用户中途松手时 [SftpSidePanel.isDraggingInternalItem] 一直为 true。
+void _trackSftpInternalDragItem(
+  DragItem item, {
+  VoidCallback? onDisposed,
+}) {
+  item.onRegistered.addListener(() {
+    SftpSidePanel.isDraggingInternalItem = true;
+  });
+  item.onDisposed.addListener(() {
+    SftpSidePanel.isDraggingInternalItem = false;
+    onDisposed?.call();
   });
 }
 
@@ -161,6 +186,7 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
   final SshWorkspaceController controller;
   final String relativeName;
   final bool isDirectory;
+
   /// 用于目录拖出时的文件夹选择对话框与 SnackBar（须为 [Navigator] 子树）。
   final BuildContext pickerContext;
   final Widget child;
@@ -169,35 +195,38 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
     final client = controller.sftp;
     if (client == null) return null;
     if (!pickerContext.mounted) return null;
-    final l = AppLocalizations.of(pickerContext)!;
     final remotePath = remoteJoin(controller.remoteCwd, relativeName);
     final st = await client.stat(remotePath);
     if (!pickerContext.mounted) return null;
     if (isDirectory) {
       if (!st.isDirectory) return null;
       final nameOnly = remoteBasename(relativeName);
-      final parent = await FilePicker.getDirectoryPath(dialogTitle: l.sftpPickDirTitle);
-      if (parent == null || !pickerContext.mounted) return null;
+
       try {
-        await controller.downloadRemoteDirectoryToLocal(relativeName, parent);
-      } catch (e) {
-        if (pickerContext.mounted) {
-          ScaffoldMessenger.maybeOf(pickerContext)?.showSnackBar(SnackBar(content: Text('$e')));
-        }
+        final tempPath = await controller
+            .materializeRemoteDirectoryToTempForDrag(
+          relativeName,
+          shouldAbort: () =>
+              sftpFolderDragPreparationShouldAbort?.call() ?? false,
+        );
+        if (!pickerContext.mounted) return null;
+        if (sftpFolderDragPreparationShouldAbort?.call() == true) return null;
+
+        final item = DragItem(suggestedName: nameOnly);
+        _trackSftpInternalDragItem(item);
+
+        item.add(
+          Formats.fileUri(
+            Uri.directory(
+              tempPath,
+              windows: defaultTargetPlatform == TargetPlatform.windows,
+            ),
+          ),
+        );
+        return item;
+      } catch (_) {
         return null;
       }
-      if (!pickerContext.mounted) return null;
-      final dragPath = p.join(parent, relativeName);
-      final item = DragItem(suggestedName: nameOnly);
-      item.add(
-        Formats.fileUri(
-          Uri.file(
-            dragPath,
-            windows: defaultTargetPlatform == TargetPlatform.windows,
-          ),
-        ),
-      );
-      return item;
     }
     if (st.isDirectory) return null;
     final nameOnly = remoteBasename(relativeName);
@@ -205,16 +234,23 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
     final probe = DragItem(suggestedName: nameOnly);
     if (!probe.virtualFileSupported) {
       try {
-        final path = await controller.materializeRemoteFileToTempForDrag(relativeName);
+        final path = await controller.materializeRemoteFileToTempForDrag(
+          relativeName,
+        );
         final item = DragItem(suggestedName: nameOnly);
+        _trackSftpInternalDragItem(
+          item,
+          onDisposed: () => sftp_transfer.deleteLocalFileQuiet(path),
+        );
         item.add(Formats.fileUri(Uri.file(path)));
-        item.onDisposed.addListener(() => sftp_transfer.deleteLocalFileQuiet(path));
         return item;
       } catch (_) {
         return null;
       }
     }
     final item = DragItem(suggestedName: nameOnly);
+    _trackSftpInternalDragItem(item);
+
     final format = _sftpDragFileFormatForName(relativeName);
     item.addVirtualFile(
       format: format,
@@ -250,6 +286,10 @@ class SftpSidePanel extends StatefulWidget {
 
   final SshWorkspaceController controller;
 
+  /// 用于标记当前拖出的项目是否来源于 Terminall 内部。
+  /// 当应用内发生拖出并在同一窗口释放时，避免被当成外部文件上传。
+  static bool isDraggingInternalItem = false;
+
   @override
   State<SftpSidePanel> createState() => _SftpSidePanelState();
 }
@@ -260,15 +300,23 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
 
   SshWorkspaceController get _c => widget.controller;
 
-  Future<void> _downloadEntry(BuildContext context, String name, {required bool isDirectory}) async {
+  Future<void> _downloadEntry(
+    BuildContext context,
+    String name, {
+    required bool isDirectory,
+  }) async {
     final l = AppLocalizations.of(context)!;
     try {
       if (isDirectory) {
-        final parent = await FilePicker.getDirectoryPath(dialogTitle: l.sftpPickDirTitle);
+        final parent = await FilePicker.getDirectoryPath(
+          dialogTitle: l.sftpPickDirTitle,
+        );
         if (parent == null || !context.mounted) return;
         await _c.downloadRemoteDirectoryToLocal(name, parent);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.sftpDownloadedDir(name))));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(l.sftpDownloadedDir(name))));
         }
       } else {
         final out = await FilePicker.saveFile(
@@ -278,47 +326,78 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
         if (out == null || !context.mounted) return;
         await _c.downloadRemoteFileToLocalPath(name, out);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.sftpDownloadedFile(name))));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(l.sftpDownloadedFile(name))));
         }
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
   }
 
-  Future<void> _onLocalPathsDropped(BuildContext context, List<String> paths) async {
+  Future<void> _onLocalPathsDropped(
+    BuildContext context,
+    List<String> paths,
+  ) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final l = AppLocalizations.of(context)!;
+    // 1) 先逐个检查覆盖冲突，收集可上传的路径。
+    final validPaths = <String>[];
     for (final path in paths) {
       if (path.isEmpty) continue;
       try {
-        await _uploadOnePathWithOverwriteCheck(context, path);
+        final ok = await _checkOverwriteConflict(context, path);
+        if (ok) validPaths.add(path);
       } catch (e) {
-        messenger?.showSnackBar(SnackBar(content: Text(l.sftpUploadFailed('$e'))));
+        messenger?.showSnackBar(
+          SnackBar(content: Text(l.sftpUploadFailed('$e'))),
+        );
       }
+    }
+    if (validPaths.isEmpty) return;
+    // 2) 一次性批量上传。
+    try {
+      await _c.uploadMultipleLocalPaths(validPaths);
+    } catch (e) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text(l.sftpUploadFailed('$e'))),
+      );
     }
   }
 
-  Future<void> _uploadOnePathWithOverwriteCheck(BuildContext context, String localPath) async {
-    if (kIsWeb) return;
+  /// 检查覆盖冲突并弹出确认对话框。
+  /// 返回 true 表示可以上传，false 表示用户取消。
+  Future<bool> _checkOverwriteConflict(
+    BuildContext context,
+    String localPath,
+  ) async {
+    if (kIsWeb) return false;
     final l = AppLocalizations.of(context)!;
     final conflict = await _c.inspectLocalUploadConflict(localPath);
-    if (!context.mounted) return;
+    if (!context.mounted) return false;
     switch (conflict) {
       case SftpRemoteUploadConflict.typeMismatch:
         await showDialog<void>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text(l.sftpUploadConflictTypeMismatchTitle),
-            content: Text(l.sftpUploadConflictTypeMismatchBody(p.basename(localPath))),
+            content: Text(
+              l.sftpUploadConflictTypeMismatchBody(p.basename(localPath)),
+            ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l.sftpCancel)),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(l.sftpCancel),
+              ),
             ],
           ),
         );
-        return;
+        return false;
       case SftpRemoteUploadConflict.existsReplaceable:
         final ok = await showDialog<bool>(
           context: context,
@@ -326,30 +405,39 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
             title: Text(l.sftpUploadOverwriteTitle),
             content: Text(l.sftpUploadOverwriteBody(p.basename(localPath))),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l.sftpCancel)),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l.sftpUploadOverwriteConfirm)),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(l.sftpCancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(l.sftpUploadOverwriteConfirm),
+              ),
             ],
           ),
         );
-        if (ok != true || !context.mounted) return;
+        if (ok != true || !context.mounted) return false;
         await _c.removeRemoteSubtreeForOverwrite(p.basename(localPath));
+        return context.mounted;
       case SftpRemoteUploadConflict.none:
-        break;
+        return true;
     }
-    if (!context.mounted) return;
-    await _c.uploadLocalFsPath(localPath);
   }
 
-  Future<void> _openOrEdit(BuildContext context, String name, SftpFileAttrs attr) async {
+  Future<void> _openOrEdit(
+    BuildContext context,
+    String name,
+    SftpFileAttrs attr,
+  ) async {
     final l = AppLocalizations.of(context)!;
     if (!attr.isFile) return;
     try {
       final bytes = await _c.readRemoteFile(name);
       if (bytes == null || !context.mounted) return;
       if (!looksLikeTextBytes(bytes)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l.sftpBinaryNotOpened)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l.sftpBinaryNotOpened)));
         return;
       }
       final text = utf8.decode(bytes, allowMalformed: true);
@@ -367,7 +455,9 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
   }
@@ -380,8 +470,14 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
         title: Text(l.sftpDeleteConfirmTitle),
         content: Text(l.sftpDeleteConfirmBody(name)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l.sftpCancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(l.sftpDeleteConfirm)),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l.sftpCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l.sftpDeleteConfirm),
+          ),
         ],
       ),
     );
@@ -396,7 +492,8 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
       listenable: _c,
       builder: (context, _) {
         final l = AppLocalizations.of(context)!;
-        final useBeijingMtime = Localizations.localeOf(context).languageCode == 'zh';
+        final useBeijingMtime =
+            Localizations.localeOf(context).languageCode == 'zh';
         final segs = _breadcrumbSegments(_c.remoteCwd, l.sftpBreadcrumbRoot);
         return SizedBox.expand(
           child: Material(
@@ -418,17 +515,26 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                 if (i > 0)
                                   Text(
                                     ' / ',
-                                    style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: context.wb.textMuted),
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 11,
+                                      color: context.wb.textMuted,
+                                    ),
                                   ),
                                 InkWell(
                                   onTap: _c.loadingDir
                                       ? null
                                       : () {
-                                          _c.navigateToAbsolutePath(segs[i].path);
+                                          _c.navigateToAbsolutePath(
+                                            segs[i].path,
+                                          );
                                         },
                                   borderRadius: BorderRadius.circular(4),
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                      vertical: 2,
+                                    ),
                                     child: Text(
                                       segs[i].label,
                                       style: TextStyle(
@@ -450,10 +556,19 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                         tooltip: l.sftpRefreshTooltip,
                         iconSize: 18,
                         visualDensity: VisualDensity.compact,
-                        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                        constraints: const BoxConstraints(
+                          minWidth: 30,
+                          minHeight: 30,
+                        ),
                         padding: EdgeInsets.zero,
-                        onPressed: _c.loadingDir ? null : () => _c.refreshDirectory(),
-                        icon: Icon(Icons.refresh_rounded, size: 18, color: context.wb.textMuted),
+                        onPressed: _c.loadingDir
+                            ? null
+                            : () => _c.refreshDirectory(),
+                        icon: Icon(
+                          Icons.refresh_rounded,
+                          size: 18,
+                          color: context.wb.textMuted,
+                        ),
                       ),
                     ],
                   ),
@@ -461,16 +576,33 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                 Divider(height: 1, color: context.wb.border),
                 Expanded(
                   child: DropTarget(
-                    onDragEntered: (_) => setState(() => _dropHighlight = true),
+                    onDragEntered: (_) => setState(
+                      () => _dropHighlight =
+                          !SftpSidePanel.isDraggingInternalItem,
+                    ),
                     onDragExited: (_) => setState(() => _dropHighlight = false),
                     onDragDone: (detail) async {
                       setState(() => _dropHighlight = false);
+                      final wasInternalDrag = SftpSidePanel.isDraggingInternalItem;
+                      SftpSidePanel.isDraggingInternalItem = false;
                       if (kIsWeb) return;
+                      // 如果当前正处于内部组件拖出的状态，释放回同一面板直接取消，不做任何复制或上传。
+                      if (wasInternalDrag) return;
+
                       final paths = <String>[];
                       for (final f in detail.files) {
                         final path = f.path;
                         if (path.isNotEmpty) paths.add(path);
                       }
+                      if (paths.isEmpty) return;
+                      // 过滤掉本应用自身拖出的临时文件/目录，避免拖回到自己的面板时触发上传。
+                      paths.removeWhere((p) {
+                        final base = p.split('/').last;
+                        return base.startsWith('terminall_drag_') ||
+                            base.startsWith('terminall_dragdir_') ||
+                            p.contains('/terminall_drag_') ||
+                            p.contains('/terminall_dragdir_');
+                      });
                       if (paths.isEmpty) return;
                       await _onLocalPathsDropped(context, paths);
                     },
@@ -481,11 +613,20 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                             : Colors.transparent,
                       ),
                       child: _c.loadingDir
-                          ? Center(child: CircularProgressIndicator(color: context.wb.accentBlue))
+                          ? Center(
+                              child: CircularProgressIndicator(
+                                color: context.wb.accentBlue,
+                              ),
+                            )
                           : Column(
                               children: [
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(10, 4, 10, 2),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    10,
+                                    4,
+                                    10,
+                                    2,
+                                  ),
                                   child: Row(
                                     children: [
                                       const SizedBox(width: 22),
@@ -494,7 +635,11 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                         flex: 5,
                                         child: Text(
                                           l.sftpColumnName,
-                                          style: TextStyle(fontSize: 10, color: context.wb.textMuted, fontWeight: FontWeight.w600),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: context.wb.textMuted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ),
                                       SizedBox(
@@ -502,7 +647,11 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                         child: Text(
                                           l.sftpColumnSize,
                                           textAlign: TextAlign.end,
-                                          style: TextStyle(fontSize: 10, color: context.wb.textMuted, fontWeight: FontWeight.w600),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: context.wb.textMuted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ),
                                       const SizedBox(width: 6),
@@ -510,7 +659,11 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                         width: 108,
                                         child: Text(
                                           l.sftpColumnModified,
-                                          style: TextStyle(fontSize: 10, color: context.wb.textMuted, fontWeight: FontWeight.w600),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: context.wb.textMuted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -519,9 +672,14 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                 Divider(height: 1, color: context.wb.border),
                                 Expanded(
                                   child: ListView.separated(
-                                    padding: const EdgeInsets.symmetric(vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 2,
+                                    ),
                                     itemCount: _c.entries.length,
-                                    separatorBuilder: (context, _) => Divider(height: 1, color: context.wb.border),
+                                    separatorBuilder: (context, _) => Divider(
+                                      height: 1,
+                                      color: context.wb.border,
+                                    ),
                                     itemBuilder: (context, i) {
                                       final e = _c.entries[i];
                                       final isDir = e.attr.isDirectory;
@@ -531,23 +689,44 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                             _showEntryContextMenu(
                                               ctx2,
                                               g,
-                                              onDownload: () => _downloadEntry(ctx2, e.filename, isDirectory: isDir),
-                                              onDelete: () => _confirmDelete(ctx2, e.filename),
+                                              onDownload: () => _downloadEntry(
+                                                ctx2,
+                                                e.filename,
+                                                isDirectory: isDir,
+                                              ),
+                                              onDelete: () => _confirmDelete(
+                                                ctx2,
+                                                e.filename,
+                                              ),
                                               onOpenInEditor: isDir
                                                   ? null
-                                                  : () => _openOrEdit(ctx2, e.filename, e.attr),
+                                                  : () => _openOrEdit(
+                                                      ctx2,
+                                                      e.filename,
+                                                      e.attr,
+                                                    ),
                                             );
                                           }
 
                                           final rowInner = Padding(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
                                             child: Row(
                                               children: [
                                                 Padding(
-                                                  padding: const EdgeInsets.all(2),
+                                                  padding: const EdgeInsets.all(
+                                                    2,
+                                                  ),
                                                   child: Icon(
-                                                    isDir ? Icons.folder_rounded : Icons.insert_drive_file_outlined,
-                                                    color: isDir ? context.wb.folder : context.wb.textMuted,
+                                                    isDir
+                                                        ? Icons.folder_rounded
+                                                        : Icons
+                                                              .insert_drive_file_outlined,
+                                                    color: isDir
+                                                        ? context.wb.folder
+                                                        : context.wb.textMuted,
                                                     size: 16,
                                                   ),
                                                 ),
@@ -559,26 +738,46 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                                     style: TextStyle(
                                                       fontFamily: 'monospace',
                                                       fontSize: 11,
-                                                      color: context.wb.secondaryText,
+                                                      color: context
+                                                          .wb
+                                                          .secondaryText,
                                                     ),
                                                     maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
                                                   ),
                                                 ),
                                                 SizedBox(
                                                   width: 64,
                                                   child: Text(
-                                                    isDir ? '—' : _formatRemoteBytes(e.attr.size),
+                                                    isDir
+                                                        ? '—'
+                                                        : _formatRemoteBytes(
+                                                            e.attr.size,
+                                                          ),
                                                     textAlign: TextAlign.end,
-                                                    style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
+                                                    style: TextStyle(
+                                                      fontFamily: 'monospace',
+                                                      fontSize: 10,
+                                                      color:
+                                                          context.wb.textMuted,
+                                                    ),
                                                   ),
                                                 ),
                                                 const SizedBox(width: 6),
                                                 SizedBox(
                                                   width: 108,
                                                   child: Text(
-                                                    _formatUnixMtime(e.attr.modifyTime, useBeijingMtime),
-                                                    style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
+                                                    _formatUnixMtime(
+                                                      e.attr.modifyTime,
+                                                      useBeijingMtime,
+                                                    ),
+                                                    style: TextStyle(
+                                                      fontFamily: 'monospace',
+                                                      fontSize: 10,
+                                                      color:
+                                                          context.wb.textMuted,
+                                                    ),
                                                   ),
                                                 ),
                                               ],
@@ -586,16 +785,27 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                           );
 
                                           return GestureDetector(
-                                            onSecondaryTapUp: (d) => openMenuAt(d.globalPosition),
+                                            onSecondaryTapUp: (d) =>
+                                                openMenuAt(d.globalPosition),
                                             child: Material(
                                               color: Colors.transparent,
                                               child: isDir
                                                   ? InkWell(
-                                                      onTap: _c.loadingDir ? null : () => _c.navigateInto(e.filename),
+                                                      onTap: _c.loadingDir
+                                                          ? null
+                                                          : () =>
+                                                                _c.navigateInto(
+                                                                  e.filename,
+                                                                ),
                                                       child: rowInner,
                                                     )
                                                   : InkWell(
-                                                      onDoubleTap: () => _openOrEdit(ctx2, e.filename, e.attr),
+                                                      onDoubleTap: () =>
+                                                          _openOrEdit(
+                                                            ctx2,
+                                                            e.filename,
+                                                            e.attr,
+                                                          ),
                                                       child: rowInner,
                                                     ),
                                             ),
@@ -622,21 +832,30 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                     final tasks = _c.uploadTasks.items;
                                     if (tasks.isEmpty) {
                                       if (_uploadQueueExpanded) {
-                                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                                          if (!mounted) return;
-                                          setState(() => _uploadQueueExpanded = false);
-                                        });
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                              if (!mounted) return;
+                                              setState(
+                                                () => _uploadQueueExpanded =
+                                                    false,
+                                              );
+                                            });
                                       }
                                       return const SizedBox.shrink();
                                     }
                                     return _SftpUploadQueueFooter(
                                       tasks: tasks,
-                                      batchSucceeded: _c.uploadTasks.batchSucceeded,
+                                      batchSucceeded:
+                                          _c.uploadTasks.batchSucceeded,
                                       batchTotal: _c.uploadTasks.batchTotal,
                                       expanded: _uploadQueueExpanded,
-                                      onToggleExpand: () => setState(() => _uploadQueueExpanded = !_uploadQueueExpanded),
+                                      onToggleExpand: () => setState(
+                                        () => _uploadQueueExpanded =
+                                            !_uploadQueueExpanded,
+                                      ),
                                       formatBytes: _formatByteCount,
-                                      onCancelFile: _c.uploadTasks.userCancelFile,
+                                      onCancelFile:
+                                          _c.uploadTasks.userCancelFile,
                                     );
                                   },
                                 ),
@@ -694,19 +913,30 @@ class _SftpUploadQueueFooter extends StatelessWidget {
               Expanded(
                 child: Text(
                   l.sftpTransferQueueProgress(batchSucceeded, batchTotal),
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: wb.secondaryText),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: wb.secondaryText,
+                  ),
                 ),
               ),
               if (n > 1)
                 IconButton(
-                  tooltip: expanded ? l.sftpUploadQueueCollapse : l.sftpUploadQueueExpand,
+                  tooltip: expanded
+                      ? l.sftpUploadQueueCollapse
+                      : l.sftpUploadQueueExpand,
                   iconSize: 18,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
                   visualDensity: VisualDensity.compact,
                   onPressed: onToggleExpand,
                   icon: Icon(
-                    expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
                     color: wb.textMuted,
                   ),
                 ),
@@ -714,7 +944,11 @@ class _SftpUploadQueueFooter extends StatelessWidget {
           ),
         ),
         if (!expanded)
-          _SftpUploadTaskRow(task: tasks.first, formatBytes: formatBytes, onCancelFile: onCancelFile)
+          _SftpUploadTaskRow(
+            task: tasks.first,
+            formatBytes: formatBytes,
+            onCancelFile: onCancelFile,
+          )
         else
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: expandedListMaxHeight),
@@ -754,7 +988,9 @@ class _SftpUploadTaskRow extends StatelessWidget {
     final err = task.error;
     final total = task.totalBytes;
     final uploaded = task.uploadedBytes;
-    final canCancel = task.state == SftpUploadRowState.pending || task.state == SftpUploadRowState.uploading;
+    final canCancel =
+        task.state == SftpUploadRowState.pending ||
+        task.state == SftpUploadRowState.uploading;
 
     final double? progressValue;
     if (err != null) {
@@ -788,7 +1024,9 @@ class _SftpUploadTaskRow extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.only(top: 1, right: 4),
               child: Icon(
-                task.direction == SftpTransferDirection.upload ? Icons.upload_rounded : Icons.download_rounded,
+                task.direction == SftpTransferDirection.upload
+                    ? Icons.upload_rounded
+                    : Icons.download_rounded,
                 size: 15,
                 color: wb.accentBlue,
               ),
@@ -802,7 +1040,11 @@ class _SftpUploadTaskRow extends StatelessWidget {
                   task.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: wb.secondaryText),
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: wb.secondaryText,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 ClipRRect(
@@ -811,7 +1053,9 @@ class _SftpUploadTaskRow extends StatelessWidget {
                     value: progressValue,
                     minHeight: 3,
                     backgroundColor: wb.border,
-                    color: err != null ? const Color(0xFFEF4444) : wb.accentBlue,
+                    color: err != null
+                        ? const Color(0xFFEF4444)
+                        : wb.accentBlue,
                   ),
                 ),
                 const SizedBox(height: 3),

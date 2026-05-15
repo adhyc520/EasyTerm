@@ -480,6 +480,7 @@ Future<void> downloadRemoteTreeToLocalPath({
   required SftpClient sftp,
   required String remotePath,
   required String localDirPath,
+  bool Function()? shouldAbort,
 }) async {
   final label = p.basename(remotePath.replaceAll('\\', '/'));
   final plan = await planRemoteDirectoryDownload(
@@ -488,7 +489,18 @@ Future<void> downloadRemoteTreeToLocalPath({
     localTreeRoot: localDirPath,
     displayRootLabel: label,
   );
-  await executeDownloadPlan(sftp: sftp, plan: plan, hooks: null);
+  await executeDownloadPlan(
+    sftp: sftp,
+    plan: plan,
+    hooks: shouldAbort == null
+        ? null
+        : SftpUploadProgressHooks(
+            shouldCancelUpload: (_) => shouldAbort(),
+          ),
+  );
+  if (shouldAbort?.call() == true) {
+    throw const SftpUserCancelled();
+  }
 }
 
 void deleteLocalFileQuiet(String localFilePath) {

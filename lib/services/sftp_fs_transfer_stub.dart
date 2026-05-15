@@ -84,6 +84,7 @@ Future<void> downloadRemoteTreeToLocalPath({
   required SftpClient sftp,
   required String remotePath,
   required String localDirPath,
+  bool Function()? shouldAbort,
 }) async {
   throw UnsupportedError('目录下载到本地仅在支持 dart:io 的桌面端可用');
 }
