@@ -662,6 +662,24 @@ abstract class AppLocalizations {
   /// **'Upload failed: {error}'**
   String sftpUploadFailed(String error);
 
+  /// No description provided for @sftpUploadQueueHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading ({count})'**
+  String sftpUploadQueueHeading(int count);
+
+  /// No description provided for @sftpUploadQueueExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all'**
+  String get sftpUploadQueueExpand;
+
+  /// No description provided for @sftpUploadQueueCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Show less'**
+  String get sftpUploadQueueCollapse;
+
   /// No description provided for @sftpBinaryNotOpened.
   ///
   /// In en, this message translates to:

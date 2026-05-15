@@ -61,6 +61,8 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
   late final TextEditingController _user;
   late final TextEditingController _password;
   late final TextEditingController _keyPath;
+  /// 底部弹层出现时，底层 [TerminalView]（hardware keyboard Focus）仍可能占着焦点，Mac 上按键进不了表单。
+  final FocusNode _firstFieldFocus = FocusNode();
   bool _busy = false;
 
   @override
@@ -75,10 +77,15 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     if (p != null) {
       _label.text = p.label;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _firstFieldFocus.requestFocus();
+    });
   }
 
   @override
   void dispose() {
+    _firstFieldFocus.dispose();
     _label.dispose();
     _host.dispose();
     _port.dispose();
@@ -150,6 +157,7 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
             Text(editing ? l.connectionEditTitle : l.connectionNewTitle, style: sheetTitleStyle),
             const SizedBox(height: 16),
             TextField(
+              focusNode: _firstFieldFocus,
               controller: _label,
               style: fieldStyle,
               decoration: InputDecoration(

@@ -38,10 +38,21 @@ class _SavedHostConnectBody extends StatefulWidget {
 
 class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
   late final TextEditingController _password = TextEditingController();
+  final FocusNode _passwordFocus = FocusNode();
   bool _busy = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _passwordFocus.requestFocus();
+    });
+  }
+
+  @override
   void dispose() {
+    _passwordFocus.dispose();
     _password.dispose();
     super.dispose();
   }
@@ -92,6 +103,7 @@ class _SavedHostConnectBodyState extends State<_SavedHostConnectBody> {
             ],
             const SizedBox(height: 20),
             TextField(
+              focusNode: _passwordFocus,
               controller: _password,
               decoration: InputDecoration(
                 labelText: hasKey ? l.savedHostPasswordFieldKey : l.savedHostPasswordFieldPassword,

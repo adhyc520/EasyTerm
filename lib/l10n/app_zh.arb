@@ -94,6 +94,14 @@
   "sftpDownloadedFile": "已下载 {name}",
   "sftpUploaded": "已上传 {name}",
   "sftpUploadFailed": "上传失败: {error}",
+  "sftpUploadQueueHeading": "上传中（{count}）",
+  "@sftpUploadQueueHeading": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpUploadQueueExpand": "展开全部",
+  "sftpUploadQueueCollapse": "收起",
   "sftpBinaryNotOpened": "该文件为二进制，已取消在编辑器中打开",
   "sftpDeleteConfirmTitle": "删除确认",
   "sftpDeleteConfirmBody": "确定删除「{name}」？",

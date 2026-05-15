@@ -18,6 +18,7 @@ import '../io/file_read.dart';
 import '../l10n/app_localizations.dart';
 import '../util/remote_paths.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
+import 'sftp_upload_task_list.dart';
 import 'workbench_settings_store.dart';
 
 const int kMaxEditorBytes = 512 * 1024;
@@ -93,6 +94,9 @@ class SshWorkspaceController extends ChangeNotifier {
   bool get connected => _connected;
 
   SftpClient? get sftp => _sftp;
+
+  /// 拖曳上传任务列表（仅监听本对象可避免整页文件树随字节进度重建）。
+  final SftpUploadTaskList uploadTasks = SftpUploadTaskList();
 
   void _setError(String? e) {
     _error = e;
@@ -348,6 +352,11 @@ class SshWorkspaceController extends ChangeNotifier {
       sftp: client,
       remoteCwd: _remoteCwd,
       localPath: localPath,
+      hooks: sftp_transfer.SftpUploadProgressHooks(
+        onFileStart: uploadTasks.startFile,
+        onFileProgress: (path, uploaded, _) => uploadTasks.progress(path, uploaded),
+        onFileEnd: (path, err) => uploadTasks.endFile(path, error: err),
+      ),
     );
     await refreshDirectory();
   }
@@ -486,11 +495,13 @@ class SshWorkspaceController extends ChangeNotifier {
     _terminal = null;
     _connected = false;
     _entries = [];
+    uploadTasks.clear();
     notifyListeners();
   }
 
   @override
   void dispose() {
+    uploadTasks.dispose();
     unawaited(disconnect());
     super.dispose();
   }

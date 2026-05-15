@@ -124,6 +124,14 @@
       "error": {"type": "String"}
     }
   },
+  "sftpUploadQueueHeading": "Uploading ({count})",
+  "@sftpUploadQueueHeading": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpUploadQueueExpand": "Show all",
+  "sftpUploadQueueCollapse": "Show less",
   "sftpBinaryNotOpened": "This file looks binary; open in editor was cancelled.",
   "sftpDeleteConfirmTitle": "Delete?",
   "sftpDeleteConfirmBody": "Delete “{name}”?",

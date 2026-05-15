@@ -10,11 +10,16 @@ import 'package:path/path.dart' as p;
 import '../l10n/app_localizations.dart';
 import '../screens/remote_editor_screen.dart';
 import '../services/ssh_workspace_controller.dart';
+import '../services/sftp_upload_task_list.dart';
 import '../theme/workbench_theme.dart';
 import '../util/remote_paths.dart';
 
 String _formatRemoteBytes(int? bytes) {
   if (bytes == null) return '—';
+  return _formatByteCount(bytes);
+}
+
+String _formatByteCount(int bytes) {
   if (bytes < 1024) return '$bytes B';
   const u = ['KB', 'MB', 'GB', 'TB'];
   double v = bytes / 1024;
@@ -94,6 +99,7 @@ class SftpSidePanel extends StatefulWidget {
 
 class _SftpSidePanelState extends State<SftpSidePanel> {
   bool _dropHighlight = false;
+  bool _uploadQueueExpanded = false;
 
   SshWorkspaceController get _c => widget.controller;
 
@@ -132,7 +138,6 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
       if (path.isEmpty) continue;
       try {
         await _c.uploadLocalFsPath(path);
-        messenger?.showSnackBar(SnackBar(content: Text(l.sftpUploaded(p.basename(path)))));
       } catch (e) {
         messenger?.showSnackBar(SnackBar(content: Text(l.sftpUploadFailed('$e'))));
       }
@@ -397,6 +402,27 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                     },
                                   ),
                                 ),
+                                ListenableBuilder(
+                                  listenable: _c.uploadTasks,
+                                  builder: (context, _) {
+                                    final tasks = _c.uploadTasks.items;
+                                    if (tasks.isEmpty) {
+                                      if (_uploadQueueExpanded) {
+                                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                                          if (!mounted) return;
+                                          setState(() => _uploadQueueExpanded = false);
+                                        });
+                                      }
+                                      return const SizedBox.shrink();
+                                    }
+                                    return _SftpUploadQueueFooter(
+                                      tasks: tasks,
+                                      expanded: _uploadQueueExpanded,
+                                      onToggleExpand: () => setState(() => _uploadQueueExpanded = !_uploadQueueExpanded),
+                                      formatBytes: _formatByteCount,
+                                    );
+                                  },
+                                ),
                               ],
                             ),
                     ),
@@ -407,6 +433,127 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
           ),
         );
       },
+    );
+  }
+}
+
+class _SftpUploadQueueFooter extends StatelessWidget {
+  const _SftpUploadQueueFooter({
+    required this.tasks,
+    required this.expanded,
+    required this.onToggleExpand,
+    required this.formatBytes,
+  });
+
+  final List<SftpUploadTaskView> tasks;
+  final bool expanded;
+  final VoidCallback onToggleExpand;
+  final String Function(int bytes) formatBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final l = AppLocalizations.of(context)!;
+    final n = tasks.length;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Divider(height: 1, color: wb.border),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 4, 2),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  l.sftpUploadQueueHeading(n),
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: wb.secondaryText),
+                ),
+              ),
+              if (n > 1)
+                IconButton(
+                  tooltip: expanded ? l.sftpUploadQueueCollapse : l.sftpUploadQueueExpand,
+                  iconSize: 18,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onToggleExpand,
+                  icon: Icon(
+                    expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    color: wb.textMuted,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (!expanded)
+          _SftpUploadTaskRow(task: tasks.first, formatBytes: formatBytes)
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 168),
+            child: ListView.separated(
+              padding: const EdgeInsets.only(bottom: 6),
+              shrinkWrap: true,
+              physics: const ClampingScrollPhysics(),
+              itemCount: tasks.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              itemBuilder: (context, i) => _SftpUploadTaskRow(task: tasks[i], formatBytes: formatBytes),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _SftpUploadTaskRow extends StatelessWidget {
+  const _SftpUploadTaskRow({required this.task, required this.formatBytes});
+
+  final SftpUploadTaskView task;
+  final String Function(int bytes) formatBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final l = AppLocalizations.of(context)!;
+    final err = task.error;
+    final total = task.totalBytes;
+    final uploaded = task.uploadedBytes;
+    final progress = total > 0 ? (uploaded / total).clamp(0.0, 1.0) : null;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            task.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: wb.secondaryText),
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 3,
+              backgroundColor: wb.border,
+              color: err != null ? const Color(0xFFEF4444) : wb.accentBlue,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            err != null ? l.sftpUploadFailed('$err') : '${formatBytes(uploaded)} / ${formatBytes(total)}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 9,
+              color: err != null ? const Color(0xFFF87171) : wb.textMuted,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

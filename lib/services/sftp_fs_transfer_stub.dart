@@ -1,9 +1,12 @@
 import 'package:dartssh2/dartssh2.dart';
 
+import 'sftp_upload_progress_hooks.dart';
+
 Future<void> uploadLocalPathToRemote({
   required SftpClient sftp,
   required String remoteCwd,
   required String localPath,
+  SftpUploadProgressHooks? hooks,
 }) async {
   throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
 }

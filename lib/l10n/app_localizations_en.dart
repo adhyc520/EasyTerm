@@ -315,6 +315,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String sftpUploadQueueHeading(int count) {
+    return 'Uploading ($count)';
+  }
+
+  @override
+  String get sftpUploadQueueExpand => 'Show all';
+
+  @override
+  String get sftpUploadQueueCollapse => 'Show less';
+
+  @override
   String get sftpBinaryNotOpened =>
       'This file looks binary; open in editor was cancelled.';
 

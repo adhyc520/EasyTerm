@@ -303,6 +303,17 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String sftpUploadQueueHeading(int count) {
+    return '上传中（$count）';
+  }
+
+  @override
+  String get sftpUploadQueueExpand => '展开全部';
+
+  @override
+  String get sftpUploadQueueCollapse => '收起';
+
+  @override
   String get sftpBinaryNotOpened => '该文件为二进制，已取消在编辑器中打开';
 
   @override
