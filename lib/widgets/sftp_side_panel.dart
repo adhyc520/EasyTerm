@@ -18,6 +18,7 @@ import '../services/sftp_planned_upload.dart';
 import '../services/sftp_upload_task_list.dart';
 import '../theme/workbench_theme.dart';
 import '../util/remote_paths.dart';
+import 'sftp_folder_delayed_draggable.dart';
 
 String _formatRemoteBytes(int? bytes) {
   if (bytes == null) return '—';
@@ -146,23 +147,58 @@ void _showEntryContextMenu(
   });
 }
 
-/// 将远程文件以系统原生拖放导出到 Finder / 资源管理器等（虚拟文件流式拉取）。
-class _SftpRemoteFileDragWrap extends StatelessWidget {
-  const _SftpRemoteFileDragWrap({
+/// 将远程文件或目录以系统原生拖放导出到 Finder / 资源管理器等。
+/// 文件优先使用虚拟文件流式拉取；目录须先在本机选择父文件夹，确认后才开始下载，取消则不进行任何传输。
+class _SftpRemoteEntryDragWrap extends StatelessWidget {
+  const _SftpRemoteEntryDragWrap({
     required this.controller,
     required this.relativeName,
+    required this.isDirectory,
+    required this.pickerContext,
     required this.child,
   });
 
   final SshWorkspaceController controller;
   final String relativeName;
+  final bool isDirectory;
+  /// 用于目录拖出时的文件夹选择对话框与 SnackBar（须为 [Navigator] 子树）。
+  final BuildContext pickerContext;
   final Widget child;
 
   Future<DragItem?> _dragItemProvider(DragItemRequest request) async {
     final client = controller.sftp;
     if (client == null) return null;
+    if (!pickerContext.mounted) return null;
+    final l = AppLocalizations.of(pickerContext)!;
     final remotePath = remoteJoin(controller.remoteCwd, relativeName);
     final st = await client.stat(remotePath);
+    if (!pickerContext.mounted) return null;
+    if (isDirectory) {
+      if (!st.isDirectory) return null;
+      final nameOnly = remoteBasename(relativeName);
+      final parent = await FilePicker.getDirectoryPath(dialogTitle: l.sftpPickDirTitle);
+      if (parent == null || !pickerContext.mounted) return null;
+      try {
+        await controller.downloadRemoteDirectoryToLocal(relativeName, parent);
+      } catch (e) {
+        if (pickerContext.mounted) {
+          ScaffoldMessenger.maybeOf(pickerContext)?.showSnackBar(SnackBar(content: Text('$e')));
+        }
+        return null;
+      }
+      if (!pickerContext.mounted) return null;
+      final dragPath = p.join(parent, relativeName);
+      final item = DragItem(suggestedName: nameOnly);
+      item.add(
+        Formats.fileUri(
+          Uri.file(
+            dragPath,
+            windows: defaultTargetPlatform == TargetPlatform.windows,
+          ),
+        ),
+      );
+      return item;
+    }
     if (st.isDirectory) return null;
     final nameOnly = remoteBasename(relativeName);
     final sizeBytes = st.size ?? 0;
@@ -202,7 +238,9 @@ class _SftpRemoteFileDragWrap extends StatelessWidget {
     return DragItemWidget(
       allowedOperations: () => [DropOperation.copy],
       dragItemProvider: _dragItemProvider,
-      child: DraggableWidget(child: child),
+      child: isDirectory
+          ? SftpFolderDelayedDraggable(child: child)
+          : DraggableWidget(child: child),
     );
   }
 }
@@ -501,69 +539,76 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                             );
                                           }
 
+                                          final rowInner = Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            child: Row(
+                                              children: [
+                                                Padding(
+                                                  padding: const EdgeInsets.all(2),
+                                                  child: Icon(
+                                                    isDir ? Icons.folder_rounded : Icons.insert_drive_file_outlined,
+                                                    color: isDir ? context.wb.folder : context.wb.textMuted,
+                                                    size: 16,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Expanded(
+                                                  flex: 5,
+                                                  child: Text(
+                                                    e.filename,
+                                                    style: TextStyle(
+                                                      fontFamily: 'monospace',
+                                                      fontSize: 11,
+                                                      color: context.wb.secondaryText,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                SizedBox(
+                                                  width: 64,
+                                                  child: Text(
+                                                    isDir ? '—' : _formatRemoteBytes(e.attr.size),
+                                                    textAlign: TextAlign.end,
+                                                    style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                SizedBox(
+                                                  width: 108,
+                                                  child: Text(
+                                                    _formatUnixMtime(e.attr.modifyTime, useBeijingMtime),
+                                                    style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+
                                           return GestureDetector(
                                             onSecondaryTapUp: (d) => openMenuAt(d.globalPosition),
-                                            onLongPress: () {
-                                              final box = ctx2.findRenderObject() as RenderBox?;
-                                              if (box == null) return;
-                                              openMenuAt(box.localToGlobal(Offset(box.size.width / 2, box.size.height / 2)));
-                                            },
-                                            child: InkWell(
-                                              onTap: isDir ? () => _c.navigateInto(e.filename) : null,
-                                              onDoubleTap: isDir
-                                                  ? null
-                                                  : () => _openOrEdit(ctx2, e.filename, e.attr),
-                                              child: Padding(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                child: Row(
-                                                  children: [
-                                                    Icon(
-                                                      isDir ? Icons.folder_rounded : Icons.insert_drive_file_outlined,
-                                                      color: isDir ? context.wb.folder : context.wb.textMuted,
-                                                      size: 16,
+                                            child: Material(
+                                              color: Colors.transparent,
+                                              child: isDir
+                                                  ? InkWell(
+                                                      onTap: _c.loadingDir ? null : () => _c.navigateInto(e.filename),
+                                                      child: rowInner,
+                                                    )
+                                                  : InkWell(
+                                                      onDoubleTap: () => _openOrEdit(ctx2, e.filename, e.attr),
+                                                      child: rowInner,
                                                     ),
-                                                    const SizedBox(width: 6),
-                                                    Expanded(
-                                                      flex: 5,
-                                                      child: Text(
-                                                        e.filename,
-                                                        style: TextStyle(
-                                                          fontFamily: 'monospace',
-                                                          fontSize: 11,
-                                                          color: context.wb.secondaryText,
-                                                        ),
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow.ellipsis,
-                                                      ),
-                                                    ),
-                                                    SizedBox(
-                                                      width: 64,
-                                                      child: Text(
-                                                        isDir ? '—' : _formatRemoteBytes(e.attr.size),
-                                                        textAlign: TextAlign.end,
-                                                        style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 6),
-                                                    SizedBox(
-                                                      width: 108,
-                                                      child: Text(
-                                                        _formatUnixMtime(e.attr.modifyTime, useBeijingMtime),
-                                                        style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: context.wb.textMuted),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
                                             ),
                                           );
                                         },
                                       );
 
-                                      if (!isDir && _sftpDesktopDragOutSupported()) {
-                                        return _SftpRemoteFileDragWrap(
+                                      if (_sftpDesktopDragOutSupported()) {
+                                        return _SftpRemoteEntryDragWrap(
                                           controller: _c,
                                           relativeName: e.filename,
+                                          isDirectory: isDir,
+                                          pickerContext: context,
                                           child: rowCore,
                                         );
                                       }
