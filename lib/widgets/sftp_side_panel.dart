@@ -5,7 +5,6 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
 
 import '../l10n/app_localizations.dart';
 import '../screens/remote_editor_screen.dart';
@@ -496,7 +495,7 @@ class _SftpUploadQueueFooter extends StatelessWidget {
               shrinkWrap: true,
               physics: const ClampingScrollPhysics(),
               itemCount: tasks.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
+              separatorBuilder: (context, _) => const SizedBox(height: 4),
               itemBuilder: (context, i) => _SftpUploadTaskRow(task: tasks[i], formatBytes: formatBytes),
             ),
           ),
