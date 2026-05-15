@@ -22,7 +22,7 @@ class HostProfilesStore extends ChangeNotifier {
     }
     try {
       final dir = await getApplicationSupportDirectory();
-      final path = '${dir.path}/terminall_host_profiles.json';
+      final path = '${dir.path}/easyterm_host_profiles.json';
       final raw = await readUtf8IfExists(path);
       if (raw != null && raw.trim().isNotEmpty) {
         final list = jsonDecode(raw) as List<dynamic>;
@@ -41,7 +41,7 @@ class HostProfilesStore extends ChangeNotifier {
 
   Future<String> _profilesPath() async {
     final dir = await getApplicationSupportDirectory();
-    return '${dir.path}/terminall_host_profiles.json';
+    return '${dir.path}/easyterm_host_profiles.json';
   }
 
   Future<void> _persist() async {

@@ -9,10 +9,10 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
-  String get appTitle => 'Easy Term';
+  String get appTitle => 'EasyTerm';
 
   @override
-  String get appBarTitle => 'Easy Term';
+  String get appBarTitle => 'EasyTerm';
 
   @override
   String get newConnection => '新建连接';
@@ -30,7 +30,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuCloseAllSessions => '关闭全部会话';
 
   @override
-  String get menuAbout => '关于 Easy Term';
+  String get menuAbout => '关于 EasyTerm';
 
   @override
   String get aboutDescription => '多会话 SSH 终端与 SFTP 文件浏览。';

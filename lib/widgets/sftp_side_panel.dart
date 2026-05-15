@@ -286,7 +286,7 @@ class SftpSidePanel extends StatefulWidget {
 
   final SshWorkspaceController controller;
 
-  /// 用于标记当前拖出的项目是否来源于 Terminall 内部。
+  /// 用于标记当前拖出的项目是否来源于 EasyTerm 内部。
   /// 当应用内发生拖出并在同一窗口释放时，避免被当成外部文件上传。
   static bool isDraggingInternalItem = false;
 
@@ -598,10 +598,10 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                       // 过滤掉本应用自身拖出的临时文件/目录，避免拖回到自己的面板时触发上传。
                       paths.removeWhere((p) {
                         final base = p.split('/').last;
-                        return base.startsWith('terminall_drag_') ||
-                            base.startsWith('terminall_dragdir_') ||
-                            p.contains('/terminall_drag_') ||
-                            p.contains('/terminall_dragdir_');
+                        return base.startsWith('easyterm_drag_') ||
+                            base.startsWith('easyterm_dragdir_') ||
+                            p.contains('/easyterm_drag_') ||
+                            p.contains('/easyterm_dragdir_');
                       });
                       if (paths.isEmpty) return;
                       await _onLocalPathsDropped(context, paths);

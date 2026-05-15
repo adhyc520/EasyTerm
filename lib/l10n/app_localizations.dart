@@ -101,13 +101,13 @@ abstract class AppLocalizations {
   /// No description provided for @appTitle.
   ///
   /// In en, this message translates to:
-  /// **'Easy Term'**
+  /// **'EasyTerm'**
   String get appTitle;
 
   /// No description provided for @appBarTitle.
   ///
   /// In en, this message translates to:
-  /// **'Easy Term'**
+  /// **'EasyTerm'**
   String get appBarTitle;
 
   /// No description provided for @newConnection.
@@ -143,7 +143,7 @@ abstract class AppLocalizations {
   /// No description provided for @menuAbout.
   ///
   /// In en, this message translates to:
-  /// **'About Easy Term'**
+  /// **'About EasyTerm'**
   String get menuAbout;
 
   /// No description provided for @aboutDescription.

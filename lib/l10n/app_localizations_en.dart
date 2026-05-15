@@ -9,10 +9,10 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
-  String get appTitle => 'Easy Term';
+  String get appTitle => 'EasyTerm';
 
   @override
-  String get appBarTitle => 'Easy Term';
+  String get appBarTitle => 'EasyTerm';
 
   @override
   String get newConnection => 'New connection';
@@ -30,7 +30,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuCloseAllSessions => 'Close all sessions';
 
   @override
-  String get menuAbout => 'About Easy Term';
+  String get menuAbout => 'About EasyTerm';
 
   @override
   String get aboutDescription =>

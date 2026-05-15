@@ -1,11 +1,11 @@
-# Easy Term
+# EasyTerm
 
-**Easy Term** is a Flutter desktop SSH client: a multi-tab terminal with an integrated SFTP file browser, saved connections, optional AI assistant (OpenAI-compatible Chat API) with guarded terminal actions, and a status bar that surfaces remote health hints (uptime, load, and more on supported Linux hosts).
+**EasyTerm** is a Flutter desktop SSH client: a multi-tab terminal with an integrated SFTP file browser, saved connections, optional AI assistant (OpenAI-compatible Chat API) with guarded terminal actions, and a status bar that surfaces remote health hints (uptime, load, and more on supported Linux hosts).
 
-**Easy Term** 是一款基于 Flutter 的桌面端 SSH 客户端：支持多标签终端、内置 SFTP 文件浏览（含远程文本编辑）、已保存连接、可选的 AI 助手（OpenAI 兼容对话接口，终端操作建议需用户确认），以及可在状态栏查看远端运行概况（运行时间、负载等，在支持的 Linux 主机上信息更丰富）。
+**EasyTerm** 是一款基于 Flutter 的桌面端 SSH 客户端：支持多标签终端、内置 SFTP 文件浏览（含远程文本编辑）、已保存连接、可选的 AI 助手（OpenAI 兼容对话接口，终端操作建议需用户确认），以及可在状态栏查看远端运行概况（运行时间、负载等，在支持的 Linux 主机上信息更丰富）。
 
 <p align="center">
-  <img src="images/home.png" alt="Easy Term main window — terminal with SFTP sidebar and status bar" width="920" />
+  <img src="images/home.png" alt="EasyTerm main window — terminal with SFTP sidebar and status bar" width="920" />
 </p>
 
 ---
@@ -110,6 +110,6 @@ flutter build macos
 
 ### Repository note
 
-The Flutter package name in `pubspec.yaml` is `terminall`; the product name shown in the app and localization files is **Easy Term**.
+The Flutter package name in `pubspec.yaml` is `easyterm`; the product name shown in the app and localization files is **EasyTerm**. Built desktop binaries use the `easyterm` filename (e.g. `easyterm.app`, `easyterm.exe`).
 
-Flutter 工程在 `pubspec.yaml` 里的包名为 `terminall`，应用界面与文案中的产品名为 **Easy Term**。
+Flutter 工程在 `pubspec.yaml` 里的包名为 `easyterm`，应用界面与文案中的产品名为 **EasyTerm**；桌面可执行文件名为 `easyterm`（如 `easyterm.app`、`easyterm.exe`）。

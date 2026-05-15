@@ -455,7 +455,7 @@ final class LlmOpenAiChatService {
         ? '… (${tail.length} chars total, showing last $maxEcho)\n${tail.substring(tail.length - maxEcho)}'
         : tail;
     ssh.injectTerminalLocalDisplay(
-      '\r\n\x1b[33m──────── Easy Term · assistant · captured output ────────\x1b[0m\r\n'
+      '\r\n\x1b[33m──────── EasyTerm · assistant · captured output ────────\x1b[0m\r\n'
       '$echoBody\r\n'
       '\x1b[33m────────────────────────────────────────────────────────\x1b[0m\r\n',
     );

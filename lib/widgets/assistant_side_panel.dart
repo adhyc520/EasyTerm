@@ -259,12 +259,12 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       ..add({
         'role': 'system',
         'content': _zh
-            ? '你是 Easy Term 里 SSH 终端旁的助手。用户已连接远程 shell。'
+            ? '你是 EasyTerm 里 SSH 终端旁的助手。用户已连接远程 shell。'
                   '回答与推理可能分字段或分标签返回；向用户说明时区分「思考」与正式答复。'
                   '需要远端执行时调用 terminal_run；每一次注入前用户都会在弹窗中单独确认是否执行；'
                   '若模型未在命令末尾写换行，客户端会自动补上回车以便 shell 提交。'
                   '工具结果中会附带注入后一段时间的终端尾部输出，请据实引用，勿编造。'
-            : 'You assist next to an SSH terminal in Easy Term. The user has an active remote shell. '
+            : 'You assist next to an SSH terminal in EasyTerm. The user has an active remote shell. '
                   'Separate reasoning from the final answer when presenting to the user. '
                   'Use terminal_run for remote execution; the user must confirm every injection in a dialog. '
                   'If the command text has no trailing newline, the client appends a carriage return so the shell submits the line. '

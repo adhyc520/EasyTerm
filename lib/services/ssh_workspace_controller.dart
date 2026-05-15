@@ -651,7 +651,7 @@ class SshWorkspaceController extends ChangeNotifier {
     final base = remoteBasename(relativeName);
     final path = p.join(
       dir.path,
-      'terminall_drag_${DateTime.now().microsecondsSinceEpoch}_$base',
+      'easyterm_drag_${DateTime.now().microsecondsSinceEpoch}_$base',
     );
     await downloadRemoteFileToLocalPath(relativeName, path);
     return path;
@@ -669,7 +669,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }
     final dir = await getTemporaryDirectory();
     final stamp = DateTime.now().microsecondsSinceEpoch;
-    final tempParent = p.join(dir.path, 'terminall_dragdir_$stamp');
+    final tempParent = p.join(dir.path, 'easyterm_dragdir_$stamp');
     final remotePath = remoteJoin(_remoteCwd, relativeName);
     final localDest = p.join(tempParent, remoteBasename(relativeName));
     await sftp_transfer.downloadRemoteTreeToLocalPath(

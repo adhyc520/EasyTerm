@@ -37,13 +37,13 @@ jobs:
       - name: Pack
         shell: pwsh
         run: |
-          $out = "terminall-${{ github.ref_name }}-windows-x64.zip"
+          $out = "easyterm-${{ github.ref_name }}-windows-x64.zip"
           tar -a -c -f $out -C build/windows/x64/runner/Release .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: terminall-${{ github.ref_name }}-windows-x64
-          path: terminall-${{ github.ref_name }}-windows-x64.zip
+          name: easyterm-${{ github.ref_name }}-windows-x64
+          path: easyterm-${{ github.ref_name }}-windows-x64.zip
 
   build-macos-arm64:
     name: macOS (arm64)
@@ -65,12 +65,12 @@ jobs:
       - name: Pack
         run: |
           cd build/macos/Build/Products/Release
-          zip -r "$GITHUB_WORKSPACE/terminall-${{ github.ref_name }}-macos-arm64.zip" terminall.app
+          zip -r "$GITHUB_WORKSPACE/easyterm-${{ github.ref_name }}-macos-arm64.zip" easyterm.app
 
       - uses: actions/upload-artifact@v4
         with:
-          name: terminall-${{ github.ref_name }}-macos-arm64
-          path: terminall-${{ github.ref_name }}-macos-arm64.zip
+          name: easyterm-${{ github.ref_name }}-macos-arm64
+          path: easyterm-${{ github.ref_name }}-macos-arm64.zip
 
   release:
     name: Publish GitHub Release
@@ -83,13 +83,13 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: terminall-${{ github.ref_name }}-windows-x64
+          name: easyterm-${{ github.ref_name }}-windows-x64
           path: release-assets
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: terminall-${{ github.ref_name }}-macos-arm64
+          name: easyterm-${{ github.ref_name }}-macos-arm64
           path: release-assets
 
       - name: Create release and upload assets
