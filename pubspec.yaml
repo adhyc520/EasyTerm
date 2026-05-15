@@ -45,6 +45,9 @@ dependencies:
   path: ^1.9.1
   shared_preferences: ^2.5.5
   window_manager: ^0.5.1
+  super_drag_and_drop: ^0.9.1
+  super_clipboard: ^0.9.1
+  super_native_extensions: ^0.9.1
 
 dev_dependencies:
   flutter_test:

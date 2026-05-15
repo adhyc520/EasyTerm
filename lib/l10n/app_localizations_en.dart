@@ -285,6 +285,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sftpDownloadMenu => 'Download…';
 
   @override
+  String get sftpOpenInEditorMenu => 'Open in editor…';
+
+  @override
   String get sftpDeleteMenu => 'Delete';
 
   @override
@@ -315,15 +318,46 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sftpUploadQueueHeading(int count) {
-    return 'Uploading ($count)';
+  String sftpTransferQueueProgress(int done, int total) {
+    return '$done / $total tasks';
   }
+
+  @override
+  String get sftpTransferKindUploadTooltip => 'Upload';
+
+  @override
+  String get sftpTransferKindDownloadTooltip => 'Download';
 
   @override
   String get sftpUploadQueueExpand => 'Show all';
 
   @override
   String get sftpUploadQueueCollapse => 'Show less';
+
+  @override
+  String get sftpUploadRowPending => 'Queued';
+
+  @override
+  String get sftpUploadCancelFileTooltip => 'Cancel this upload';
+
+  @override
+  String get sftpUploadOverwriteTitle => 'Replace on server?';
+
+  @override
+  String sftpUploadOverwriteBody(String name) {
+    return '“$name” already exists on the server. Replace it? Remote files will be overwritten or removed.';
+  }
+
+  @override
+  String get sftpUploadOverwriteConfirm => 'Replace';
+
+  @override
+  String get sftpUploadConflictTypeMismatchTitle => 'Cannot replace';
+
+  @override
+  String sftpUploadConflictTypeMismatchBody(String name) {
+    return '“$name” does not match the type on the server (file vs folder). Remove the remote item first, then upload again.';
+  }
 
   @override
   String get sftpBinaryNotOpened =>

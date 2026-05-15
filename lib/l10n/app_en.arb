@@ -97,6 +97,7 @@
   "sftpColumnModified": "Modified",
   "sftpBreadcrumbRoot": "Root",
   "sftpDownloadMenu": "Download…",
+  "sftpOpenInEditorMenu": "Open in editor…",
   "sftpDeleteMenu": "Delete",
   "sftpPickDirTitle": "Choose where to save (a subfolder with the same name will be created)",
   "sftpSaveFileTitle": "Save remote file",
@@ -124,14 +125,34 @@
       "error": {"type": "String"}
     }
   },
-  "sftpUploadQueueHeading": "Uploading ({count})",
-  "@sftpUploadQueueHeading": {
+  "sftpTransferQueueProgress": "{done} / {total} tasks",
+  "@sftpTransferQueueProgress": {
     "placeholders": {
-      "count": {"type": "int"}
+      "done": {"type": "int"},
+      "total": {"type": "int"}
     }
   },
+  "sftpTransferKindUploadTooltip": "Upload",
+  "sftpTransferKindDownloadTooltip": "Download",
   "sftpUploadQueueExpand": "Show all",
   "sftpUploadQueueCollapse": "Show less",
+  "sftpUploadRowPending": "Queued",
+  "sftpUploadCancelFileTooltip": "Cancel this upload",
+  "sftpUploadOverwriteTitle": "Replace on server?",
+  "sftpUploadOverwriteBody": "“{name}” already exists on the server. Replace it? Remote files will be overwritten or removed.",
+  "@sftpUploadOverwriteBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpUploadOverwriteConfirm": "Replace",
+  "sftpUploadConflictTypeMismatchTitle": "Cannot replace",
+  "sftpUploadConflictTypeMismatchBody": "“{name}” does not match the type on the server (file vs folder). Remove the remote item first, then upload again.",
+  "@sftpUploadConflictTypeMismatchBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
   "sftpBinaryNotOpened": "This file looks binary; open in editor was cancelled.",
   "sftpDeleteConfirmTitle": "Delete?",
   "sftpDeleteConfirmBody": "Delete “{name}”?",

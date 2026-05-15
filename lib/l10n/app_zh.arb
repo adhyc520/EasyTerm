@@ -87,6 +87,7 @@
   "sftpColumnModified": "修改时间",
   "sftpBreadcrumbRoot": "根",
   "sftpDownloadMenu": "下载到本地…",
+  "sftpOpenInEditorMenu": "在编辑器中打开…",
   "sftpDeleteMenu": "删除",
   "sftpPickDirTitle": "选择保存位置（将创建同名子文件夹）",
   "sftpSaveFileTitle": "保存远程文件",
@@ -94,14 +95,34 @@
   "sftpDownloadedFile": "已下载 {name}",
   "sftpUploaded": "已上传 {name}",
   "sftpUploadFailed": "上传失败: {error}",
-  "sftpUploadQueueHeading": "上传中（{count}）",
-  "@sftpUploadQueueHeading": {
+  "sftpTransferQueueProgress": "已完成 {done} / {total} 项",
+  "@sftpTransferQueueProgress": {
     "placeholders": {
-      "count": {"type": "int"}
+      "done": {"type": "int"},
+      "total": {"type": "int"}
     }
   },
+  "sftpTransferKindUploadTooltip": "上传",
+  "sftpTransferKindDownloadTooltip": "下载",
   "sftpUploadQueueExpand": "展开全部",
   "sftpUploadQueueCollapse": "收起",
+  "sftpUploadRowPending": "排队中",
+  "sftpUploadCancelFileTooltip": "取消上传此文件",
+  "sftpUploadOverwriteTitle": "覆盖服务器上的同名项？",
+  "sftpUploadOverwriteBody": "服务器当前目录下已存在「{name}」。覆盖将删除远端该项后重新上传，是否继续？",
+  "@sftpUploadOverwriteBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpUploadOverwriteConfirm": "覆盖",
+  "sftpUploadConflictTypeMismatchTitle": "无法覆盖",
+  "sftpUploadConflictTypeMismatchBody": "「{name}」与服务器上的类型不一致（文件 / 文件夹）。请先在服务器上删除该项后再上传。",
+  "@sftpUploadConflictTypeMismatchBody": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
   "sftpBinaryNotOpened": "该文件为二进制，已取消在编辑器中打开",
   "sftpDeleteConfirmTitle": "删除确认",
   "sftpDeleteConfirmBody": "确定删除「{name}」？",

@@ -620,6 +620,12 @@ abstract class AppLocalizations {
   /// **'Download…'**
   String get sftpDownloadMenu;
 
+  /// No description provided for @sftpOpenInEditorMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in editor…'**
+  String get sftpOpenInEditorMenu;
+
   /// No description provided for @sftpDeleteMenu.
   ///
   /// In en, this message translates to:
@@ -662,11 +668,23 @@ abstract class AppLocalizations {
   /// **'Upload failed: {error}'**
   String sftpUploadFailed(String error);
 
-  /// No description provided for @sftpUploadQueueHeading.
+  /// No description provided for @sftpTransferQueueProgress.
   ///
   /// In en, this message translates to:
-  /// **'Uploading ({count})'**
-  String sftpUploadQueueHeading(int count);
+  /// **'{done} / {total} tasks'**
+  String sftpTransferQueueProgress(int done, int total);
+
+  /// No description provided for @sftpTransferKindUploadTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload'**
+  String get sftpTransferKindUploadTooltip;
+
+  /// No description provided for @sftpTransferKindDownloadTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get sftpTransferKindDownloadTooltip;
 
   /// No description provided for @sftpUploadQueueExpand.
   ///
@@ -679,6 +697,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Show less'**
   String get sftpUploadQueueCollapse;
+
+  /// No description provided for @sftpUploadRowPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get sftpUploadRowPending;
+
+  /// No description provided for @sftpUploadCancelFileTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel this upload'**
+  String get sftpUploadCancelFileTooltip;
+
+  /// No description provided for @sftpUploadOverwriteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace on server?'**
+  String get sftpUploadOverwriteTitle;
+
+  /// No description provided for @sftpUploadOverwriteBody.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” already exists on the server. Replace it? Remote files will be overwritten or removed.'**
+  String sftpUploadOverwriteBody(String name);
+
+  /// No description provided for @sftpUploadOverwriteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace'**
+  String get sftpUploadOverwriteConfirm;
+
+  /// No description provided for @sftpUploadConflictTypeMismatchTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot replace'**
+  String get sftpUploadConflictTypeMismatchTitle;
+
+  /// No description provided for @sftpUploadConflictTypeMismatchBody.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” does not match the type on the server (file vs folder). Remove the remote item first, then upload again.'**
+  String sftpUploadConflictTypeMismatchBody(String name);
 
   /// No description provided for @sftpBinaryNotOpened.
   ///

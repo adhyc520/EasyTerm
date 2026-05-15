@@ -274,6 +274,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sftpDownloadMenu => '下载到本地…';
 
   @override
+  String get sftpOpenInEditorMenu => '在编辑器中打开…';
+
+  @override
   String get sftpDeleteMenu => '删除';
 
   @override
@@ -303,15 +306,46 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String sftpUploadQueueHeading(int count) {
-    return '上传中（$count）';
+  String sftpTransferQueueProgress(int done, int total) {
+    return '已完成 $done / $total 项';
   }
+
+  @override
+  String get sftpTransferKindUploadTooltip => '上传';
+
+  @override
+  String get sftpTransferKindDownloadTooltip => '下载';
 
   @override
   String get sftpUploadQueueExpand => '展开全部';
 
   @override
   String get sftpUploadQueueCollapse => '收起';
+
+  @override
+  String get sftpUploadRowPending => '排队中';
+
+  @override
+  String get sftpUploadCancelFileTooltip => '取消上传此文件';
+
+  @override
+  String get sftpUploadOverwriteTitle => '覆盖服务器上的同名项？';
+
+  @override
+  String sftpUploadOverwriteBody(String name) {
+    return '服务器当前目录下已存在「$name」。覆盖将删除远端该项后重新上传，是否继续？';
+  }
+
+  @override
+  String get sftpUploadOverwriteConfirm => '覆盖';
+
+  @override
+  String get sftpUploadConflictTypeMismatchTitle => '无法覆盖';
+
+  @override
+  String sftpUploadConflictTypeMismatchBody(String name) {
+    return '「$name」与服务器上的类型不一致（文件 / 文件夹）。请先在服务器上删除该项后再上传。';
+  }
 
   @override
   String get sftpBinaryNotOpened => '该文件为二进制，已取消在编辑器中打开';

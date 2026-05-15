@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -12,12 +13,16 @@ import 'package:flutter/foundation.dart'
         debugPrint;
 import 'package:flutter/widgets.dart' show Locale;
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:super_native_extensions/raw_clipboard.dart' as sne;
 import 'package:xterm/xterm.dart';
 
 import '../io/file_read.dart';
 import '../l10n/app_localizations.dart';
 import '../util/remote_paths.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
+import 'sftp_planned_upload.dart';
+import 'sftp_upload_progress_hooks.dart';
 import 'sftp_upload_task_list.dart';
 import 'workbench_settings_store.dart';
 
@@ -344,20 +349,81 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
-  /// 从本机路径上传文件或整个目录到当前远程工作目录。
+  /// 从本机路径上传文件或整个目录到当前远程工作目录（会先清空任务表再填充计划队列）。
   Future<void> uploadLocalFsPath(String localPath) async {
     final client = _sftp;
     if (client == null) return;
-    await sftp_transfer.uploadLocalPathToRemote(
+    uploadTasks.clear();
+    final plan = await sftp_transfer.planLocalUpload(
+      remoteCwd: _remoteCwd,
+      localPath: localPath,
+    );
+    final uploadTaskIds = plan.map((e) => e.localPath).toSet();
+    if (plan.isNotEmpty) {
+      uploadTasks.startBatch(
+        plan
+            .map(
+              (e) => SftpUploadTaskView(
+                    id: e.localPath,
+                    label: e.displayLabel,
+                    totalBytes: e.sizeBytes,
+                    direction: SftpTransferDirection.upload,
+                  ),
+                )
+            .toList(),
+      );
+    }
+    try {
+      await sftp_transfer.uploadPlannedFiles(
+        sftp: client,
+        remoteCwd: _remoteCwd,
+        localPath: localPath,
+        plan: plan,
+        hooks: sftp_transfer.SftpUploadProgressHooks(
+          shouldCancelUpload: uploadTasks.isCancellationRequested,
+          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
+          onFileEnd: (path, err) {
+            if (err is SftpUserCancelled) {
+              uploadTasks.removeCancelled(path);
+              return;
+            }
+            if (err != null) {
+              uploadTasks.fail(path, err);
+            } else {
+              uploadTasks.succeed(path);
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
+        if (uploadTaskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+          uploadTasks.fail(row.id, e);
+        }
+      }
+      rethrow;
+    }
+    await refreshDirectory();
+  }
+
+  /// 检测当前远程目录下是否已有与 [localPath] 最后一级同名的项。
+  Future<SftpRemoteUploadConflict> inspectLocalUploadConflict(String localPath) async {
+    final client = _sftp;
+    if (client == null) return SftpRemoteUploadConflict.none;
+    return sftp_transfer.inspectUploadConflict(
       sftp: client,
       remoteCwd: _remoteCwd,
       localPath: localPath,
-      hooks: sftp_transfer.SftpUploadProgressHooks(
-        onFileStart: uploadTasks.startFile,
-        onFileProgress: (path, uploaded, _) => uploadTasks.progress(path, uploaded),
-        onFileEnd: (path, err) => uploadTasks.endFile(path, error: err),
-      ),
     );
+  }
+
+  /// 删除当前远程目录下名为 [relativeName] 的文件或整棵子目录（用于覆盖上传前）。
+  Future<void> removeRemoteSubtreeForOverwrite(String relativeName) async {
+    final client = _sftp;
+    if (client == null) return;
+    final path = remoteJoin(_remoteCwd, relativeName);
+    await sftp_transfer.removeRemotePathRecursive(sftp: client, remotePath: path);
     await refreshDirectory();
   }
 
@@ -390,12 +456,170 @@ class SshWorkspaceController extends ChangeNotifier {
   ) async {
     final client = _sftp;
     if (client == null) return;
-    await sftp_transfer.saveRemoteFileToLocalPath(
+    final remotePath = remoteJoin(_remoteCwd, relativeName);
+    final plan = await sftp_transfer.planDownloadSingleFile(
       sftp: client,
-      remoteCwd: _remoteCwd,
-      relativeName: relativeName,
-      localFilePath: localFilePath,
+      remotePath: remotePath,
+      localPath: localFilePath,
+      displayLabel: relativeName,
     );
+    final taskIds = plan.map((e) => e.taskId).toSet();
+    uploadTasks.appendTasks(
+      plan
+          .map(
+            (e) => SftpUploadTaskView(
+                  id: e.taskId,
+                  label: e.displayLabel,
+                  totalBytes: e.sizeBytes,
+                  direction: SftpTransferDirection.download,
+                ),
+          )
+          .toList(),
+    );
+    try {
+      await sftp_transfer.executeDownloadPlan(
+        sftp: client,
+        plan: plan,
+        hooks: sftp_transfer.SftpUploadProgressHooks(
+          shouldCancelUpload: uploadTasks.isCancellationRequested,
+          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
+          onFileEnd: (path, err) {
+            if (err is SftpUserCancelled) {
+              uploadTasks.removeCancelled(path);
+              return;
+            }
+            if (err != null) {
+              uploadTasks.fail(path, err);
+            } else {
+              uploadTasks.succeed(path);
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
+        if (taskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+          uploadTasks.fail(row.id, e);
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// 将远程文件下载到临时文件，用于不支持虚拟拖出文件的平台（如 Linux）。
+  Future<String> materializeRemoteFileToTempForDrag(String relativeName) async {
+    final client = _sftp;
+    if (client == null) {
+      throw StateError('SFTP not connected');
+    }
+    final dir = await getTemporaryDirectory();
+    final base = remoteBasename(relativeName);
+    final path = p.join(
+      dir.path,
+      'terminall_drag_${DateTime.now().microsecondsSinceEpoch}_$base',
+    );
+    await downloadRemoteFileToLocalPath(relativeName, path);
+    return path;
+  }
+
+  /// 将远程文件按字节流写入系统拖放提供的 [sink]（虚拟文件导出）。
+  Future<void> streamRemoteFileIntoDragSink({
+    required String relativeName,
+    required int fileSizeBytes,
+    required dynamic sink,
+    required sne.WriteProgress progress,
+  }) async {
+    final client = _sftp;
+    if (client == null) return;
+
+    final safeName = relativeName.replaceAll(RegExp(r'[/\\]'), '_');
+    final taskId = 'drag_${DateTime.now().microsecondsSinceEpoch}_$safeName';
+
+    uploadTasks.appendTasks([
+      SftpUploadTaskView(
+        id: taskId,
+        label: relativeName,
+        totalBytes: fileSizeBytes < 0 ? 0 : fileSizeBytes,
+        direction: SftpTransferDirection.download,
+      ),
+    ]);
+    uploadTasks.setUploading(taskId);
+
+    final remotePath = remoteJoin(_remoteCwd, relativeName);
+    SftpFile? file;
+    var cancelled = false;
+    void onCancel() => cancelled = true;
+    progress.onCancel.addListener(onCancel);
+    var terminal = false;
+    var sinkClosed = false;
+    void closeDragSinkOnce() {
+      if (sinkClosed) return;
+      try {
+        sink.close();
+        sinkClosed = true;
+      } catch (_) {}
+    }
+
+    try {
+      final opened = await client.open(remotePath, mode: SftpFileOpenMode.read);
+      file = opened;
+      if (fileSizeBytes <= 0) {
+        uploadTasks.progress(taskId, 0);
+        if (cancelled || uploadTasks.isCancellationRequested(taskId)) {
+          uploadTasks.removeCancelled(taskId);
+        } else {
+          closeDragSinkOnce();
+          uploadTasks.succeed(taskId);
+        }
+        terminal = true;
+        return;
+      }
+      var offset = 0;
+      while (offset < fileSizeBytes) {
+        if (cancelled || uploadTasks.isCancellationRequested(taskId)) {
+          cancelled = true;
+          break;
+        }
+        final take = min(256 * 1024, fileSizeBytes - offset);
+        final chunk = await opened.readBytes(length: take, offset: offset);
+        if (chunk.isEmpty) {
+          break;
+        }
+        sink.add(chunk);
+        offset += chunk.length;
+        progress.updateProgress(offset / fileSizeBytes);
+        uploadTasks.progress(taskId, offset);
+      }
+      if (cancelled || uploadTasks.isCancellationRequested(taskId)) {
+        cancelled = true;
+      } else {
+        closeDragSinkOnce();
+        uploadTasks.succeed(taskId);
+        terminal = true;
+      }
+    } catch (e, st) {
+      debugPrint('streamRemoteFileIntoDragSink: $e\n$st');
+      uploadTasks.fail(taskId, e);
+      terminal = true;
+      try {
+        final errResult = sink.addError(e, st);
+        if (errResult is Future<void>) await errResult;
+      } catch (_) {
+        /* sink may already be torn down */
+      }
+    } finally {
+      progress.onCancel.removeListener(onCancel);
+      await file?.close();
+      if (!sinkClosed) {
+        closeDragSinkOnce();
+      }
+      if (!terminal) {
+        if (cancelled || uploadTasks.isCancellationRequested(taskId)) {
+          uploadTasks.removeCancelled(taskId);
+        }
+      }
+    }
   }
 
   /// 将远程子目录下载到本机 [localParentPath] 下，生成 `localParentPath/relativeDirName/`。
@@ -407,11 +631,54 @@ class SshWorkspaceController extends ChangeNotifier {
     if (client == null) return;
     final remotePath = remoteJoin(_remoteCwd, relativeDirName);
     final localDest = p.join(localParentPath, relativeDirName);
-    await sftp_transfer.downloadRemoteTreeToLocalPath(
+    final plan = await sftp_transfer.planRemoteDirectoryDownload(
       sftp: client,
-      remotePath: remotePath,
-      localDirPath: localDest,
+      remoteTreeRoot: remotePath,
+      localTreeRoot: localDest,
+      displayRootLabel: relativeDirName,
     );
+    final taskIds = plan.map((e) => e.taskId).toSet();
+    uploadTasks.appendTasks(
+      plan
+          .map(
+            (e) => SftpUploadTaskView(
+                  id: e.taskId,
+                  label: e.displayLabel,
+                  totalBytes: e.sizeBytes,
+                  direction: SftpTransferDirection.download,
+                ),
+          )
+          .toList(),
+    );
+    try {
+      await sftp_transfer.executeDownloadPlan(
+        sftp: client,
+        plan: plan,
+        hooks: sftp_transfer.SftpUploadProgressHooks(
+          shouldCancelUpload: uploadTasks.isCancellationRequested,
+          onFileStart: (path, String displayLabel, int totalBytes) => uploadTasks.setUploading(path),
+          onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
+          onFileEnd: (path, err) {
+            if (err is SftpUserCancelled) {
+              uploadTasks.removeCancelled(path);
+              return;
+            }
+            if (err != null) {
+              uploadTasks.fail(path, err);
+            } else {
+              uploadTasks.succeed(path);
+            }
+          },
+        ),
+      );
+    } catch (e) {
+      for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
+        if (taskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
+          uploadTasks.fail(row.id, e);
+        }
+      }
+      rethrow;
+    }
   }
 
   Future<Uint8List?> readRemoteFile(String relativeName) async {
