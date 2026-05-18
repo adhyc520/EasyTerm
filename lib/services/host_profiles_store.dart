@@ -12,10 +12,18 @@ class HostProfilesStore extends ChangeNotifier {
 
   final List<SavedHostProfile> profiles = [];
   bool _loaded = false;
+  Future<void>? _diskLoadFuture;
 
+  /// 从磁盘读出一次；未完成前 mutator 会在此等待，避免与 [profiles.clear] 交错抹掉刚写入的条目。
   Future<void> ensureLoaded() async {
     if (_loaded) return;
+    _diskLoadFuture ??= _loadProfilesFromDisk();
+    await _diskLoadFuture;
     _loaded = true;
+    _diskLoadFuture = null;
+  }
+
+  Future<void> _loadProfilesFromDisk() async {
     if (kIsWeb) {
       notifyListeners();
       return;
@@ -52,7 +60,8 @@ class HostProfilesStore extends ChangeNotifier {
   }
 
   /// 始终新增一条已保存连接（不因 host/port/user 与已有条目相同而合并）。
-  Future<void> add({
+  /// Web 上无持久化时返回 `null`。
+  Future<String?> add({
     required String label,
     required String host,
     required int port,
@@ -60,8 +69,10 @@ class HostProfilesStore extends ChangeNotifier {
     String? keyPath,
     String? password,
   }) async {
-    if (kIsWeb) return;
+    await ensureLoaded();
+    if (kIsWeb) return null;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final id = now.toString();
     final trimmedKey = keyPath?.trim();
     final kp = (trimmedKey == null || trimmedKey.isEmpty) ? null : trimmedKey;
     final pwdTrim = password?.trim();
@@ -69,7 +80,7 @@ class HostProfilesStore extends ChangeNotifier {
 
     profiles.add(
       SavedHostProfile(
-        id: now.toString(),
+        id: id,
         label: label.trim().isEmpty ? '$username@$host' : label.trim(),
         host: host.trim(),
         port: port,
@@ -82,6 +93,7 @@ class HostProfilesStore extends ChangeNotifier {
     profiles.sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
     await _persist();
     notifyListeners();
+    return id;
   }
 
   /// 按 [id] 更新已保存连接。[password] 为 `null` 表示不修改已存口令；非 null 则写入（含空字符串表示清除本地保存的口令）。
@@ -94,6 +106,7 @@ class HostProfilesStore extends ChangeNotifier {
     String? keyPath,
     String? password,
   }) async {
+    await ensureLoaded();
     if (kIsWeb) return;
     final i = profiles.indexWhere((p) => p.id == id);
     if (i < 0) return;
@@ -120,6 +133,7 @@ class HostProfilesStore extends ChangeNotifier {
   }
 
   Future<void> remove(String id) async {
+    await ensureLoaded();
     profiles.removeWhere((p) => p.id == id);
     if (!kIsWeb) {
       await _persist();

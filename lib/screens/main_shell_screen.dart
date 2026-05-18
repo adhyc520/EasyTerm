@@ -112,8 +112,11 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _persistLaunchAndConnect(ConnectionLaunch launch) async {
+    await _profiles.ensureLoaded();
+
     final label = launch.deviceLabel ?? '${launch.username}@${launch.host}';
     final updateId = launch.existingProfileId;
+    final String? profileIdForAuthUi;
     if (updateId != null) {
       await _profiles.updateById(
         id: updateId,
@@ -124,8 +127,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
         keyPath: launch.keyPath,
         password: launch.password.trim().isEmpty ? null : launch.password.trim(),
       );
+      profileIdForAuthUi = updateId;
     } else {
-      await _profiles.add(
+      profileIdForAuthUi = await _profiles.add(
         label: label,
         host: launch.host,
         port: launch.port,
@@ -135,28 +139,56 @@ class _MainShellScreenState extends State<MainShellScreen> {
       );
     }
 
-    _tabs.openTab(
+    final c = _tabs.openTab(
       host: launch.host,
       port: launch.port,
       username: launch.username,
       password: launch.password,
       privateKeyPem: launch.privateKeyPem,
     );
+    final pid = profileIdForAuthUi;
+    if (pid != null) {
+      final profile = _profileById(pid);
+      if (profile != null) {
+        _bindAuthFailureCredentialSheet(profile, launch.privateKeyPem, c);
+      }
+    }
   }
 
-  bool _looksAuthFailure(String message) {
-    if (message.contains('认证失败')) return true;
-    final m = message.toLowerCase();
-    return m.contains('authentication') ||
-        m.contains('sshauthfail') ||
-        m.contains('password') ||
-        m.contains('could not connect') ||
-        m.contains('未能连接') ||
-        m.contains('keyboard-interactive') ||
-        m.contains('all configured authentication methods failed') ||
-        m.contains('all authentication methods failed') ||
-        m.contains('login incorrect') ||
-        m.contains('access denied');
+  SavedHostProfile? _profileById(String id) {
+    for (final p in _profiles.profiles) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  /// 连接失败后若为凭据类错误，弹出已保存主机的口令/密钥口令输入层并关闭失败标签。
+  void _bindAuthFailureCredentialSheet(
+    SavedHostProfile profile,
+    String? privateKeyPem,
+    SshWorkspaceController c,
+  ) {
+    var handledOutcome = false;
+    void onCred() {
+      if (handledOutcome) return;
+      if (c.connected) {
+        c.removeListener(onCred);
+        handledOutcome = true;
+        return;
+      }
+      if (c.connecting) return;
+
+      if (!c.connected) {
+        handledOutcome = true;
+        c.removeListener(onCred);
+        if (c.suggestCredentialSheetAfterFailure) {
+          unawaited(_retrySavedProfileAfterAuthFailure(profile, privateKeyPem, c));
+        }
+        return;
+      }
+    }
+
+    c.addListener(onCred);
   }
 
   Future<void> _retrySavedProfileAfterAuthFailure(
@@ -168,29 +200,38 @@ class _MainShellScreenState extends State<MainShellScreen> {
     if (idx < 0) return;
     _tabs.closeTab(idx);
     if (!mounted) return;
-    final cred = await showSavedHostConnectSheet(context, profile);
+    // 关标签后立即弹层有时会抢不到 Overlay；让给出一帧再给 context。
+    await Future<void>.delayed(Duration.zero);
+
+    if (!mounted) return;
+    final liveProfile = _profileById(profile.id) ?? profile;
+    final cred = await showSavedHostConnectSheet(context, liveProfile);
     if (!mounted || cred == null) return;
-    _tabs.openTab(
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
+    final pemForReconnect = cred.privateKeyPem ?? privateKeyPem;
+    final retryC = _tabs.openTab(
+      host: liveProfile.host,
+      port: liveProfile.port,
+      username: liveProfile.username,
       password: cred.password,
-      privateKeyPem: cred.privateKeyPem ?? privateKeyPem,
+      privateKeyPem: pemForReconnect,
     );
+    _bindAuthFailureCredentialSheet(liveProfile, pemForReconnect, retryC);
     if (cred.password.trim().isNotEmpty) {
       await _profiles.updateById(
-        id: profile.id,
-        label: profile.label,
-        host: profile.host,
-        port: profile.port,
-        username: profile.username,
-        keyPath: profile.keyPath,
+        id: liveProfile.id,
+        label: liveProfile.label,
+        host: liveProfile.host,
+        port: liveProfile.port,
+        username: liveProfile.username,
+        keyPath: liveProfile.keyPath,
         password: cred.password.trim(),
       );
     }
   }
 
   Future<void> _connectFromSaved(SavedHostProfile profile) async {
+    await _profiles.ensureLoaded();
+
     String? pem;
     Object? keyReadFailure;
     try {
@@ -228,29 +269,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
       privateKeyPem: pem,
     );
 
-    var handledOutcome = false;
-    void onCred() {
-      if (handledOutcome) return;
-      if (c.connected) {
-        c.removeListener(onCred);
-        handledOutcome = true;
-        return;
-      }
-      if (c.connecting) return;
-      final err = c.error;
-      if (err == null || err.isEmpty) {
-        c.removeListener(onCred);
-        handledOutcome = true;
-        return;
-      }
-      handledOutcome = true;
-      c.removeListener(onCred);
-      if (_looksAuthFailure(err)) {
-        unawaited(_retrySavedProfileAfterAuthFailure(profile, pem, c));
-      }
-    }
-
-    c.addListener(onCred);
+    _bindAuthFailureCredentialSheet(profile, pem, c);
   }
 
   void _openSettingsMenu() {
@@ -803,6 +822,8 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
               trackVisibility: true,
               thickness: 4,
               radius: const Radius.circular(3),
+              // 否则会拦截底部区域的点击，用户常误以为「关不掉标签」。
+              interactive: false,
               child: ListView.separated(
                 controller: _scrollController,
                 primary: false,
@@ -821,39 +842,54 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
                           ? context.wb.accentBlue.withValues(alpha: 0.22)
                           : context.wb.panel,
                       borderRadius: BorderRadius.circular(6),
-                      child: InkWell(
-                        onTap: () => widget.onSelect(i),
-                        borderRadius: BorderRadius.circular(6),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.circle, size: 7, color: _sessionStatusDot(context, t.controller)),
-                              const SizedBox(width: 6),
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 180),
-                                child: Text(
-                                  t.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: selected ? context.wb.primaryText : context.wb.secondaryText,
-                                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                                  ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4, right: 2, top: 2, bottom: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              onTap: () => widget.onSelect(i),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.circle,
+                                      size: 7,
+                                      color: _sessionStatusDot(context, t.controller),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    ConstrainedBox(
+                                      constraints: const BoxConstraints(maxWidth: 180),
+                                      child: Text(
+                                        t.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: selected ? context.wb.primaryText : context.wb.secondaryText,
+                                          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              InkWell(
-                                onTap: () => widget.onClose(i),
-                                customBorder: const CircleBorder(),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(2),
-                                  child: Icon(Icons.close_rounded, size: 15, color: context.wb.textMuted),
-                                ),
+                            ),
+                            IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              visualDensity: VisualDensity.compact,
+                              tooltip: MaterialLocalizations.of(context).closeButtonLabel,
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),
-                            ],
-                          ),
+                              onPressed: () => widget.onClose(i),
+                              icon: Icon(Icons.close_rounded, size: 15, color: context.wb.textMuted),
+                            ),
+                          ],
                         ),
                       ),
                     ),

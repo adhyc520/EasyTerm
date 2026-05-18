@@ -159,21 +159,34 @@ void _showEntryContextMenu(
 
 /// 在原生拖放会话真正开始（[DataWriterItem.onRegistered]）后再标记内部拖放，
 /// 避免准备数据失败或用户中途松手时 [SftpSidePanel.isDraggingInternalItem] 一直为 true。
+///
+/// [tempPath] 给定时，会在 [item.onRegistered] 时登记到 [SshWorkspaceController]
+/// 的活跃拖出集合里，并在 [item.onDisposed] 时移除。这样即便用户把刚拖出的文件 / 目录
+/// 拖回到 SFTP 面板，也能被 [SshWorkspaceController.isPathFromRecentDragOut] 识别
+/// 并跳过自上传。
 void _trackSftpInternalDragItem(
   DragItem item, {
+  String? tempPath,
   VoidCallback? onDisposed,
 }) {
   item.onRegistered.addListener(() {
     SftpSidePanel.isDraggingInternalItem = true;
+    if (tempPath != null && tempPath.isNotEmpty) {
+      SshWorkspaceController.registerDragTempPath(tempPath);
+    }
   });
   item.onDisposed.addListener(() {
     SftpSidePanel.isDraggingInternalItem = false;
+    if (tempPath != null && tempPath.isNotEmpty) {
+      SshWorkspaceController.unregisterDragTempPath(tempPath);
+    }
     onDisposed?.call();
   });
 }
 
 /// 将远程文件或目录以系统原生拖放导出到 Finder / 资源管理器等。
-/// 文件优先使用虚拟文件流式拉取；目录须先在本机选择父文件夹，确认后才开始下载，取消则不进行任何传输。
+/// 文件优先虚拟文件流式拉取；文件夹拖出使用延迟拖动 + 先快照再下载整棵树。
+/// 右键菜单「下载」目录仍会弹出本机文件夹选择对话框。
 class _SftpRemoteEntryDragWrap extends StatelessWidget {
   const _SftpRemoteEntryDragWrap({
     required this.controller,
@@ -196,38 +209,57 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
     if (client == null) return null;
     if (!pickerContext.mounted) return null;
     final remotePath = remoteJoin(controller.remoteCwd, relativeName);
-    final st = await client.stat(remotePath);
+    final SftpFileAttrs st;
+    try {
+      st = await client.stat(remotePath);
+    } catch (_) {
+      return null;
+    }
     if (!pickerContext.mounted) return null;
     if (isDirectory) {
-      if (!st.isDirectory) return null;
-      final nameOnly = remoteBasename(relativeName);
-
-      try {
-        final tempPath = await controller
-            .materializeRemoteDirectoryToTempForDrag(
-          relativeName,
-          shouldAbort: () =>
-              sftpFolderDragPreparationShouldAbort?.call() ?? false,
-        );
-        if (!pickerContext.mounted) return null;
-        if (sftpFolderDragPreparationShouldAbort?.call() == true) return null;
-
-        final item = DragItem(suggestedName: nameOnly);
-        _trackSftpInternalDragItem(item);
-
-        item.add(
-          Formats.fileUri(
-            Uri.directory(
-              tempPath,
-              windows: defaultTargetPlatform == TargetPlatform.windows,
-            ),
-          ),
-        );
-        return item;
-      } catch (_) {
-        return null;
-      }
+      return _buildDirectoryDragItem(request, st);
     }
+    return _buildFileDragItem(st);
+  }
+
+  Future<DragItem?> _buildDirectoryDragItem(
+    DragItemRequest request,
+    SftpFileAttrs st,
+  ) async {
+    if (!st.isDirectory) return null;
+    final nameOnly = remoteBasename(relativeName);
+    try {
+      // 同步建一个空的临时目录马上返回 → 拖动立刻启动（不再有「等几秒拖影才动」）。
+      // 远端真实文件由控制器后台异步下载到这个临时目录，进度展示在底部任务队列。
+      // OS 拖放协议是 drop 那一刻 Finder/Explorer 一次性递归拷贝源目录，所以：
+      //   - 用户在队列清空后再松手 → 拷贝得到完整目录
+      //   - 用户提前松手 → 拷贝得到当时已下载完的部分
+      final tempPath = await controller.startBackgroundDirectoryDragOut(
+        relativeName,
+        shouldAbortBeforeStart: () =>
+            sftpFolderDragShouldAbort(request.session),
+      );
+      if (!pickerContext.mounted) return null;
+      if (sftpFolderDragShouldAbort(request.session)) return null;
+
+      final item = DragItem(suggestedName: nameOnly);
+      _trackSftpInternalDragItem(item, tempPath: tempPath);
+
+      item.add(
+        Formats.fileUri(
+          Uri.file(
+            tempPath,
+            windows: defaultTargetPlatform == TargetPlatform.windows,
+          ),
+        ),
+      );
+      return item;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<DragItem?> _buildFileDragItem(SftpFileAttrs st) async {
     if (st.isDirectory) return null;
     final nameOnly = remoteBasename(relativeName);
     final sizeBytes = st.size ?? 0;
@@ -240,6 +272,7 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
         final item = DragItem(suggestedName: nameOnly);
         _trackSftpInternalDragItem(
           item,
+          tempPath: path,
           onDisposed: () => sftp_transfer.deleteLocalFileQuiet(path),
         );
         item.add(Formats.fileUri(Uri.file(path)));
@@ -271,12 +304,17 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isDirectory) {
+      return PreSnapshotDragItemWidget(
+        allowedOperations: () => [DropOperation.copy],
+        dragItemProvider: _dragItemProvider,
+        child: child,
+      );
+    }
     return DragItemWidget(
       allowedOperations: () => [DropOperation.copy],
       dragItemProvider: _dragItemProvider,
-      child: isDirectory
-          ? SftpFolderDelayedDraggable(child: child)
-          : DraggableWidget(child: child),
+      child: DraggableWidget(child: child),
     );
   }
 }
@@ -583,26 +621,25 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                     onDragExited: (_) => setState(() => _dropHighlight = false),
                     onDragDone: (detail) async {
                       setState(() => _dropHighlight = false);
-                      final wasInternalDrag = SftpSidePanel.isDraggingInternalItem;
+                      final wasInternalDrag =
+                          SftpSidePanel.isDraggingInternalItem;
                       SftpSidePanel.isDraggingInternalItem = false;
                       if (kIsWeb) return;
-                      // 如果当前正处于内部组件拖出的状态，释放回同一面板直接取消，不做任何复制或上传。
+                      // 内部组件拖出又松手回到面板：直接取消，避免把临时副本再次上传回去。
                       if (wasInternalDrag) return;
 
                       final paths = <String>[];
                       for (final f in detail.files) {
                         final path = f.path;
-                        if (path.isNotEmpty) paths.add(path);
+                        if (path.isEmpty) continue;
+                        // 来自任何会话的拖出临时副本一律忽略，不区分当前控制器。
+                        if (SshWorkspaceController.isPathFromRecentDragOut(
+                          path,
+                        )) {
+                          continue;
+                        }
+                        paths.add(path);
                       }
-                      if (paths.isEmpty) return;
-                      // 过滤掉本应用自身拖出的临时文件/目录，避免拖回到自己的面板时触发上传。
-                      paths.removeWhere((p) {
-                        final base = p.split('/').last;
-                        return base.startsWith('easyterm_drag_') ||
-                            base.startsWith('easyterm_dragdir_') ||
-                            p.contains('/easyterm_drag_') ||
-                            p.contains('/easyterm_dragdir_');
-                      });
                       if (paths.isEmpty) return;
                       await _onLocalPathsDropped(context, paths);
                     },
@@ -793,8 +830,8 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                                   ? InkWell(
                                                       onTap: _c.loadingDir
                                                           ? null
-                                                          : () =>
-                                                                _c.navigateInto(
+                                                          : () => _c
+                                                                .navigateInto(
                                                                   e.filename,
                                                                 ),
                                                       child: rowInner,

@@ -278,6 +278,48 @@ abstract class AppLocalizations {
   /// **'Password / key passphrase'**
   String get connectionPasswordLabel;
 
+  /// No description provided for @connectionAuthMethodLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in method'**
+  String get connectionAuthMethodLabel;
+
+  /// No description provided for @connectionAuthPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get connectionAuthPassword;
+
+  /// No description provided for @connectionAuthPrivateKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Private key'**
+  String get connectionAuthPrivateKey;
+
+  /// No description provided for @connectionSshPasswordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'SSH password'**
+  String get connectionSshPasswordLabel;
+
+  /// No description provided for @connectionSshPasswordHintEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave blank to keep the saved password'**
+  String get connectionSshPasswordHintEdit;
+
+  /// No description provided for @connectionKeyPassphraseLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key passphrase (optional)'**
+  String get connectionKeyPassphraseLabel;
+
+  /// No description provided for @connectionKeyPassphraseHintEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave blank to keep the saved key passphrase'**
+  String get connectionKeyPassphraseHintEdit;
+
   /// No description provided for @connectionPasswordHintEdit.
   ///
   /// In en, this message translates to:
@@ -287,7 +329,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectionKeyPathLabel.
   ///
   /// In en, this message translates to:
-  /// **'Private key path (optional)'**
+  /// **'Private key file'**
   String get connectionKeyPathLabel;
 
   /// No description provided for @connectionKeyPathHint.
@@ -296,11 +338,29 @@ abstract class AppLocalizations {
   /// **'On desktop, use Browse on the right'**
   String get connectionKeyPathHint;
 
+  /// No description provided for @connectionMissingKeyPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Please choose a private key file.'**
+  String get connectionMissingKeyPath;
+
+  /// No description provided for @connectionPrivateKeyEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'The key file is empty or not valid PEM text.'**
+  String get connectionPrivateKeyEmpty;
+
   /// No description provided for @connectionPickKeyTooltip.
   ///
   /// In en, this message translates to:
   /// **'Choose private key file'**
   String get connectionPickKeyTooltip;
+
+  /// No description provided for @connectionPickKeyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not choose a private key file: {error}'**
+  String connectionPickKeyFailed(String error);
 
   /// No description provided for @connectionSubmitConnect.
   ///

@@ -101,16 +101,48 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectionPasswordLabel => '密码 / 密钥口令';
 
   @override
+  String get connectionAuthMethodLabel => '认证方式';
+
+  @override
+  String get connectionAuthPassword => '密码';
+
+  @override
+  String get connectionAuthPrivateKey => '私钥';
+
+  @override
+  String get connectionSshPasswordLabel => 'SSH 密码';
+
+  @override
+  String get connectionSshPasswordHintEdit => '留空则保留已保存的密码';
+
+  @override
+  String get connectionKeyPassphraseLabel => '私钥口令（可选）';
+
+  @override
+  String get connectionKeyPassphraseHintEdit => '留空则保留已保存的私钥口令';
+
+  @override
   String get connectionPasswordHintEdit => '留空则保留已保存的口令';
 
   @override
-  String get connectionKeyPathLabel => '私钥路径（可选）';
+  String get connectionKeyPathLabel => '私钥文件';
 
   @override
   String get connectionKeyPathHint => '桌面端可点右侧浏览';
 
   @override
+  String get connectionMissingKeyPath => '请选择私钥文件。';
+
+  @override
+  String get connectionPrivateKeyEmpty => '私钥文件为空或不是有效的 PEM 文本。';
+
+  @override
   String get connectionPickKeyTooltip => '选择私钥文件';
+
+  @override
+  String connectionPickKeyFailed(String error) {
+    return '无法选择私钥文件：$error';
+  }
 
   @override
   String get connectionSubmitConnect => '连接';

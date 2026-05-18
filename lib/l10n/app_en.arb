@@ -35,10 +35,25 @@
   "connectionPortLabel": "Port",
   "connectionUserLabel": "Username",
   "connectionPasswordLabel": "Password / key passphrase",
+  "connectionAuthMethodLabel": "Sign-in method",
+  "connectionAuthPassword": "Password",
+  "connectionAuthPrivateKey": "Private key",
+  "connectionSshPasswordLabel": "SSH password",
+  "connectionSshPasswordHintEdit": "Leave blank to keep the saved password",
+  "connectionKeyPassphraseLabel": "Key passphrase (optional)",
+  "connectionKeyPassphraseHintEdit": "Leave blank to keep the saved key passphrase",
   "connectionPasswordHintEdit": "Leave blank to keep the saved passphrase",
-  "connectionKeyPathLabel": "Private key path (optional)",
+  "connectionKeyPathLabel": "Private key file",
   "connectionKeyPathHint": "On desktop, use Browse on the right",
+  "connectionMissingKeyPath": "Please choose a private key file.",
+  "connectionPrivateKeyEmpty": "The key file is empty or not valid PEM text.",
   "connectionPickKeyTooltip": "Choose private key file",
+  "connectionPickKeyFailed": "Could not choose a private key file: {error}",
+  "@connectionPickKeyFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
   "connectionSubmitConnect": "Connect",
   "connectionSubmitSave": "Save",
   "connectionMissingHostUser": "Please enter host and username.",

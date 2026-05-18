@@ -9,6 +9,21 @@ import 'sftp_planned_download.dart';
 import 'sftp_planned_upload.dart';
 import 'sftp_upload_progress_hooks.dart';
 
+const int _kSftpChunkBytes = 256 * 1024;
+
+/// 单文件下载时同时在飞的 SFTP 读请求上限。
+///
+/// dartssh2 默认为 64，叠加 [_kSftpChunkBytes] 256 KB 时最多有 16 MB 数据“躺在
+/// SSH 通道与服务端读队列里”。一旦用户在传输队列里 × 取消，OpenSSH-style
+/// 的 sftp-server 仍会按收到顺序把这堆 read 全部处理完才轮到新到的 `stat` /
+/// `open`（即「切换目录」「再次拖出」依赖的请求），导致取消后明显的卡顿。
+///
+/// 把上限收紧到 8 → 至多 ~2 MB 在飞，足够在常见网络下保持下载吞吐，又把取消
+/// 后让出 SFTP 通道的延迟压到可忽略的量级。
+const int _kSftpDownloadMaxPendingRequests = 8;
+
+// ─── 通用工具 ────────────────────────────────────────────────────────────────
+
 String _labelAnchor(String localPath) {
   final t = FileSystemEntity.typeSync(localPath, followLinks: false);
   if (t == FileSystemEntityType.file) {
@@ -22,6 +37,49 @@ String _displayLabelForFile(String localFilePath, String anchor) {
   if (rel == '.') return p.basename(localFilePath);
   return rel;
 }
+
+/// 先关闭再删，否则 Windows/macOS 上句柄未释放时无法删除。
+Future<void> _closeIosinkQuiet(IOSink? sink) async {
+  if (sink == null) return;
+  try {
+    await sink.flush();
+  } catch (_) {}
+  try {
+    await sink.close();
+  } catch (_) {}
+}
+
+void deleteLocalFileQuiet(String localFilePath) {
+  try {
+    File(localFilePath).deleteSync();
+  } catch (_) {}
+}
+
+/// 删除整棵本地目录（用于取消目录拖出后清理临时副本）。
+void deleteLocalDirectoryQuiet(String localDirPath) {
+  try {
+    final dir = Directory(localDirPath);
+    if (dir.existsSync()) {
+      dir.deleteSync(recursive: true);
+    }
+  } catch (_) {}
+}
+
+/// 创建本地目录（包含中间目录），用于空远端目录的拖出占位。
+Future<void> ensureLocalDirectoryExists(String localDirPath) async {
+  await Directory(localDirPath).create(recursive: true);
+}
+
+/// 文件是否存在（用于物化拖出后侦测「下载被取消」状态）。
+bool localFileExistsSync(String path) {
+  try {
+    return File(path).existsSync();
+  } catch (_) {
+    return false;
+  }
+}
+
+// ─── 远端冲突探测与覆盖删除 ───────────────────────────────────────────────────
 
 /// 探测当前远程目录下是否已有与本地 [localPath] 最后一级同名的项。
 Future<SftpRemoteUploadConflict> inspectUploadConflict({
@@ -68,7 +126,10 @@ Future<void> removeRemotePathRecursive({
   }
 }
 
-Future<void> _ensureRemoteParentChainExists(SftpClient sftp, String remoteDirAbs) async {
+Future<void> _ensureRemoteParentChainExists(
+  SftpClient sftp,
+  String remoteDirAbs,
+) async {
   if (remoteDirAbs.isEmpty || remoteDirAbs == '/') return;
   try {
     final st = await sftp.stat(remoteDirAbs);
@@ -85,6 +146,8 @@ Future<void> _ensureRemoteParentChainExists(SftpClient sftp, String remoteDirAbs
     await sftp.mkdir(remoteDirAbs);
   } catch (_) {}
 }
+
+// ─── 本地→远端：扫描与执行 ────────────────────────────────────────────────────
 
 Future<List<SftpPlannedUploadFile>> planLocalUpload({
   required String remoteCwd,
@@ -178,6 +241,7 @@ Future<void> uploadPlannedFiles({
   SftpUploadProgressHooks? hooks,
 }) async {
   if (plan.isEmpty) {
+    // 空目录也要在远端建立同名目录，否则用户看不到任何东西。
     final t = FileSystemEntity.typeSync(localPath, followLinks: false);
     if (t == FileSystemEntityType.directory) {
       final name = p.basename(localPath);
@@ -230,7 +294,9 @@ Future<void> _uploadOneFile(
   try {
     out = await sftp.open(
       remotePath,
-      mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
+      mode: SftpFileOpenMode.create |
+          SftpFileOpenMode.write |
+          SftpFileOpenMode.truncate,
     );
   } catch (e, st) {
     hooks?.onFileEnd?.call(localFilePath, e);
@@ -281,6 +347,8 @@ Future<void> _uploadOneFile(
   }
 }
 
+// ─── 远端→本地：扫描与执行 ────────────────────────────────────────────────────
+
 Future<List<SftpPlannedDownloadFile>> planDownloadSingleFile({
   required SftpClient sftp,
   required String remotePath,
@@ -308,14 +376,22 @@ Future<List<SftpPlannedDownloadFile>> planRemoteDirectoryDownload({
   required String remoteTreeRoot,
   required String localTreeRoot,
   required String displayRootLabel,
+  String? taskIdPrefix,
+  bool Function()? shouldAbort,
+  void Function(SftpPlannedDownloadFile entry)? onEntryDiscovered,
 }) async {
   final out = <SftpPlannedDownloadFile>[];
+  final idPrefix = taskIdPrefix ??
+      'dl_${DateTime.now().microsecondsSinceEpoch}_${displayRootLabel.hashCode}';
   await _planRemoteDownloadRecursive(
     sftp: sftp,
     remoteDir: remoteTreeRoot,
     localDir: localTreeRoot,
     displayPrefix: displayRootLabel,
+    taskIdPrefix: idPrefix,
+    shouldAbort: shouldAbort,
     out: out,
+    onEntryDiscovered: onEntryDiscovered,
   );
   return out;
 }
@@ -325,11 +401,16 @@ Future<void> _planRemoteDownloadRecursive({
   required String remoteDir,
   required String localDir,
   required String displayPrefix,
+  required String taskIdPrefix,
+  required bool Function()? shouldAbort,
   required List<SftpPlannedDownloadFile> out,
+  void Function(SftpPlannedDownloadFile entry)? onEntryDiscovered,
 }) async {
+  if (shouldAbort?.call() == true) throw const SftpUserCancelled();
   await Directory(localDir).create(recursive: true);
   final names = await sftp.listdir(remoteDir);
   for (final n in names) {
+    if (shouldAbort?.call() == true) throw const SftpUserCancelled();
     if (n.filename == '.' || n.filename == '..') continue;
     final rChild = remoteJoin(remoteDir, n.filename);
     final lChild = p.join(localDir, n.filename);
@@ -340,20 +421,27 @@ Future<void> _planRemoteDownloadRecursive({
         remoteDir: rChild,
         localDir: lChild,
         displayPrefix: childDisplay,
+        taskIdPrefix: taskIdPrefix,
+        shouldAbort: shouldAbort,
         out: out,
+        onEntryDiscovered: onEntryDiscovered,
       );
     } else {
-      final st = await sftp.stat(rChild);
-      final size = st.size ?? 0;
-      out.add(
-        SftpPlannedDownloadFile(
-          taskId: 'dl_${out.length}_${DateTime.now().microsecondsSinceEpoch}',
-          displayLabel: '$displayPrefix/${n.filename}',
-          remotePath: rChild,
-          localPath: lChild,
-          sizeBytes: size,
-        ),
+      // SFTP v3 的 READDIR 响应已经带回每个条目的 attrs（含 size），再单独发一次
+      // SSH_FXP_STAT 等价于 N 次额外往返。`_downloadOneFileWithHooks` 在打开文件
+      // 后会再用 `inFile.stat()` 校准实际大小，所以这里的 size 偏差不影响下载
+      // 字节数本身，只影响进度条总长度。这一步是「拖出目录后用户能多快开始看到
+      // 文件流入」的最大瓶颈，必须省掉。
+      final size = n.attr.size ?? 0;
+      final entry = SftpPlannedDownloadFile(
+        taskId: '${taskIdPrefix}_${out.length}',
+        displayLabel: '$displayPrefix/${n.filename}',
+        remotePath: rChild,
+        localPath: lChild,
+        sizeBytes: size,
       );
+      out.add(entry);
+      onEntryDiscovered?.call(entry);
     }
   }
 }
@@ -365,6 +453,7 @@ Future<void> executeDownloadPlan({
 }) async {
   for (final entry in plan) {
     if (hooks?.shouldCancelUpload?.call(entry.taskId) == true) {
+      hooks?.onFileEnd?.call(entry.taskId, const SftpUserCancelled());
       continue;
     }
     await Directory(p.dirname(entry.localPath)).create(recursive: true);
@@ -402,14 +491,20 @@ Future<void> _downloadOneFileWithHooks({
     Error.throwWithStackTrace(e, st);
   }
 
-  final int total;
-  try {
-    final st = await inFile.stat();
-    total = plannedSize > 0 ? plannedSize : (st.size ?? 0);
-  } catch (e, st) {
-    await inFile.close();
-    hooks?.onFileEnd?.call(taskId, e);
-    Error.throwWithStackTrace(e, st);
+  // 规划阶段已经从 listdir 的 attrs 拿到 size，再发一次 SSH_FXP_FSTAT 等于每个
+  // 文件多一个 RTT —— 对「目录里全是小文件」的场景就是 N 个白白的往返。这里
+  // 仅在 plannedSize <= 0 时回退到 fstat（兼容某些 SFTP 服务在 readdir 响应里
+  // 不带 size 的实现）。
+  int total = plannedSize;
+  if (total <= 0) {
+    try {
+      final st = await inFile.stat();
+      total = st.size ?? 0;
+    } catch (e, st) {
+      await inFile.close();
+      hooks?.onFileEnd?.call(taskId, e);
+      Error.throwWithStackTrace(e, st);
+    }
   }
 
   try {
@@ -431,7 +526,12 @@ Future<void> _downloadOneFileWithHooks({
         }
       } else {
         var done = 0;
-        await for (final chunk in inFile.read(length: total, offset: 0, chunkSize: 256 * 1024)) {
+        await for (final chunk in inFile.read(
+          length: total,
+          offset: 0,
+          chunkSize: _kSftpChunkBytes,
+          maxPendingRequests: _kSftpDownloadMaxPendingRequests,
+        )) {
           if (hooks?.shouldCancelUpload?.call(taskId) == true) {
             userCancelled = true;
             hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
@@ -441,7 +541,8 @@ Future<void> _downloadOneFileWithHooks({
           done += chunk.length;
           hooks?.onFileProgress?.call(taskId, done, total);
         }
-        if (!userCancelled && hooks?.shouldCancelUpload?.call(taskId) == true) {
+        if (!userCancelled &&
+            hooks?.shouldCancelUpload?.call(taskId) == true) {
           userCancelled = true;
           hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
         }
@@ -474,48 +575,4 @@ Future<void> saveRemoteFileToLocalPath({
   final remotePath = remoteJoin(remoteCwd, relativeName);
   final sink = File(localFilePath).openWrite();
   await sftp.download(remotePath, sink, closeDestination: true);
-}
-
-Future<void> downloadRemoteTreeToLocalPath({
-  required SftpClient sftp,
-  required String remotePath,
-  required String localDirPath,
-  bool Function()? shouldAbort,
-}) async {
-  final label = p.basename(remotePath.replaceAll('\\', '/'));
-  final plan = await planRemoteDirectoryDownload(
-    sftp: sftp,
-    remoteTreeRoot: remotePath,
-    localTreeRoot: localDirPath,
-    displayRootLabel: label,
-  );
-  await executeDownloadPlan(
-    sftp: sftp,
-    plan: plan,
-    hooks: shouldAbort == null
-        ? null
-        : SftpUploadProgressHooks(
-            shouldCancelUpload: (_) => shouldAbort(),
-          ),
-  );
-  if (shouldAbort?.call() == true) {
-    throw const SftpUserCancelled();
-  }
-}
-
-void deleteLocalFileQuiet(String localFilePath) {
-  try {
-    File(localFilePath).deleteSync();
-  } catch (_) {}
-}
-
-/// 先关闭再删，否则 Windows/macOS 上句柄未释放时无法删除。
-Future<void> _closeIosinkQuiet(IOSink? sink) async {
-  if (sink == null) return;
-  try {
-    await sink.flush();
-  } catch (_) {}
-  try {
-    await sink.close();
-  } catch (_) {}
 }

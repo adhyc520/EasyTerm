@@ -4,13 +4,15 @@ import 'sftp_planned_download.dart';
 import 'sftp_planned_upload.dart';
 import 'sftp_upload_progress_hooks.dart';
 
+const String _kDesktopOnlyMsg = '本地文件上传/下载仅在支持 dart:io 的桌面端可用';
+
 Future<void> uploadLocalPathToRemote({
   required SftpClient sftp,
   required String remoteCwd,
   required String localPath,
   SftpUploadProgressHooks? hooks,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<void> uploadPlannedFiles({
@@ -20,7 +22,7 @@ Future<void> uploadPlannedFiles({
   required List<SftpPlannedUploadFile> plan,
   SftpUploadProgressHooks? hooks,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<SftpRemoteUploadConflict> inspectUploadConflict({
@@ -28,21 +30,21 @@ Future<SftpRemoteUploadConflict> inspectUploadConflict({
   required String remoteCwd,
   required String localPath,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<void> removeRemotePathRecursive({
   required SftpClient sftp,
   required String remotePath,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<List<SftpPlannedUploadFile>> planLocalUpload({
   required String remoteCwd,
   required String localPath,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<List<SftpPlannedDownloadFile>> planDownloadSingleFile({
@@ -51,7 +53,7 @@ Future<List<SftpPlannedDownloadFile>> planDownloadSingleFile({
   required String localPath,
   required String displayLabel,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<List<SftpPlannedDownloadFile>> planRemoteDirectoryDownload({
@@ -59,8 +61,11 @@ Future<List<SftpPlannedDownloadFile>> planRemoteDirectoryDownload({
   required String remoteTreeRoot,
   required String localTreeRoot,
   required String displayRootLabel,
+  String? taskIdPrefix,
+  bool Function()? shouldAbort,
+  void Function(SftpPlannedDownloadFile entry)? onEntryDiscovered,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<void> executeDownloadPlan({
@@ -68,7 +73,7 @@ Future<void> executeDownloadPlan({
   required List<SftpPlannedDownloadFile> plan,
   SftpUploadProgressHooks? hooks,
 }) async {
-  throw UnsupportedError('本地文件上传仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 Future<void> saveRemoteFileToLocalPath({
@@ -77,16 +82,15 @@ Future<void> saveRemoteFileToLocalPath({
   required String relativeName,
   required String localFilePath,
 }) async {
-  throw UnsupportedError('保存到本地路径仅在支持 dart:io 的桌面端可用');
-}
-
-Future<void> downloadRemoteTreeToLocalPath({
-  required SftpClient sftp,
-  required String remotePath,
-  required String localDirPath,
-  bool Function()? shouldAbort,
-}) async {
-  throw UnsupportedError('目录下载到本地仅在支持 dart:io 的桌面端可用');
+  throw UnsupportedError(_kDesktopOnlyMsg);
 }
 
 void deleteLocalFileQuiet(String localFilePath) {}
+
+void deleteLocalDirectoryQuiet(String localDirPath) {}
+
+Future<void> ensureLocalDirectoryExists(String localDirPath) async {
+  throw UnsupportedError(_kDesktopOnlyMsg);
+}
+
+bool localFileExistsSync(String path) => false;

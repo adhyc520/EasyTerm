@@ -105,17 +105,52 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectionPasswordLabel => 'Password / key passphrase';
 
   @override
+  String get connectionAuthMethodLabel => 'Sign-in method';
+
+  @override
+  String get connectionAuthPassword => 'Password';
+
+  @override
+  String get connectionAuthPrivateKey => 'Private key';
+
+  @override
+  String get connectionSshPasswordLabel => 'SSH password';
+
+  @override
+  String get connectionSshPasswordHintEdit =>
+      'Leave blank to keep the saved password';
+
+  @override
+  String get connectionKeyPassphraseLabel => 'Key passphrase (optional)';
+
+  @override
+  String get connectionKeyPassphraseHintEdit =>
+      'Leave blank to keep the saved key passphrase';
+
+  @override
   String get connectionPasswordHintEdit =>
       'Leave blank to keep the saved passphrase';
 
   @override
-  String get connectionKeyPathLabel => 'Private key path (optional)';
+  String get connectionKeyPathLabel => 'Private key file';
 
   @override
   String get connectionKeyPathHint => 'On desktop, use Browse on the right';
 
   @override
+  String get connectionMissingKeyPath => 'Please choose a private key file.';
+
+  @override
+  String get connectionPrivateKeyEmpty =>
+      'The key file is empty or not valid PEM text.';
+
+  @override
   String get connectionPickKeyTooltip => 'Choose private key file';
+
+  @override
+  String connectionPickKeyFailed(String error) {
+    return 'Could not choose a private key file: $error';
+  }
 
   @override
   String get connectionSubmitConnect => 'Connect';

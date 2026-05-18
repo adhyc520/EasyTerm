@@ -30,10 +30,25 @@
   "connectionPortLabel": "端口",
   "connectionUserLabel": "用户名",
   "connectionPasswordLabel": "密码 / 密钥口令",
+  "connectionAuthMethodLabel": "认证方式",
+  "connectionAuthPassword": "密码",
+  "connectionAuthPrivateKey": "私钥",
+  "connectionSshPasswordLabel": "SSH 密码",
+  "connectionSshPasswordHintEdit": "留空则保留已保存的密码",
+  "connectionKeyPassphraseLabel": "私钥口令（可选）",
+  "connectionKeyPassphraseHintEdit": "留空则保留已保存的私钥口令",
   "connectionPasswordHintEdit": "留空则保留已保存的口令",
-  "connectionKeyPathLabel": "私钥路径（可选）",
+  "connectionKeyPathLabel": "私钥文件",
   "connectionKeyPathHint": "桌面端可点右侧浏览",
+  "connectionMissingKeyPath": "请选择私钥文件。",
+  "connectionPrivateKeyEmpty": "私钥文件为空或不是有效的 PEM 文本。",
   "connectionPickKeyTooltip": "选择私钥文件",
+  "connectionPickKeyFailed": "无法选择私钥文件：{error}",
+  "@connectionPickKeyFailed": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
   "connectionSubmitConnect": "连接",
   "connectionSubmitSave": "保存",
   "connectionMissingHostUser": "请填写主机与用户名。",
