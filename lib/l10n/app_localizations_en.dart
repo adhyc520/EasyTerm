@@ -33,6 +33,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuAbout => 'About EasyTerm';
 
   @override
+  String get menuQuit => 'Quit EasyTerm';
+
+  @override
+  String get menuFile => 'File';
+
+  @override
+  String get menuCloseTab => 'Close Tab';
+
+  @override
   String get aboutDescription =>
       'Multi-session SSH terminal with SFTP file browsing.';
 
@@ -379,6 +388,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sftpUploadCancelFileTooltip => 'Cancel this upload';
+
+  @override
+  String get sftpUploadCancelAllTooltip => 'Cancel all';
 
   @override
   String get sftpUploadOverwriteTitle => 'Replace on server?';

@@ -146,6 +146,24 @@ abstract class AppLocalizations {
   /// **'About EasyTerm'**
   String get menuAbout;
 
+  /// No description provided for @menuQuit.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit EasyTerm'**
+  String get menuQuit;
+
+  /// No description provided for @menuFile.
+  ///
+  /// In en, this message translates to:
+  /// **'File'**
+  String get menuFile;
+
+  /// No description provided for @menuCloseTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Tab'**
+  String get menuCloseTab;
+
   /// No description provided for @aboutDescription.
   ///
   /// In en, this message translates to:
@@ -781,6 +799,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Cancel this upload'**
   String get sftpUploadCancelFileTooltip;
+
+  /// No description provided for @sftpUploadCancelAllTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel all'**
+  String get sftpUploadCancelAllTooltip;
 
   /// No description provided for @sftpUploadOverwriteTitle.
   ///

@@ -72,6 +72,7 @@ Future<void> executeDownloadPlan({
   required SftpClient sftp,
   required List<SftpPlannedDownloadFile> plan,
   SftpUploadProgressHooks? hooks,
+  int concurrency = 4,
 }) async {
   throw UnsupportedError(_kDesktopOnlyMsg);
 }

@@ -33,6 +33,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuAbout => '关于 EasyTerm';
 
   @override
+  String get menuQuit => '退出 EasyTerm';
+
+  @override
+  String get menuFile => '文件';
+
+  @override
+  String get menuCloseTab => '关闭标签页';
+
+  @override
   String get aboutDescription => '多会话 SSH 终端与 SFTP 文件浏览。';
 
   @override
@@ -365,6 +374,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sftpUploadCancelFileTooltip => '取消上传此文件';
+
+  @override
+  String get sftpUploadCancelAllTooltip => '全部取消';
 
   @override
   String get sftpUploadOverwriteTitle => '覆盖服务器上的同名项？';

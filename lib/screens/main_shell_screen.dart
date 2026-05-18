@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import '../l10n/app_localizations.dart';
 import '../models/saved_host_profile.dart';
 import '../services/host_profiles_store.dart';
+import '../services/workbench_desktop_shortcuts.dart';
 import '../services/session_tabs_controller.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
@@ -97,6 +98,99 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _openNewHostShortcut() {
     unawaited(_openNewHostSheet());
+  }
+
+  void _closeCurrentTabOrWindow() {
+    if (_tabs.tabs.isNotEmpty) {
+      _tabs.closeTab(_tabs.selectedIndex);
+    } else {
+      unawaited(workbenchCloseWindow());
+    }
+  }
+
+  void _showAboutDialog() {
+    final about = AppLocalizations.of(context)!;
+    showAboutDialog(
+      context: context,
+      applicationName: about.appTitle,
+      applicationVersion: '1.0',
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(about.aboutDescription),
+        ),
+      ],
+    );
+  }
+
+  Map<ShortcutActivator, VoidCallback> _shellShortcutBindings() {
+    if (!workbenchDesktopShortcutsEnabled()) return const {};
+    return {
+      ...workbenchBindActivators(workbenchMetaOrControl(LogicalKeyboardKey.keyN), _openNewHostShortcut),
+      ...workbenchBindActivators(workbenchMetaOrControl(LogicalKeyboardKey.comma), _openSettingsMenu),
+      ...workbenchBindActivators(
+        workbenchMetaOrControl(LogicalKeyboardKey.keyT, shift: true),
+        _openNewHostShortcut,
+      ),
+      ...workbenchBindActivators(workbenchMetaOrControl(LogicalKeyboardKey.keyW), _closeCurrentTabOrWindow),
+      ...workbenchBindActivators(
+        workbenchMetaOrControl(LogicalKeyboardKey.keyW, shift: true),
+        _tabs.closeAll,
+      ),
+    };
+  }
+
+  Widget _wrapMacPlatformMenu(Widget child) {
+    if (!Platform.isMacOS) return child;
+    final l10n = AppLocalizations.of(context)!;
+    return PlatformMenuBar(
+      menus: [
+        PlatformMenu(
+          label: l10n.appTitle,
+          menus: [
+            PlatformMenuItem(
+              label: l10n.menuAbout,
+              onSelected: _showAboutDialog,
+            ),
+            PlatformMenuItem(
+              label: l10n.settingsTooltip,
+              shortcut: const SingleActivator(LogicalKeyboardKey.comma, meta: true),
+              onSelected: _openSettingsMenu,
+            ),
+            PlatformMenuItemGroup(
+              members: [
+                PlatformMenuItem(
+                  label: l10n.menuQuit,
+                  shortcut: const SingleActivator(LogicalKeyboardKey.keyQ, meta: true),
+                  onSelected: () => unawaited(workbenchQuitApplication()),
+                ),
+              ],
+            ),
+          ],
+        ),
+        PlatformMenu(
+          label: l10n.menuFile,
+          menus: [
+            PlatformMenuItem(
+              label: l10n.newConnection,
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+              onSelected: _openNewHostShortcut,
+            ),
+            PlatformMenuItem(
+              label: l10n.menuCloseTab,
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyW, meta: true),
+              onSelected: _closeCurrentTabOrWindow,
+            ),
+            PlatformMenuItem(
+              label: l10n.menuCloseAllSessions,
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyW, meta: true, shift: true),
+              onSelected: _tabs.closeAll,
+            ),
+          ],
+        ),
+      ],
+      child: child,
+    );
   }
 
   Future<void> _openNewHostSheet() async {
@@ -338,18 +432,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                 Navigator.pop(ctx);
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!context.mounted) return;
-                  final about = AppLocalizations.of(context)!;
-                  showAboutDialog(
-                    context: context,
-                    applicationName: about.appTitle,
-                    applicationVersion: '1.0',
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text(about.aboutDescription),
-                      ),
-                    ],
-                  );
+                  _showAboutDialog();
                 });
               },
             ),
@@ -361,12 +444,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyT, meta: true, shift: true): _openNewHostShortcut,
-        const SingleActivator(LogicalKeyboardKey.keyT, control: true, shift: true): _openNewHostShortcut,
-      },
-      child: Scaffold(
+    return _wrapMacPlatformMenu(
+      CallbackShortcuts(
+        bindings: _shellShortcutBindings(),
+        child: Scaffold(
         backgroundColor: context.wb.bg,
         body: SafeArea(
           child: Column(
@@ -414,6 +495,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

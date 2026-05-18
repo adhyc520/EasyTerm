@@ -108,9 +108,23 @@ class SftpUploadTaskList extends ChangeNotifier {
   }
 
   /// 在现有队列末尾追加任务（下载时使用，不清空进行中的上传）。
+  ///
+  /// 当队列里没有正在进行的任务（pending / uploading）时，视为「新一批」开始：
+  /// 把 [batchTotal] / [batchSucceeded] 清零，避免脚部计数永远叠加上次的成功量
+  /// （否则用户每拖一次都看到 `7/13`、`12/25`、`19/40`，无法看清当前这一批的
+  /// 实际进度）。失败任务允许留在列表里展示，但不会让新批次被视为延续。
   void appendTasks(List<SftpUploadTaskView> rows) {
     if (_disposed) return;
     if (rows.isEmpty) return;
+    final hasActive = _items.any(
+      (t) =>
+          t.state == SftpUploadRowState.pending ||
+          t.state == SftpUploadRowState.uploading,
+    );
+    if (!hasActive) {
+      _batchTotal = 0;
+      _batchSucceeded = 0;
+    }
     _items.addAll(rows);
     _batchTotal += rows.length;
     _notifyNow();
@@ -138,6 +152,49 @@ class SftpUploadTaskList extends ChangeNotifier {
   }
 
   bool isCancellationRequested(String id) => _cancelledIds.contains(id);
+
+  /// 一键取消整个队列。
+  ///
+  /// * `uploading` 行：把 id 写进 [_cancelledIds]，让传输层在下一个 chunk 边界
+  ///   看到取消标记后通过 [removeCancelled] 自然出列。**不能**立刻从 [_items]
+  ///   抹掉 —— 否则传输层结束时调 `onFileEnd → removeCancelled` 已经找不到对应
+  ///   行，进度对账会乱（`_batchTotal` 也可能被减两次）。
+  /// * `pending` 行：传输层还没轮到（没 `sftp.open`、没读流），可以立刻从列表
+  ///   抹掉。**但同时必须** 把 id 加入 [_cancelledIds]，否则执行器
+  ///   （`executeDownloadPlan` / `uploadPlannedFiles`）真正轮到该 entry 时
+  ///   `shouldCancelUpload` 还是返回 false，会按部就班把这个已经从 UI 拿掉的
+  ///   "假死"任务再下载一遍。被加入后执行器只需在 entry 顶端发现取消标记，立刻
+  ///   `onFileEnd(SftpUserCancelled)` → `removeCancelled`（id 已不在 `_items`
+  ///   里，`removeCancelled` 的 `idx < 0` 守卫会自动跳过二次 `_batchTotal--`）。
+  /// * `failed` 行：已经是终态、传输层不再跑它，直接清掉，让"全部取消"等价于
+  ///   "脚部清空"的语义。
+  ///
+  /// 返回 `true` 表示真的有任务被影响（用于 UI 给出反馈，或避免无意义的通知）。
+  bool userCancelAll() {
+    if (_disposed) return false;
+    if (_items.isEmpty) return false;
+    final keep = <SftpUploadTaskView>[];
+    var anyChanged = false;
+    for (final t in _items) {
+      switch (t.state) {
+        case SftpUploadRowState.uploading:
+          if (_cancelledIds.add(t.id)) anyChanged = true;
+          keep.add(t);
+        case SftpUploadRowState.pending:
+          _cancelledIds.add(t.id);
+          if (_batchTotal > 0) _batchTotal--;
+          anyChanged = true;
+        case SftpUploadRowState.failed:
+          anyChanged = true;
+      }
+    }
+    if (!anyChanged) return false;
+    _items
+      ..clear()
+      ..addAll(keep);
+    _notifyNow();
+    return true;
+  }
 
   /// 传输层在用户取消完成后调用。
   void removeCancelled(String id) {

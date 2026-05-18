@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'l10n/app_localizations.dart';
 import 'screens/main_shell_screen.dart';
+import 'services/workbench_desktop_shortcuts.dart';
 import 'services/workbench_settings_store.dart';
 import 'theme/workbench_theme.dart';
 
@@ -85,6 +86,16 @@ class _EasyTermAppState extends State<EasyTermApp> {
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: _settings.materialThemeMode,
+      builder: (context, child) {
+        if (child == null || !workbenchDesktopShortcutsEnabled()) return child ?? const SizedBox.shrink();
+        return Shortcuts(
+          shortcuts: workbenchGlobalShortcutIntents(),
+          child: Actions(
+            actions: workbenchGlobalShortcutActions(),
+            child: child,
+          ),
+        );
+      },
       home: MainShellScreen(settings: _settings),
     );
   }

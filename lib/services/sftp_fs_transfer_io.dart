@@ -22,6 +22,19 @@ const int _kSftpChunkBytes = 256 * 1024;
 /// 后让出 SFTP 通道的延迟压到可忽略的量级。
 const int _kSftpDownloadMaxPendingRequests = 8;
 
+/// `executeDownloadPlan` 默认并发下载的文件数。
+///
+/// 对「目录里有几十上百个小文件」的拖出场景而言，每个文件 `open` + `close` 都是
+/// 至少 2 个 RTT；逐个串行下载即使每文件只要 100 ms，攒到 50 个就要 5 s ——
+/// 远超用户能耐心等的「拖动手势保持时间」，Finder/Explorer 在用户松手那一刻就
+/// 只能拷到一个仍然几乎空白的临时目录，也就是「拖出目录有时不完整」的根因。
+///
+/// 把 4 个文件同时在飞，能让小文件主导场景的连接开销摊薄 4 倍；与上面的
+/// [_kSftpDownloadMaxPendingRequests] 叠加后单通道在飞数据最多 4 × 2 MB = 8 MB，
+/// 仍在 dartssh2 内置 `downloadTo` 8 MB 缺省值的同一档位，不会让 SSH 通道窗口
+/// 真正吃紧。
+const int _kSftpDownloadDefaultConcurrency = 4;
+
 // ─── 通用工具 ────────────────────────────────────────────────────────────────
 
 String _labelAnchor(String localPath) {
@@ -254,6 +267,10 @@ Future<void> uploadPlannedFiles({
   }
   for (final entry in plan) {
     if (hooks?.shouldCancelUpload?.call(entry.localPath) == true) {
+      // 必须主动 emit onFileEnd(SftpUserCancelled)，否则 `_cancelledIds` 里
+      // 「全部取消」时为 pending 行写入的 id 会变成孤儿（`removeCancelled` 没人
+      // 调），下次若拼出同名 id 的 entry 还会被错误地视作已取消。
+      hooks?.onFileEnd?.call(entry.localPath, const SftpUserCancelled());
       continue;
     }
     await _ensureRemoteParentChainExists(sftp, entry.remoteParentDir);
@@ -450,23 +467,46 @@ Future<void> executeDownloadPlan({
   required SftpClient sftp,
   required List<SftpPlannedDownloadFile> plan,
   SftpUploadProgressHooks? hooks,
+  int concurrency = _kSftpDownloadDefaultConcurrency,
 }) async {
-  for (final entry in plan) {
-    if (hooks?.shouldCancelUpload?.call(entry.taskId) == true) {
-      hooks?.onFileEnd?.call(entry.taskId, const SftpUserCancelled());
-      continue;
+  if (plan.isEmpty) return;
+  final workers = concurrency < 1
+      ? 1
+      : (concurrency > plan.length ? plan.length : concurrency);
+
+  // 共享游标：Dart 单线程模型下 `nextIndex++` 在两个 await 之间是原子的，
+  // 因此多个 worker 可以安全地并发抢任务。
+  var nextIndex = 0;
+
+  Future<void> worker() async {
+    while (true) {
+      final i = nextIndex++;
+      if (i >= plan.length) return;
+      final entry = plan[i];
+      if (hooks?.shouldCancelUpload?.call(entry.taskId) == true) {
+        hooks?.onFileEnd?.call(entry.taskId, const SftpUserCancelled());
+        continue;
+      }
+      try {
+        await Directory(p.dirname(entry.localPath)).create(recursive: true);
+        await _downloadOneFileWithHooks(
+          sftp: sftp,
+          remotePath: entry.remotePath,
+          localPath: entry.localPath,
+          taskId: entry.taskId,
+          displayLabel: entry.displayLabel,
+          plannedSize: entry.sizeBytes,
+          hooks: hooks,
+        );
+      } catch (_) {
+        // `_downloadOneFileWithHooks` 已经把错误通过 hooks.onFileEnd 标到了对应
+        // 任务行；这里吞掉异常是为了让兄弟 worker 继续处理后续文件，避免一个文件
+        // 失败把整个目录的剩余文件都连坐 `_failRemainingTasks` 标成失败。
+      }
     }
-    await Directory(p.dirname(entry.localPath)).create(recursive: true);
-    await _downloadOneFileWithHooks(
-      sftp: sftp,
-      remotePath: entry.remotePath,
-      localPath: entry.localPath,
-      taskId: entry.taskId,
-      displayLabel: entry.displayLabel,
-      plannedSize: entry.sizeBytes,
-      hooks: hooks,
-    );
   }
+
+  await Future.wait(List.generate(workers, (_) => worker()));
 }
 
 Future<void> _downloadOneFileWithHooks({

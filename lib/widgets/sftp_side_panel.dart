@@ -893,6 +893,8 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                       formatBytes: _formatByteCount,
                                       onCancelFile:
                                           _c.uploadTasks.userCancelFile,
+                                      onCancelAll:
+                                          _c.uploadTasks.userCancelAll,
                                     );
                                   },
                                 ),
@@ -923,6 +925,7 @@ class _SftpUploadQueueFooter extends StatelessWidget {
     required this.onToggleExpand,
     required this.formatBytes,
     required this.onCancelFile,
+    required this.onCancelAll,
   });
 
   final List<SftpUploadTaskView> tasks;
@@ -932,6 +935,7 @@ class _SftpUploadQueueFooter extends StatelessWidget {
   final VoidCallback onToggleExpand;
   final String Function(int bytes) formatBytes;
   final void Function(String fileId) onCancelFile;
+  final bool Function() onCancelAll;
 
   @override
   Widget build(BuildContext context) {
@@ -977,6 +981,21 @@ class _SftpUploadQueueFooter extends StatelessWidget {
                     color: wb.textMuted,
                   ),
                 ),
+              IconButton(
+                tooltip: l.sftpUploadCancelAllTooltip,
+                iconSize: 18,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 28,
+                  minHeight: 28,
+                ),
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onCancelAll(),
+                icon: Icon(
+                  Icons.cancel_outlined,
+                  color: wb.textMuted,
+                ),
+              ),
             ],
           ),
         ),

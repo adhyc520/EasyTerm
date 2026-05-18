@@ -8,6 +8,9 @@
   "menuTerminalAndConnection": "终端与连接设置…",
   "menuCloseAllSessions": "关闭全部会话",
   "menuAbout": "关于 EasyTerm",
+  "menuQuit": "退出 EasyTerm",
+  "menuFile": "文件",
+  "menuCloseTab": "关闭标签页",
   "aboutDescription": "多会话 SSH 终端与 SFTP 文件浏览。",
   "sidebarSavedHostsTooltip": "已保存主机",
   "sidebarFilesTooltip": "文件",
@@ -125,6 +128,7 @@
   "sftpUploadQueueCollapse": "收起",
   "sftpUploadRowPending": "排队中",
   "sftpUploadCancelFileTooltip": "取消上传此文件",
+  "sftpUploadCancelAllTooltip": "全部取消",
   "sftpUploadOverwriteTitle": "覆盖服务器上的同名项？",
   "sftpUploadOverwriteBody": "服务器当前目录下已存在「{name}」。覆盖将删除远端该项后重新上传，是否继续？",
   "@sftpUploadOverwriteBody": {
