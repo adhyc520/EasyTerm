@@ -21,6 +21,7 @@ Future<void> main() async {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
       const WindowOptions(
+        title: 'EasyTerm',
         size: Size(1280, 800),
         center: true,
         minimumSize: Size(900, 560),

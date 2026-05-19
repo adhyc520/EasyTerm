@@ -92,9 +92,9 @@ BEGIN
             VALUE "CompanyName", "cn.liteset" "\0"
             VALUE "FileDescription", "EasyTerm" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "easyterm" "\0"
+            VALUE "InternalName", "EasyTerm" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 cn.liteset. All rights reserved." "\0"
-            VALUE "OriginalFilename", "easyterm.exe" "\0"
+            VALUE "OriginalFilename", "EasyTerm.exe" "\0"
             VALUE "ProductName", "EasyTerm" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
