@@ -33,6 +33,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuAbout => 'About EasyTerm';
 
   @override
+  String aboutCurrentVersion(String version) {
+    return 'Version $version';
+  }
+
+  @override
   String get menuQuit => 'Quit EasyTerm';
 
   @override
@@ -706,4 +711,66 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get assistantToolResultEmpty => '(No terminal output)';
+
+  @override
+  String get menuCheckForUpdates => 'Check for updates…';
+
+  @override
+  String get updateChecking => 'Checking for updates…';
+
+  @override
+  String get updateAvailableTitle => 'Update available';
+
+  @override
+  String updateAvailableMessage(String version) {
+    return 'Version $version is available on GitHub.';
+  }
+
+  @override
+  String get updateReleaseNotes => 'Release notes';
+
+  @override
+  String get updateDownloadInstall => 'Download and install';
+
+  @override
+  String get updateLater => 'Later';
+
+  @override
+  String get updateSkipVersion => 'Skip this version';
+
+  @override
+  String updateDownloading(int percent) {
+    return 'Downloading… $percent%';
+  }
+
+  @override
+  String get updateInstalling => 'Installing… the app will restart.';
+
+  @override
+  String get updateUpToDateTitle => 'You\'re up to date';
+
+  @override
+  String get updateUpToDateMessage =>
+      'EasyTerm is already on the latest release.';
+
+  @override
+  String get updateErrorTitle => 'Update failed';
+
+  @override
+  String updateError(String error) {
+    return '$error';
+  }
+
+  @override
+  String get updateErrorUnknown => 'Could not check for updates.';
+
+  @override
+  String get updateRetry => 'Retry';
+
+  @override
+  String get updateUnsupported =>
+      'Automatic updates are only available on macOS and Windows.';
+
+  @override
+  String get updateOk => 'OK';
 }

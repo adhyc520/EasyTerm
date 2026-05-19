@@ -12,7 +12,9 @@ import '../services/host_profiles_store.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/session_tabs_controller.dart';
 import '../services/ssh_workspace_controller.dart';
+import '../services/app_update/app_update_service.dart';
 import '../services/workbench_settings_store.dart';
+import '../widgets/app_update_dialog.dart';
 import '../theme/workbench_theme.dart';
 import '../widgets/connection_sheet.dart';
 import '../widgets/saved_host_connect_sheet.dart';
@@ -47,6 +49,8 @@ enum _SidebarView { savedHosts, fileBrowser }
 class _MainShellScreenState extends State<MainShellScreen> {
   late final SessionTabsController _tabs;
   final HostProfilesStore _profiles = HostProfilesStore();
+  final AppUpdateService _appUpdate = AppUpdateService();
+  String? _versionTagLabel;
 
   /// 侧栏在「已保存连接」与「文件浏览器」之间切换，避免与终端并排占两列宽度。
   _SidebarView _sidebarView = _SidebarView.savedHosts;
@@ -86,14 +90,44 @@ class _MainShellScreenState extends State<MainShellScreen> {
     _tabs.addListener(_onRepaint);
     _profiles.addListener(_onRepaint);
     _profiles.ensureLoaded();
+    unawaited(
+      _appUpdate.currentVersionTagLabel().then((label) {
+        if (mounted) setState(() => _versionTagLabel = label);
+      }),
+    );
+    if (AppUpdateService.isSupportedPlatform) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_checkForUpdatesOnStartup());
+      });
+    }
   }
 
   @override
   void dispose() {
+    _appUpdate.dispose();
     _tabs.removeListener(_onRepaint);
     _profiles.removeListener(_onRepaint);
     _tabs.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkForUpdatesOnStartup() async {
+    if (!mounted) return;
+    final result = await _appUpdate.checkForUpdates();
+    if (!mounted || !result.hasUpdate) return;
+    await showAppUpdateDialog(
+      context,
+      service: _appUpdate,
+      initialResult: result,
+    );
+  }
+
+  Future<void> _checkForUpdatesManual() async {
+    await showAppUpdateDialog(
+      context,
+      service: _appUpdate,
+      manualCheck: true,
+    );
   }
 
   void _openNewHostShortcut() {
@@ -110,16 +144,38 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _showAboutDialog() {
     final about = AppLocalizations.of(context)!;
-    showAboutDialog(
-      context: context,
-      applicationName: about.appTitle,
-      applicationVersion: '1.0',
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Text(about.aboutDescription),
-        ),
-      ],
+    final dialogContext = context;
+    final versionLabel = _versionTagLabel;
+    if (versionLabel != null) {
+      showAboutDialog(
+        context: dialogContext,
+        applicationName: about.appTitle,
+        applicationVersion: versionLabel,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(about.aboutDescription),
+          ),
+        ],
+      );
+      return;
+    }
+    unawaited(
+      _appUpdate.currentVersionTagLabel().then((label) {
+        if (!dialogContext.mounted) return;
+        setState(() => _versionTagLabel = label);
+        showAboutDialog(
+          context: dialogContext,
+          applicationName: about.appTitle,
+          applicationVersion: label,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(about.aboutDescription),
+            ),
+          ],
+        );
+      }),
     );
   }
 
@@ -148,6 +204,11 @@ class _MainShellScreenState extends State<MainShellScreen> {
         PlatformMenu(
           label: l10n.appTitle,
           menus: [
+            if (AppUpdateService.isSupportedPlatform)
+              PlatformMenuItem(
+                label: l10n.menuCheckForUpdates,
+                onSelected: () => unawaited(_checkForUpdatesManual()),
+              ),
             PlatformMenuItem(
               label: l10n.menuAbout,
               onSelected: _showAboutDialog,
@@ -425,9 +486,24 @@ class _MainShellScreenState extends State<MainShellScreen> {
                 _tabs.closeAll();
               },
             ),
+            if (AppUpdateService.isSupportedPlatform)
+              ListTile(
+                leading: const Icon(Icons.system_update_outlined),
+                title: Text(l10n.menuCheckForUpdates),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!context.mounted) return;
+                    unawaited(_checkForUpdatesManual());
+                  });
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: Text(l10n.menuAbout),
+              subtitle: _versionTagLabel == null
+                  ? null
+                  : Text(l10n.aboutCurrentVersion(_versionTagLabel!)),
               onTap: () {
                 Navigator.pop(ctx);
                 WidgetsBinding.instance.addPostFrameCallback((_) {

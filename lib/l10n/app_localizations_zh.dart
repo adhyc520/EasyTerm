@@ -33,6 +33,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuAbout => '关于 EasyTerm';
 
   @override
+  String aboutCurrentVersion(String version) {
+    return '版本 $version';
+  }
+
+  @override
   String get menuQuit => '退出 EasyTerm';
 
   @override
@@ -684,4 +689,64 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get assistantToolResultEmpty => '（无终端输出）';
+
+  @override
+  String get menuCheckForUpdates => '检查更新…';
+
+  @override
+  String get updateChecking => '正在检查更新…';
+
+  @override
+  String get updateAvailableTitle => '发现新版本';
+
+  @override
+  String updateAvailableMessage(String version) {
+    return 'GitHub 上已有版本 $version。';
+  }
+
+  @override
+  String get updateReleaseNotes => '更新说明';
+
+  @override
+  String get updateDownloadInstall => '下载并安装';
+
+  @override
+  String get updateLater => '稍后';
+
+  @override
+  String get updateSkipVersion => '跳过此版本';
+
+  @override
+  String updateDownloading(int percent) {
+    return '正在下载… $percent%';
+  }
+
+  @override
+  String get updateInstalling => '正在安装…应用将重新启动。';
+
+  @override
+  String get updateUpToDateTitle => '已是最新版本';
+
+  @override
+  String get updateUpToDateMessage => 'EasyTerm 已安装最新发布版本。';
+
+  @override
+  String get updateErrorTitle => '更新失败';
+
+  @override
+  String updateError(String error) {
+    return '$error';
+  }
+
+  @override
+  String get updateErrorUnknown => '无法检查更新。';
+
+  @override
+  String get updateRetry => '重试';
+
+  @override
+  String get updateUnsupported => '自动更新仅支持 macOS 与 Windows。';
+
+  @override
+  String get updateOk => '确定';
 }

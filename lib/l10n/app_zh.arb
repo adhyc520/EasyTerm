@@ -8,6 +8,12 @@
   "menuTerminalAndConnection": "终端与连接设置…",
   "menuCloseAllSessions": "关闭全部会话",
   "menuAbout": "关于 EasyTerm",
+  "aboutCurrentVersion": "版本 {version}",
+  "@aboutCurrentVersion": {
+    "placeholders": {
+      "version": {"type": "String"}
+    }
+  },
   "menuQuit": "退出 EasyTerm",
   "menuFile": "文件",
   "menuCloseTab": "关闭标签页",
@@ -238,5 +244,38 @@
   "assistantReasoningExpand": "展开思考",
   "assistantReasoningCollapse": "收起思考",
   "assistantToolResultHeader": "终端输出",
-  "assistantToolResultEmpty": "（无终端输出）"
+  "assistantToolResultEmpty": "（无终端输出）",
+  "menuCheckForUpdates": "检查更新…",
+  "updateChecking": "正在检查更新…",
+  "updateAvailableTitle": "发现新版本",
+  "updateAvailableMessage": "GitHub 上已有版本 {version}。",
+  "@updateAvailableMessage": {
+    "placeholders": {
+      "version": {"type": "String"}
+    }
+  },
+  "updateReleaseNotes": "更新说明",
+  "updateDownloadInstall": "下载并安装",
+  "updateLater": "稍后",
+  "updateSkipVersion": "跳过此版本",
+  "updateDownloading": "正在下载… {percent}%",
+  "@updateDownloading": {
+    "placeholders": {
+      "percent": {"type": "int"}
+    }
+  },
+  "updateInstalling": "正在安装…应用将重新启动。",
+  "updateUpToDateTitle": "已是最新版本",
+  "updateUpToDateMessage": "EasyTerm 已安装最新发布版本。",
+  "updateErrorTitle": "更新失败",
+  "updateError": "{error}",
+  "@updateError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "updateErrorUnknown": "无法检查更新。",
+  "updateRetry": "重试",
+  "updateUnsupported": "自动更新仅支持 macOS 与 Windows。",
+  "updateOk": "确定"
 }

@@ -146,6 +146,12 @@ abstract class AppLocalizations {
   /// **'About EasyTerm'**
   String get menuAbout;
 
+  /// No description provided for @aboutCurrentVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}'**
+  String aboutCurrentVersion(String version);
+
   /// No description provided for @menuQuit.
   ///
   /// In en, this message translates to:
@@ -1345,6 +1351,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'(No terminal output)'**
   String get assistantToolResultEmpty;
+
+  /// No description provided for @menuCheckForUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates…'**
+  String get menuCheckForUpdates;
+
+  /// No description provided for @updateChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates…'**
+  String get updateChecking;
+
+  /// No description provided for @updateAvailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available'**
+  String get updateAvailableTitle;
+
+  /// No description provided for @updateAvailableMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is available on GitHub.'**
+  String updateAvailableMessage(String version);
+
+  /// No description provided for @updateReleaseNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'Release notes'**
+  String get updateReleaseNotes;
+
+  /// No description provided for @updateDownloadInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Download and install'**
+  String get updateDownloadInstall;
+
+  /// No description provided for @updateLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Later'**
+  String get updateLater;
+
+  /// No description provided for @updateSkipVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip this version'**
+  String get updateSkipVersion;
+
+  /// No description provided for @updateDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading… {percent}%'**
+  String updateDownloading(int percent);
+
+  /// No description provided for @updateInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Installing… the app will restart.'**
+  String get updateInstalling;
+
+  /// No description provided for @updateUpToDateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re up to date'**
+  String get updateUpToDateTitle;
+
+  /// No description provided for @updateUpToDateMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'EasyTerm is already on the latest release.'**
+  String get updateUpToDateMessage;
+
+  /// No description provided for @updateErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update failed'**
+  String get updateErrorTitle;
+
+  /// No description provided for @updateError.
+  ///
+  /// In en, this message translates to:
+  /// **'{error}'**
+  String updateError(String error);
+
+  /// No description provided for @updateErrorUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not check for updates.'**
+  String get updateErrorUnknown;
+
+  /// No description provided for @updateRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get updateRetry;
+
+  /// No description provided for @updateUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic updates are only available on macOS and Windows.'**
+  String get updateUnsupported;
+
+  /// No description provided for @updateOk.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get updateOk;
 }
 
 class _AppLocalizationsDelegate

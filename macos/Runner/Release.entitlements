@@ -2,8 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 自更新需替换 .app 包；关闭沙盒（非 Mac App Store 分发） -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<false/>
 	<!-- file_picker：Open/Save/目录选择需要用户所选文件访问（私钥、SFTP 下载等） -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>

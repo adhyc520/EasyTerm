@@ -8,6 +8,12 @@
   "menuTerminalAndConnection": "Terminal & connection settings…",
   "menuCloseAllSessions": "Close all sessions",
   "menuAbout": "About EasyTerm",
+  "aboutCurrentVersion": "Version {version}",
+  "@aboutCurrentVersion": {
+    "placeholders": {
+      "version": {"type": "String"}
+    }
+  },
   "menuQuit": "Quit EasyTerm",
   "menuFile": "File",
   "menuCloseTab": "Close Tab",
@@ -323,5 +329,38 @@
   "assistantReasoningExpand": "Show reasoning",
   "assistantReasoningCollapse": "Hide reasoning",
   "assistantToolResultHeader": "Terminal output",
-  "assistantToolResultEmpty": "(No terminal output)"
+  "assistantToolResultEmpty": "(No terminal output)",
+  "menuCheckForUpdates": "Check for updates…",
+  "updateChecking": "Checking for updates…",
+  "updateAvailableTitle": "Update available",
+  "updateAvailableMessage": "Version {version} is available on GitHub.",
+  "@updateAvailableMessage": {
+    "placeholders": {
+      "version": {"type": "String"}
+    }
+  },
+  "updateReleaseNotes": "Release notes",
+  "updateDownloadInstall": "Download and install",
+  "updateLater": "Later",
+  "updateSkipVersion": "Skip this version",
+  "updateDownloading": "Downloading… {percent}%",
+  "@updateDownloading": {
+    "placeholders": {
+      "percent": {"type": "int"}
+    }
+  },
+  "updateInstalling": "Installing… the app will restart.",
+  "updateUpToDateTitle": "You're up to date",
+  "updateUpToDateMessage": "EasyTerm is already on the latest release.",
+  "updateErrorTitle": "Update failed",
+  "updateError": "{error}",
+  "@updateError": {
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "updateErrorUnknown": "Could not check for updates.",
+  "updateRetry": "Retry",
+  "updateUnsupported": "Automatic updates are only available on macOS and Windows.",
+  "updateOk": "OK"
 }

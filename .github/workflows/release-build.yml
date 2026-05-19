@@ -1,4 +1,5 @@
-# 推送版本 tag（如 v1.0.0）后自动构建桌面产物并发布 GitHub Release：
+# 推送版本 tag（如 v0.0.3）后自动构建桌面产物并发布 GitHub Release。
+# tag 即发布版本号；产物名为 easyterm-{tag}-windows-x64.zip / easyterm-{tag}-macos-arm64.zip。
 # - Windows x64（amd64）
 # - macOS Apple Silicon（arm64）
 name: Release build
@@ -30,9 +31,20 @@ jobs:
           cache: true
           cache-sdk: true
 
+      - name: Set app version from tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must look like v0.0.3 (got: $TAG)" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "APP_TAG=$TAG" >> "$GITHUB_ENV"
+
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
 
       - name: Pack
         shell: pwsh
@@ -58,9 +70,20 @@ jobs:
           cache: true
           cache-sdk: true
 
+      - name: Set app version from tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must look like v0.0.3 (got: $TAG)" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "APP_TAG=$TAG" >> "$GITHUB_ENV"
+
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
-      - run: flutter build macos --release
+      - run: flutter build macos --release --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
 
       - name: Pack
         run: |
