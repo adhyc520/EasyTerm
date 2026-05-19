@@ -691,4 +691,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get assistantAnswerHeader => 'Answer';
+
+  @override
+  String get assistantUserHeader => 'You';
 }

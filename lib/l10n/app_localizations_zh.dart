@@ -669,4 +669,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get assistantAnswerHeader => '回复';
+
+  @override
+  String get assistantUserHeader => '你';
 }

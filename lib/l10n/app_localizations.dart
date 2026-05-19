@@ -1315,6 +1315,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Answer'**
   String get assistantAnswerHeader;
+
+  /// No description provided for @assistantUserHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get assistantUserHeader;
 }
 
 class _AppLocalizationsDelegate

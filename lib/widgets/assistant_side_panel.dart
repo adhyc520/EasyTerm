@@ -8,6 +8,7 @@ import '../services/llm_openai_chat_service.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
+import 'assistant_markdown.dart';
 
 /// 终端区域右侧：可拖拽宽度、可收起的助手栏（大模型对话 + 终端工具调用）。
 class TerminalWithAssistantSplit extends StatefulWidget {
@@ -804,6 +805,138 @@ class _TerminalRunApprovalDialog extends StatelessWidget {
   }
 }
 
+enum _ChatBubbleRole { user, assistant, reasoning }
+
+class _ChatRoleHeader extends StatelessWidget {
+  const _ChatRoleHeader({required this.role, required this.label});
+
+  final _ChatBubbleRole role;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final accent = switch (role) {
+      _ChatBubbleRole.user => wb.accentBlue,
+      _ChatBubbleRole.assistant => const Color(0xFF22C55E),
+      _ChatBubbleRole.reasoning => const Color(0xFFD97706),
+    };
+    final icon = switch (role) {
+      _ChatBubbleRole.user => Icons.person_outline_rounded,
+      _ChatBubbleRole.assistant => Icons.smart_toy_outlined,
+      _ChatBubbleRole.reasoning => Icons.psychology_outlined,
+    };
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: accent),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: accent,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChatBubbleShell extends StatelessWidget {
+  const _ChatBubbleShell({
+    required this.role,
+    required this.header,
+    required this.child,
+    this.streaming = false,
+  });
+
+  final _ChatBubbleRole role;
+  final String header;
+  final Widget child;
+  final bool streaming;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final isUser = role == _ChatBubbleRole.user;
+    final isReasoning = role == _ChatBubbleRole.reasoning;
+
+    final accent = switch (role) {
+      _ChatBubbleRole.user => wb.accentBlue,
+      _ChatBubbleRole.assistant => const Color(0xFF22C55E),
+      _ChatBubbleRole.reasoning => const Color(0xFFD97706),
+    };
+
+    final background = switch (role) {
+      _ChatBubbleRole.user => wb.accentBlue.withValues(alpha: 0.14),
+      _ChatBubbleRole.assistant => wb.panelElevated,
+      _ChatBubbleRole.reasoning => const Color(0xFFD97706).withValues(alpha: 0.07),
+    };
+
+    final borderColor = switch (role) {
+      _ChatBubbleRole.user => wb.accentBlue.withValues(alpha: 0.38),
+      _ChatBubbleRole.assistant =>
+        streaming ? accent.withValues(alpha: 0.55) : wb.border,
+      _ChatBubbleRole.reasoning => const Color(0xFFD97706).withValues(alpha: 0.42),
+    };
+
+    final radius = BorderRadius.only(
+      topLeft: const Radius.circular(12),
+      topRight: const Radius.circular(12),
+      bottomLeft: isUser ? const Radius.circular(12) : const Radius.circular(4),
+      bottomRight: isUser ? const Radius.circular(4) : const Radius.circular(12),
+    );
+
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        constraints: const BoxConstraints(maxWidth: 520),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: radius,
+          border: Border.all(color: borderColor),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!isUser)
+                Container(
+                  width: 3,
+                  color: accent.withValues(alpha: isReasoning ? 0.85 : 1),
+                ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _ChatRoleHeader(role: role, label: header),
+                      const SizedBox(height: 7),
+                      child,
+                    ],
+                  ),
+                ),
+              ),
+              if (isUser)
+                Container(
+                  width: 3,
+                  color: accent,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UserBubble extends StatelessWidget {
   const _UserBubble({required this.text});
 
@@ -811,24 +944,16 @@ class _UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wb = context.wb;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(
-          color: wb.accentBlue.withValues(alpha: 0.22),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(12),
-            topRight: Radius.circular(12),
-            bottomLeft: Radius.circular(12),
-          ),
-        ),
-        child: SelectableText(
-          text,
-          style: TextStyle(color: wb.primaryText, fontSize: 13, height: 1.35),
+    final l = AppLocalizations.of(context)!;
+    return _ChatBubbleShell(
+      role: _ChatBubbleRole.user,
+      header: l.assistantUserHeader,
+      child: SelectableText(
+        text,
+        style: TextStyle(
+          color: context.wb.primaryText,
+          fontSize: 13,
+          height: 1.4,
         ),
       ),
     );
@@ -842,47 +967,11 @@ class _AssistantBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wb = context.wb;
     final l = AppLocalizations.of(context)!;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(
-          color: wb.panelElevated,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(12),
-            topRight: Radius.circular(12),
-            bottomRight: Radius.circular(12),
-          ),
-          border: Border.all(color: wb.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              l.assistantAnswerHeader,
-              style: TextStyle(
-                color: wb.accentBlue,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
-              ),
-            ),
-            const SizedBox(height: 6),
-            SelectableText(
-              text,
-              style: TextStyle(
-                color: wb.primaryText,
-                fontSize: 13,
-                height: 1.35,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _ChatBubbleShell(
+      role: _ChatBubbleRole.assistant,
+      header: l.assistantAnswerHeader,
+      child: AssistantMarkdownBody(data: text),
     );
   }
 }
@@ -896,52 +985,16 @@ class _ReasoningBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final l = AppLocalizations.of(context)!;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(
-          color: wb.accentBlue.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: const Color(0xFFD97706).withValues(alpha: 0.55),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.psychology_outlined,
-                  size: 16,
-                  color: const Color(0xFFD97706),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  l.assistantReasoningHeader,
-                  style: TextStyle(
-                    color: const Color(0xFFB45309),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            SelectableText(
-              text,
-              style: TextStyle(
-                color: wb.primaryText.withValues(alpha: 0.92),
-                fontSize: 12,
-                height: 1.35,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ],
+    return _ChatBubbleShell(
+      role: _ChatBubbleRole.reasoning,
+      header: l.assistantReasoningHeader,
+      child: SelectableText(
+        text,
+        style: TextStyle(
+          color: wb.textMuted,
+          fontSize: 12,
+          height: 1.4,
+          fontStyle: FontStyle.italic,
         ),
       ),
     );
@@ -961,68 +1014,61 @@ class _StreamingAssistantBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final l = AppLocalizations.of(context)!;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(
-          color: wb.panelElevated,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: wb.accentBlue.withValues(alpha: 0.5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final hasReasoning = reasoning.trim().isNotEmpty;
+    final hasContent = content.trim().isNotEmpty;
+
+    if (!hasReasoning && !hasContent) {
+      return _ChatBubbleShell(
+        role: _ChatBubbleRole.assistant,
+        header: l.assistantAnswerHeader,
+        streaming: true,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (reasoning.trim().isNotEmpty) ...[
-              Text(
-                l.assistantReasoningHeader,
-                style: TextStyle(
-                  color: const Color(0xFFB45309),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: wb.accentBlue,
               ),
-              const SizedBox(height: 4),
-              SelectableText(
-                reasoning,
-                style: TextStyle(
-                  color: wb.textMuted,
-                  fontSize: 12,
-                  height: 1.35,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-              if (content.trim().isNotEmpty) const SizedBox(height: 10),
-            ],
-            if (content.trim().isNotEmpty) ...[
-              Text(
-                l.assistantAnswerHeader,
-                style: TextStyle(
-                  color: wb.accentBlue,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              SelectableText(
-                content,
-                style: TextStyle(
-                  color: wb.primaryText,
-                  fontSize: 13,
-                  height: 1.35,
-                ),
-              ),
-            ],
-            if (reasoning.trim().isEmpty && content.trim().isEmpty)
-              Text(
-                l.assistantThinking,
-                style: TextStyle(color: wb.textMuted, fontSize: 12),
-              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              l.assistantThinking,
+              style: TextStyle(color: wb.textMuted, fontSize: 12),
+            ),
           ],
         ),
-      ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasReasoning)
+          _ChatBubbleShell(
+            role: _ChatBubbleRole.reasoning,
+            header: l.assistantReasoningHeader,
+            streaming: true,
+            child: SelectableText(
+              reasoning,
+              style: TextStyle(
+                color: wb.textMuted,
+                fontSize: 12,
+                height: 1.4,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+        if (hasContent)
+          _ChatBubbleShell(
+            role: _ChatBubbleRole.assistant,
+            header: l.assistantAnswerHeader,
+            streaming: true,
+            child: AssistantMarkdownBody(data: content),
+          ),
+      ],
     );
   }
 }

@@ -233,5 +233,6 @@
   "assistantTerminalDeny": "不允许",
   "assistantTerminalAllowExecute": "运行",
   "assistantReasoningHeader": "思考过程",
-  "assistantAnswerHeader": "回复"
+  "assistantAnswerHeader": "回复",
+  "assistantUserHeader": "你"
 }
