@@ -169,9 +169,11 @@ final class LlmOpenAiChatService {
     required void Function({String? reasoningDelta, String? contentDelta})
     onStreamDelta,
     void Function()? onStreamRoundStart,
+    void Function()? onMessagesChanged,
     LlmStreamCancel? cancel,
     int maxToolRounds = 8,
   }) async {
+    void touchMessages() => onMessagesChanged?.call();
     final toolList = useZhTools ? terminalToolsZh() : terminalToolsEn();
     for (var round = 0; round < maxToolRounds; round++) {
       if (cancel?.isCancelled == true) {
@@ -187,10 +189,12 @@ final class LlmOpenAiChatService {
 
       if (streamed.userCancelled) {
         messages.add(_stoppedAssistantApiMessage(streamed, useZhTools));
+        touchMessages();
         return;
       }
 
       messages.add(streamed.toAssistantMessageMap());
+      touchMessages();
 
       final toolCalls = streamed.toolCalls;
       if (toolCalls == null || toolCalls.isEmpty) {
@@ -215,6 +219,7 @@ final class LlmOpenAiChatService {
               'tool_call_id': id,
               'content': jsonEncode({'ok': false, 'error': 'missing_text'}),
             });
+            touchMessages();
             continue;
           }
           final approved = await onRequestTerminalApproval(cmd);
@@ -228,10 +233,12 @@ final class LlmOpenAiChatService {
                 'detail': 'User declined to run this command.',
               }),
             });
+            touchMessages();
             continue;
           }
           final result = await _runTerminalToolWithCapture(cmd, ssh);
           messages.add({'role': 'tool', 'tool_call_id': id, 'content': result});
+          touchMessages();
         } else {
           messages.add({
             'role': 'tool',
@@ -242,6 +249,7 @@ final class LlmOpenAiChatService {
               'name': name,
             }),
           });
+          touchMessages();
         }
       }
     }
@@ -251,6 +259,7 @@ final class LlmOpenAiChatService {
           ? '（工具调用轮数过多，请缩短任务。）'
           : '(Too many tool rounds; try a shorter task.)',
     });
+    touchMessages();
   }
 
   static Map<String, Object?> _stoppedAssistantApiMessage(

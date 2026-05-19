@@ -483,7 +483,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                       Expanded(
                         child: TerminalWithAssistantSplit(
                           settings: widget.settings,
-                          ssh: _tabs.selectedTab?.controller,
+                          sessionTab: _tabs.selectedTab,
                           terminalChild: _rightPane(),
                         ),
                       ),

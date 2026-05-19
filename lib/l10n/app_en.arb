@@ -319,5 +319,9 @@
   "assistantTerminalAllowExecute": "Run",
   "assistantReasoningHeader": "Reasoning",
   "assistantAnswerHeader": "Answer",
-  "assistantUserHeader": "You"
+  "assistantUserHeader": "You",
+  "assistantReasoningExpand": "Show reasoning",
+  "assistantReasoningCollapse": "Hide reasoning",
+  "assistantToolResultHeader": "Terminal output",
+  "assistantToolResultEmpty": "(No terminal output)"
 }

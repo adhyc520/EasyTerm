@@ -4,23 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
+import '../services/assistant_chat_session.dart';
 import '../services/llm_openai_chat_service.dart';
+import '../services/session_tabs_controller.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
-import 'assistant_markdown.dart';
+import 'assistant_chat_messages.dart';
+import 'assistant_chat_text.dart';
 
 /// 终端区域右侧：可拖拽宽度、可收起的助手栏（大模型对话 + 终端工具调用）。
 class TerminalWithAssistantSplit extends StatefulWidget {
   const TerminalWithAssistantSplit({
     super.key,
     required this.settings,
-    required this.ssh,
+    required this.sessionTab,
     required this.terminalChild,
   });
 
   final WorkbenchSettingsStore settings;
-  final SshWorkspaceController? ssh;
+  final SessionTab? sessionTab;
   final Widget terminalChild;
 
   @override
@@ -81,11 +84,11 @@ class _TerminalWithAssistantSplitState
           });
         }
 
-        const assistantKey = ValueKey<String>('workbench_assistant_chat');
+        final tab = widget.sessionTab;
         final assistant = AssistantChatPanel(
-          key: assistantKey,
+          key: ValueKey<int>(tab?.id ?? -1),
           settings: widget.settings,
-          ssh: widget.ssh,
+          sessionTab: tab,
           onCollapse: () => unawaited(_setAssistantCollapsed(true)),
         );
 
@@ -99,37 +102,15 @@ class _TerminalWithAssistantSplitState
                 onDrag: _dragSplit,
                 onDragEnd: _persistWidth,
               ),
-            SizedBox(
-              width: collapsed ? 40 : aw,
-              child: ClipRect(
-                child: Stack(
-                  alignment: Alignment.centerRight,
-                  fit: StackFit.expand,
-                  children: [
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: SizedBox(
-                        width: aw,
-                        height: double.infinity,
-                        child: Opacity(
-                          opacity: collapsed ? 0.0 : 1.0,
-                          child: IgnorePointer(
-                            ignoring: collapsed,
-                            child: assistant,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (collapsed)
-                      Positioned.fill(
-                        child: _AssistantCollapsedRail(
-                          onExpand: () => unawaited(_setAssistantCollapsed(false)),
-                        ),
-                      ),
-                  ],
+            if (collapsed)
+              SizedBox(
+                width: 40,
+                child: _AssistantCollapsedRail(
+                  onExpand: () => unawaited(_setAssistantCollapsed(false)),
                 ),
-              ),
-            ),
+              )
+            else
+              SizedBox(width: aw, child: assistant),
           ],
         );
       },
@@ -219,13 +200,16 @@ class AssistantChatPanel extends StatefulWidget {
   const AssistantChatPanel({
     super.key,
     required this.settings,
-    required this.ssh,
+    required this.sessionTab,
     required this.onCollapse,
   });
 
   final WorkbenchSettingsStore settings;
-  final SshWorkspaceController? ssh;
+  final SessionTab? sessionTab;
   final VoidCallback onCollapse;
+
+  SshWorkspaceController? get ssh => sessionTab?.controller;
+  AssistantChatSession? get session => sessionTab?.assistant;
 
   @override
   State<AssistantChatPanel> createState() => _AssistantChatPanelState();
@@ -234,69 +218,99 @@ class AssistantChatPanel extends StatefulWidget {
 class _AssistantChatPanelState extends State<AssistantChatPanel> {
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final List<Map<String, Object?>> _apiMessages = [];
-  bool _busy = false;
-  LlmStreamCancel? _streamCancel;
-  String _streamReasoning = '';
-  String _streamContent = '';
   Timer? _streamUiThrottle;
+  int? _boundTabId;
+
+  AssistantChatSession? get _session => widget.session;
+  List<Map<String, Object?>> get _apiMessages =>
+      _session?.messages ?? const [];
 
   bool get _zh => widget.settings.appLocaleCode == 'zh';
 
-  bool get _streamingBubbleVisible =>
-      _busy && (_streamReasoning.isNotEmpty || _streamContent.isNotEmpty);
+  bool get _busy => _session?.busy ?? false;
+
+  String get _streamReasoning => _session?.streamReasoning ?? '';
+
+  String get _streamContent => _session?.streamContent ?? '';
+
+  bool get _showGlobalThinking =>
+      _busy &&
+      normalizeChatText(_streamReasoning).isEmpty &&
+      normalizeChatText(_streamContent).isEmpty;
 
   @override
   void initState() {
     super.initState();
-    _resetSystemMessage();
+    _bindSession(widget.sessionTab);
   }
 
-  void _resetSystemMessage() {
-    _streamReasoning = '';
-    _streamContent = '';
-    _apiMessages
-      ..clear()
-      ..add({
-        'role': 'system',
-        'content': _zh
-            ? '你是 EasyTerm 里 SSH 终端旁的助手。用户已连接远程 shell。'
-                  '回答与推理可能分字段或分标签返回；向用户说明时区分「思考」与正式答复。'
-                  '需要远端执行时调用 terminal_run；每一次注入前用户都会在弹窗中单独确认是否执行；'
-                  '若模型未在命令末尾写换行，客户端会自动补上回车以便 shell 提交。'
-                  '工具结果中会附带注入后一段时间的终端尾部输出，请据实引用，勿编造。'
-            : 'You assist next to an SSH terminal in EasyTerm. The user has an active remote shell. '
-                  'Separate reasoning from the final answer when presenting to the user. '
-                  'Use terminal_run for remote execution; the user must confirm every injection in a dialog. '
-                  'If the command text has no trailing newline, the client appends a carriage return so the shell submits the line. '
-                  'Tool results include a terminal buffer tail after injection—quote it faithfully, do not invent output.',
-      });
+  @override
+  void didUpdateWidget(AssistantChatPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sessionTab?.id != widget.sessionTab?.id) {
+      oldWidget.session?.draftInput = _input.text;
+      _bindSession(widget.sessionTab);
+    }
+  }
+
+  void _onSessionChanged() {
+    if (!mounted) return;
+    if (widget.sessionTab?.id != _boundTabId) return;
+    setState(() {});
+    _scrollBottom();
+  }
+
+  void _bindSession(SessionTab? tab) {
+    widget.session?.removeListener(_onSessionChanged);
+    final session = tab?.assistant;
+    session?.addListener(_onSessionChanged);
+    if (session != null) {
+      session.ensureSystemMessage(zh: _zh);
+    }
+    _boundTabId = tab?.id;
+    _input.text = session?.draftInput ?? '';
+    _streamUiThrottle?.cancel();
+    _streamUiThrottle = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scrollBottom(jump: true);
+    });
   }
 
   @override
   void dispose() {
+    widget.session?.removeListener(_onSessionChanged);
+    widget.session?.draftInput = _input.text;
     _streamUiThrottle?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
-  void _scrollBottom() {
+  void _scrollBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
-      _scroll.animateTo(
-        _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
+      final target = _scroll.position.maxScrollExtent;
+      if (jump) {
+        _scroll.jumpTo(target);
+      } else {
+        _scroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
     });
   }
 
-  void _scheduleStreamUi() {
+  void _scheduleStreamUi(AssistantChatSession session) {
     _streamUiThrottle?.cancel();
     _streamUiThrottle = Timer(const Duration(milliseconds: 45), () {
       _streamUiThrottle = null;
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      if (!identical(widget.session, session)) return;
+      if (widget.sessionTab?.id != _boundTabId) return;
+      setState(() {});
       _scrollBottom();
     });
   }
@@ -316,8 +330,10 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   }
 
   Future<void> _send() async {
+    final session = _session;
+    if (session == null) return;
     final text = _input.text.trim();
-    if (text.isEmpty || _busy) return;
+    if (text.isEmpty || session.busy) return;
     final l = AppLocalizations.of(context)!;
     final base = widget.settings.llmBaseUrl.trim();
     final model = widget.settings.llmModel.trim();
@@ -328,13 +344,16 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       return;
     }
 
+    session.draftInput = '';
     final cancel = LlmStreamCancel();
+    final tabId = widget.sessionTab?.id;
     setState(() {
-      _busy = true;
-      _streamCancel = cancel;
-      _streamReasoning = '';
-      _streamContent = '';
-      _apiMessages.add({'role': 'user', 'content': text});
+      session.busy = true;
+      session.streamCancel = cancel;
+      session.streamReasoning = '';
+      session.streamContent = '';
+      session.messages.add({'role': 'user', 'content': text});
+      session.touch();
       _input.clear();
     });
     _scrollBottom();
@@ -346,52 +365,48 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
         apiKey: widget.settings.llmApiKey,
       );
       await svc.runTurnStreaming(
-        messages: _apiMessages,
+        messages: session.messages,
         ssh: widget.ssh,
         useZhTools: _zh,
         onRequestTerminalApproval: _confirmTerminalCommand,
         cancel: cancel,
         onStreamRoundStart: () {
-          if (!mounted) return;
-          setState(() {
-            _streamReasoning = '';
-            _streamContent = '';
-          });
+          session.streamReasoning = '';
+          session.streamContent = '';
+          _scheduleStreamUi(session);
         },
         onStreamDelta: ({reasoningDelta, contentDelta}) {
           if (reasoningDelta != null && reasoningDelta.isNotEmpty) {
-            _streamReasoning += reasoningDelta;
+            session.streamReasoning += reasoningDelta;
           }
           if (contentDelta != null && contentDelta.isNotEmpty) {
-            _streamContent += contentDelta;
+            session.streamContent += contentDelta;
           }
-          _scheduleStreamUi();
+          _scheduleStreamUi(session);
         },
+        onMessagesChanged: session.touch,
       );
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _apiMessages.add({
-            'role': 'assistant',
-            'content': _zh ? '请求失败：$e' : 'Request failed: $e',
-          });
-        });
-      }
+      session.messages.add({
+        'role': 'assistant',
+        'content': _zh ? '请求失败：$e' : 'Request failed: $e',
+      });
+      session.touch();
+      if (mounted && widget.sessionTab?.id == tabId) setState(() {});
     } finally {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _streamCancel = null;
-          _streamReasoning = '';
-          _streamContent = '';
-        });
+      session.busy = false;
+      session.streamCancel = null;
+      session.streamReasoning = '';
+      session.streamContent = '';
+      if (mounted && widget.sessionTab?.id == tabId) {
+        setState(() {});
         _scrollBottom();
       }
     }
   }
 
   void _stopGeneration() {
-    _streamCancel?.cancel();
+    _session?.streamCancel?.cancel();
   }
 
   Future<void> _clear() async {
@@ -414,7 +429,8 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       ),
     );
     if (ok == true && mounted) {
-      setState(_resetSystemMessage);
+      _session?.reset(zh: _zh);
+      setState(() {});
     }
   }
 
@@ -422,6 +438,23 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context)!;
     final wb = context.wb;
+    final session = _session;
+
+    if (session == null) {
+      return Material(
+        color: wb.panel,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              l.placeholderTerminalSubtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: wb.textMuted, fontSize: 12, height: 1.4),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Material(
       color: wb.panel,
@@ -475,14 +508,22 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-              itemCount: _bubbleCount(),
-              itemBuilder: (context, i) => _bubbleAt(i),
+            child: SelectionArea(
+              child: ListView(
+                controller: _scroll,
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+                children: buildAssistantChatMessageTiles(
+                  context: context,
+                  l: l,
+                  messages: _apiMessages,
+                  busy: _busy,
+                  streamReasoning: _streamReasoning,
+                  streamContent: _streamContent,
+                ),
+              ),
             ),
           ),
-          if (_busy && !_streamingBubbleVisible)
+          if (_showGlobalThinking)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Row(
@@ -539,6 +580,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
                   Expanded(
                     child: TextField(
                       controller: _input,
+                      onChanged: (v) => session.draftInput = v,
                       minLines: 1,
                       maxLines: 5,
                       enabled: !_busy,
@@ -578,95 +620,6 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
     );
   }
 
-  int _bubbleCount() {
-    var n = 0;
-    for (final m in _apiMessages) {
-      final role = m['role'] as String?;
-      if (role == 'system') continue;
-      if (role == 'user') n++;
-      if (role == 'assistant') {
-        final rc = m['reasoning_content'] as String?;
-        if (rc != null && rc.trim().isNotEmpty) n++;
-        final tc = m['tool_calls'];
-        final c = m['content'];
-        if (tc is List && tc.isNotEmpty) n++;
-        if (c is String && c.trim().isNotEmpty) n++;
-      }
-      if (role == 'tool') n++;
-    }
-    if (_streamingBubbleVisible) n++;
-    return n;
-  }
-
-  Widget _bubbleAt(int index) {
-    var walk = 0;
-    for (final m in _apiMessages) {
-      final role = m['role'] as String?;
-      if (role == 'system') continue;
-
-      if (role == 'user') {
-        if (walk == index) {
-          return _UserBubble(text: (m['content'] as String?) ?? '');
-        }
-        walk++;
-        continue;
-      }
-
-      if (role == 'assistant') {
-        final rc = m['reasoning_content'] as String?;
-        if (rc != null && rc.trim().isNotEmpty) {
-          if (walk == index) {
-            return _ReasoningBubble(text: rc);
-          }
-          walk++;
-        }
-        final tc = m['tool_calls'];
-        final c = m['content'];
-        if (tc is List && tc.isNotEmpty) {
-          if (walk == index) {
-            return _ToolCallBubble(summary: _formatToolCalls(tc));
-          }
-          walk++;
-        }
-        if (c is String && c.trim().isNotEmpty) {
-          if (walk == index) {
-            return _AssistantBubble(text: c);
-          }
-          walk++;
-        }
-        continue;
-      }
-
-      if (role == 'tool') {
-        if (walk == index) {
-          return _ToolResultBubble(text: (m['content'] as String?) ?? '');
-        }
-        walk++;
-      }
-    }
-    if (_streamingBubbleVisible && walk == index) {
-      return _StreamingAssistantBubble(
-        reasoning: _streamReasoning,
-        content: _streamContent,
-      );
-    }
-    return const SizedBox.shrink();
-  }
-
-  String _formatToolCalls(List<dynamic> tc) {
-    final names = <String>[];
-    for (final t in tc) {
-      if (t is! Map) continue;
-      final m = Map<String, dynamic>.from(t);
-      final fn = m['function'];
-      if (fn is Map) {
-        final f = Map<String, dynamic>.from(fn);
-        final name = f['name'];
-        if (name is String) names.add(name);
-      }
-    }
-    return names.isEmpty ? 'terminal_run' : names.join(', ');
-  }
 }
 
 /// 参考 Cursor：图标标题、说明、深色代码块、安全提示、底部 Deny / Run。
@@ -801,335 +754,6 @@ class _TerminalRunApprovalDialog extends StatelessWidget {
           onPressed: () => Navigator.pop(context, true),
         ),
       ],
-    );
-  }
-}
-
-enum _ChatBubbleRole { user, assistant, reasoning }
-
-class _ChatRoleHeader extends StatelessWidget {
-  const _ChatRoleHeader({required this.role, required this.label});
-
-  final _ChatBubbleRole role;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final accent = switch (role) {
-      _ChatBubbleRole.user => wb.accentBlue,
-      _ChatBubbleRole.assistant => const Color(0xFF22C55E),
-      _ChatBubbleRole.reasoning => const Color(0xFFD97706),
-    };
-    final icon = switch (role) {
-      _ChatBubbleRole.user => Icons.person_outline_rounded,
-      _ChatBubbleRole.assistant => Icons.smart_toy_outlined,
-      _ChatBubbleRole.reasoning => Icons.psychology_outlined,
-    };
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 15, color: accent),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: TextStyle(
-            color: accent,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.3,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChatBubbleShell extends StatelessWidget {
-  const _ChatBubbleShell({
-    required this.role,
-    required this.header,
-    required this.child,
-    this.streaming = false,
-  });
-
-  final _ChatBubbleRole role;
-  final String header;
-  final Widget child;
-  final bool streaming;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final isUser = role == _ChatBubbleRole.user;
-    final isReasoning = role == _ChatBubbleRole.reasoning;
-
-    final accent = switch (role) {
-      _ChatBubbleRole.user => wb.accentBlue,
-      _ChatBubbleRole.assistant => const Color(0xFF22C55E),
-      _ChatBubbleRole.reasoning => const Color(0xFFD97706),
-    };
-
-    final background = switch (role) {
-      _ChatBubbleRole.user => wb.accentBlue.withValues(alpha: 0.14),
-      _ChatBubbleRole.assistant => wb.panelElevated,
-      _ChatBubbleRole.reasoning => const Color(0xFFD97706).withValues(alpha: 0.07),
-    };
-
-    final borderColor = switch (role) {
-      _ChatBubbleRole.user => wb.accentBlue.withValues(alpha: 0.38),
-      _ChatBubbleRole.assistant =>
-        streaming ? accent.withValues(alpha: 0.55) : wb.border,
-      _ChatBubbleRole.reasoning => const Color(0xFFD97706).withValues(alpha: 0.42),
-    };
-
-    final radius = BorderRadius.only(
-      topLeft: const Radius.circular(12),
-      topRight: const Radius.circular(12),
-      bottomLeft: isUser ? const Radius.circular(12) : const Radius.circular(4),
-      bottomRight: isUser ? const Radius.circular(4) : const Radius.circular(12),
-    );
-
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        constraints: const BoxConstraints(maxWidth: 520),
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: radius,
-          border: Border.all(color: borderColor),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (!isUser)
-                Container(
-                  width: 3,
-                  color: accent.withValues(alpha: isReasoning ? 0.85 : 1),
-                ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _ChatRoleHeader(role: role, label: header),
-                      const SizedBox(height: 7),
-                      child,
-                    ],
-                  ),
-                ),
-              ),
-              if (isUser)
-                Container(
-                  width: 3,
-                  color: accent,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _UserBubble extends StatelessWidget {
-  const _UserBubble({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context)!;
-    return _ChatBubbleShell(
-      role: _ChatBubbleRole.user,
-      header: l.assistantUserHeader,
-      child: SelectableText(
-        text,
-        style: TextStyle(
-          color: context.wb.primaryText,
-          fontSize: 13,
-          height: 1.4,
-        ),
-      ),
-    );
-  }
-}
-
-class _AssistantBubble extends StatelessWidget {
-  const _AssistantBubble({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context)!;
-    return _ChatBubbleShell(
-      role: _ChatBubbleRole.assistant,
-      header: l.assistantAnswerHeader,
-      child: AssistantMarkdownBody(data: text),
-    );
-  }
-}
-
-class _ReasoningBubble extends StatelessWidget {
-  const _ReasoningBubble({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final l = AppLocalizations.of(context)!;
-    return _ChatBubbleShell(
-      role: _ChatBubbleRole.reasoning,
-      header: l.assistantReasoningHeader,
-      child: SelectableText(
-        text,
-        style: TextStyle(
-          color: wb.textMuted,
-          fontSize: 12,
-          height: 1.4,
-          fontStyle: FontStyle.italic,
-        ),
-      ),
-    );
-  }
-}
-
-class _StreamingAssistantBubble extends StatelessWidget {
-  const _StreamingAssistantBubble({
-    required this.reasoning,
-    required this.content,
-  });
-
-  final String reasoning;
-  final String content;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final l = AppLocalizations.of(context)!;
-    final hasReasoning = reasoning.trim().isNotEmpty;
-    final hasContent = content.trim().isNotEmpty;
-
-    if (!hasReasoning && !hasContent) {
-      return _ChatBubbleShell(
-        role: _ChatBubbleRole.assistant,
-        header: l.assistantAnswerHeader,
-        streaming: true,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: wb.accentBlue,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              l.assistantThinking,
-              style: TextStyle(color: wb.textMuted, fontSize: 12),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (hasReasoning)
-          _ChatBubbleShell(
-            role: _ChatBubbleRole.reasoning,
-            header: l.assistantReasoningHeader,
-            streaming: true,
-            child: SelectableText(
-              reasoning,
-              style: TextStyle(
-                color: wb.textMuted,
-                fontSize: 12,
-                height: 1.4,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ),
-        if (hasContent)
-          _ChatBubbleShell(
-            role: _ChatBubbleRole.assistant,
-            header: l.assistantAnswerHeader,
-            streaming: true,
-            child: AssistantMarkdownBody(data: content),
-          ),
-      ],
-    );
-  }
-}
-
-class _ToolCallBubble extends StatelessWidget {
-  const _ToolCallBubble({required this.summary});
-
-  final String summary;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final l = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Icon(Icons.bolt_rounded, size: 16, color: wb.textMuted),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              l.assistantToolRunning(summary),
-              style: TextStyle(
-                color: wb.textMuted,
-                fontSize: 11.5,
-                height: 1.3,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ToolResultBubble extends StatelessWidget {
-  const _ToolResultBubble({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    final preview = text.length > 400 ? '${text.substring(0, 400)}…' : text;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8, left: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: wb.terminalBg.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: wb.border.withValues(alpha: 0.6)),
-      ),
-      child: SelectableText(
-        preview,
-        style: TextStyle(
-          color: wb.textMuted,
-          fontSize: 11,
-          height: 1.25,
-          fontFamily: 'monospace',
-        ),
-      ),
     );
   }
 }

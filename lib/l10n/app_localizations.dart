@@ -1321,6 +1321,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You'**
   String get assistantUserHeader;
+
+  /// No description provided for @assistantReasoningExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Show reasoning'**
+  String get assistantReasoningExpand;
+
+  /// No description provided for @assistantReasoningCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide reasoning'**
+  String get assistantReasoningCollapse;
+
+  /// No description provided for @assistantToolResultHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal output'**
+  String get assistantToolResultHeader;
+
+  /// No description provided for @assistantToolResultEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'(No terminal output)'**
+  String get assistantToolResultEmpty;
 }
 
 class _AppLocalizationsDelegate

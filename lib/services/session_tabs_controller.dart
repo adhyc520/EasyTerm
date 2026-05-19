@@ -2,14 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'assistant_chat_session.dart';
 import 'ssh_workspace_controller.dart';
 import 'workbench_settings_store.dart';
 
 class SessionTab {
-  SessionTab({required this.id, required this.controller});
+  SessionTab({required this.id, required this.controller})
+    : assistant = AssistantChatSession();
 
   final int id;
   final SshWorkspaceController controller;
+  final AssistantChatSession assistant;
 
   String get title => '${controller.username}@${controller.host}';
 }
@@ -75,6 +78,7 @@ class SessionTabsController extends ChangeNotifier {
   void closeTab(int index) {
     if (index < 0 || index >= _tabs.length) return;
     final tab = _tabs[index];
+    tab.assistant.dispose();
     tab.controller.removeListener(_onTabNotify);
     tab.controller.dispose();
     _tabs.removeAt(index);
@@ -95,6 +99,7 @@ class SessionTabsController extends ChangeNotifier {
 
   void _stripAllTabs() {
     for (final t in _tabs) {
+      t.assistant.dispose();
       t.controller.removeListener(_onTabNotify);
       t.controller.dispose();
     }

@@ -99,11 +99,24 @@ ThemeData buildWorkbenchMaterialTheme(WorkbenchColors c, Brightness brightness) 
           outline: c.border,
         );
 
+  final typography = Typography.material2021();
+  final textTheme = isDark
+      ? typography.white.apply(
+          bodyColor: c.primaryText,
+          displayColor: c.primaryText,
+        )
+      : typography.black.apply(
+          bodyColor: c.primaryText,
+          displayColor: c.primaryText,
+        );
+
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
     scaffoldBackgroundColor: c.bg,
     colorScheme: scheme,
+    textTheme: textTheme,
+    primaryTextTheme: textTheme,
     dividerTheme: DividerThemeData(color: c.border),
     appBarTheme: AppBarTheme(
       backgroundColor: c.panelElevated,

@@ -672,4 +672,16 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get assistantUserHeader => '你';
+
+  @override
+  String get assistantReasoningExpand => '展开思考';
+
+  @override
+  String get assistantReasoningCollapse => '收起思考';
+
+  @override
+  String get assistantToolResultHeader => '终端输出';
+
+  @override
+  String get assistantToolResultEmpty => '（无终端输出）';
 }

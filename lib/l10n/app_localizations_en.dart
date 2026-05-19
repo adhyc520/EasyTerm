@@ -694,4 +694,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get assistantUserHeader => 'You';
+
+  @override
+  String get assistantReasoningExpand => 'Show reasoning';
+
+  @override
+  String get assistantReasoningCollapse => 'Hide reasoning';
+
+  @override
+  String get assistantToolResultHeader => 'Terminal output';
+
+  @override
+  String get assistantToolResultEmpty => '(No terminal output)';
 }

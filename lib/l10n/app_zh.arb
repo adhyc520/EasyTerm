@@ -234,5 +234,9 @@
   "assistantTerminalAllowExecute": "运行",
   "assistantReasoningHeader": "思考过程",
   "assistantAnswerHeader": "回复",
-  "assistantUserHeader": "你"
+  "assistantUserHeader": "你",
+  "assistantReasoningExpand": "展开思考",
+  "assistantReasoningCollapse": "收起思考",
+  "assistantToolResultHeader": "终端输出",
+  "assistantToolResultEmpty": "（无终端输出）"
 }
