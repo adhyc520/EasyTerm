@@ -1295,7 +1295,7 @@ abstract class AppLocalizations {
   /// No description provided for @assistantTerminalSecurityHint.
   ///
   /// In en, this message translates to:
-  /// **'Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.'**
+  /// **'Untrusted commands can change or delete remote files, burn resources, or leak environment details.'**
   String get assistantTerminalSecurityHint;
 
   /// No description provided for @assistantTerminalDeny.

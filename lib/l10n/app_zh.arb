@@ -235,7 +235,7 @@
   "assistantTerminalApprovalTitle": "终端命令",
   "assistantTerminalApprovalSubtitle": "助手将把下列内容发送到当前 SSH 终端，效果等同于你在该终端里直接键入（含换行与转义）。请确认你信任该操作后再运行。",
   "assistantTerminalCommandSectionTitle": "将发送的内容",
-  "assistantTerminalSecurityHint": "不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。与在 Cursor 里确认「Run」一样，是否执行由你决定。",
+  "assistantTerminalSecurityHint": "不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。",
   "assistantTerminalDeny": "不允许",
   "assistantTerminalAllowExecute": "运行",
   "assistantReasoningHeader": "思考过程",

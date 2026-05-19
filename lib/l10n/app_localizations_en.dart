@@ -683,7 +683,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get assistantTerminalSecurityHint =>
-      'Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.';
+      'Untrusted commands can change or delete remote files, burn resources, or leak environment details.';
 
   @override
   String get assistantTerminalDeny => 'Deny';

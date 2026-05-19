@@ -320,7 +320,7 @@
   "assistantTerminalApprovalTitle": "Terminal command",
   "assistantTerminalApprovalSubtitle": "The assistant will send the content below to your SSH session, as if you typed it in that terminal (including newlines and escapes). Only run it if you trust the action.",
   "assistantTerminalCommandSectionTitle": "Payload",
-  "assistantTerminalSecurityHint": "Untrusted commands can change or delete remote files, burn resources, or leak environment details. Like confirming Run in Cursor, you decide whether to proceed.",
+  "assistantTerminalSecurityHint": "Untrusted commands can change or delete remote files, burn resources, or leak environment details.",
   "assistantTerminalDeny": "Deny",
   "assistantTerminalAllowExecute": "Run",
   "assistantReasoningHeader": "Reasoning",

@@ -660,8 +660,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get assistantTerminalCommandSectionTitle => '将发送的内容';
 
   @override
-  String get assistantTerminalSecurityHint =>
-      '不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。与在 Cursor 里确认「Run」一样，是否执行由你决定。';
+  String get assistantTerminalSecurityHint => '不受信任的命令可能修改或删除远端文件、消耗资源或泄露环境信息。';
 
   @override
   String get assistantTerminalDeny => '不允许';
