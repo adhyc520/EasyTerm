@@ -335,12 +335,17 @@ class SshWorkspaceController extends ChangeNotifier {
   bool _connected = false;
   bool _sessionDisposed = false;
 
+  /// 曾连上后又意外断开（传输层关闭 / 出错）。为 `true` 时 [_terminal] 仍保留，
+  /// 供 UI 在历史缓冲之上叠加「重新连接」入口。
+  bool _dropped = false;
+
   String get remoteCwd => _remoteCwd;
   List<SftpName> get entries => List.unmodifiable(_entries);
   String? get error => _error;
   bool get loadingDir => _loadingDir;
   bool get connecting => _connecting;
   bool get connected => _connected;
+  bool get dropped => _dropped;
 
   bool _suggestCredentialSheetAfterFailure = false;
 
@@ -368,6 +373,7 @@ class SshWorkspaceController extends ChangeNotifier {
     if (_connecting || _connected) return;
     if (_sessionDisposed) return;
     _connecting = true;
+    _dropped = false;
     _suggestCredentialSheetAfterFailure = false;
     _setError(null);
     notifyListeners();
@@ -434,18 +440,23 @@ class SshWorkspaceController extends ChangeNotifier {
           await refreshDirectory();
           if (_sessionDisposed) return;
 
-          _initTerminal();
+          // 重连时复用已有 Terminal，保留滚动缓冲；首次连接才新建。
+          if (_terminal == null) {
+            _initTerminal();
+          }
           _wireShell();
 
           _connected = true;
           lastError = null;
+          _startDropMonitor();
           break;
         } catch (e, st) {
           lastError = e;
           debugPrint(
             'SSH connect attempt ${attempt + 1}/$totalAttempts: $e\n$st',
           );
-          await disconnect();
+          // 重连（_terminal 已存在）时保留终端历史；首次连接照旧彻底清空。
+          await _teardownConnection(keepTerminal: _terminal != null);
           if (_sshAuthOrKeyIssueExhaustedNoBenefitFromTcpRetry(e)) {
             break;
           }
@@ -1241,7 +1252,11 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async {
+  /// 取消订阅、关闭 shell/sftp/client 并置空。
+  ///
+  /// [keepTerminal] 为 `true` 时保留 [_terminal] 与 [_entries]，用于「掉线后保留
+  /// 历史缓冲以供重连」的场景；为 `false`（[disconnect] 的对外语义）时彻底清空。
+  Future<void> _teardownConnection({bool keepTerminal = false}) async {
     await _stdoutSub?.cancel();
     await _stderrSub?.cancel();
     _stdoutSub = null;
@@ -1262,11 +1277,69 @@ class SshWorkspaceController extends ChangeNotifier {
     } catch (_) {}
     _client = null;
 
-    _terminal = null;
     _connected = false;
-    _entries = [];
+    if (!keepTerminal) {
+      _terminal = null;
+      _entries = [];
+    }
+  }
+
+  Future<void> disconnect() async {
+    await _teardownConnection(keepTerminal: false);
     if (_sessionDisposed) return;
     uploadTasks.clear();
+    notifyListeners();
+  }
+
+  /// 主动重连（掉线后用户点击「重新连接」）。
+  ///
+  /// 在 dropped 态 [_connected]==false 且 [_connecting]==false，直接复用 [connect]：
+  /// 后者会保留 [_terminal]、重建 shell/sftp 并重新挂上掉线监听。
+  Future<void> reconnect() async {
+    if (_connecting || _connected) return;
+    if (_sessionDisposed) return;
+    await connect();
+  }
+
+  /// 监听当前 [SSHClient] 的传输关闭 / 出错，触发掉线处理。
+  ///
+  /// 必须在 `_client` 赋值、`_connected` 置真之后调用；用捕获的 [client] 引用
+  /// 比对，避免重连替换后的旧 client 误触发。
+  void _startDropMonitor() {
+    final client = _client;
+    if (client == null) return;
+    client.done.then(
+      (_) => _handleTransportClosed(client, null),
+      onError: (Object e, StackTrace st) => _handleTransportClosed(client, e),
+    );
+  }
+
+  void _handleTransportClosed(SSHClient client, Object? error) {
+    if (_sessionDisposed) return;
+    // 已被重连替换的旧 client 关闭：忽略。
+    if (!identical(_client, client)) return;
+    // 已在过渡态（主动 disconnect / 正在重连）：忽略，避免重复处理。
+    if (!_connected) return;
+
+    debugPrint('SSH transport closed unexpectedly: $error');
+    _teardownConnection(keepTerminal: true);
+    _dropped = true;
+
+    String message;
+    try {
+      final l10n = lookupAppLocalizations(Locale(settings.appLocaleCode));
+      message = l10n.terminalDisconnected;
+      if (error != null) {
+        final detail = error.toString();
+        if (detail.isNotEmpty) {
+          message = '$message\n$detail';
+        }
+      }
+    } catch (e, st) {
+      debugPrint('build disconnect message failed: $e\n$st');
+      message = error?.toString() ?? '';
+    }
+    _setError(message.isEmpty ? null : message);
     notifyListeners();
   }
 

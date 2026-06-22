@@ -650,6 +650,24 @@ abstract class AppLocalizations {
   /// **'Waiting to connect…'**
   String get terminalWaiting;
 
+  /// No description provided for @terminalDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection lost'**
+  String get terminalDisconnected;
+
+  /// No description provided for @terminalReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
+  String get terminalReconnect;
+
+  /// No description provided for @terminalReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting…'**
+  String get terminalReconnecting;
+
   /// No description provided for @terminalMenuCopy.
   ///
   /// In en, this message translates to:

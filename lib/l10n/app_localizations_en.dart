@@ -306,6 +306,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminalWaiting => 'Waiting to connect…';
 
   @override
+  String get terminalDisconnected => 'Connection lost';
+
+  @override
+  String get terminalReconnect => 'Reconnect';
+
+  @override
+  String get terminalReconnecting => 'Reconnecting…';
+
+  @override
   String get terminalMenuCopy => 'Copy';
 
   @override

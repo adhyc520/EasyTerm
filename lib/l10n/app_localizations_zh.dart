@@ -293,6 +293,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminalWaiting => '等待连接…';
 
   @override
+  String get terminalDisconnected => '连接已断开';
+
+  @override
+  String get terminalReconnect => '重新连接';
+
+  @override
+  String get terminalReconnecting => '正在重新连接…';
+
+  @override
   String get terminalMenuCopy => '复制';
 
   @override
