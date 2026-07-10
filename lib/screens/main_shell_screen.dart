@@ -95,7 +95,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
         if (mounted) setState(() => _versionTagLabel = label);
       }),
     );
-    if (AppUpdateService.isSupportedPlatform) {
+    if (AppUpdateService.isUpdateEnabled) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(_checkForUpdatesOnStartup());
       });
@@ -204,7 +204,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
         PlatformMenu(
           label: l10n.appTitle,
           menus: [
-            if (AppUpdateService.isSupportedPlatform)
+            if (AppUpdateService.isUpdateEnabled)
               PlatformMenuItem(
                 label: l10n.menuCheckForUpdates,
                 onSelected: () => unawaited(_checkForUpdatesManual()),
@@ -317,7 +317,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
     return null;
   }
 
-  /// 连接失败后若为凭据类错误，弹出已保存主机的口令/密钥口令输入层并关闭失败标签。
+  /// 连接失败后若为凭据类错误，弹出已保存主机的口令/密钥口令输入层并在当前标签重连。
   void _bindAuthFailureCredentialSheet(
     SavedHostProfile profile,
     String? privateKeyPem,
@@ -351,26 +351,23 @@ class _MainShellScreenState extends State<MainShellScreen> {
     String? privateKeyPem,
     SshWorkspaceController failed,
   ) async {
-    final idx = _tabs.tabs.indexWhere((t) => identical(t.controller, failed));
-    if (idx < 0) return;
-    _tabs.closeTab(idx);
+    if (!_tabs.tabs.any((t) => identical(t.controller, failed))) return;
     if (!mounted) return;
-    // 关标签后立即弹层有时会抢不到 Overlay；让给出一帧再给 context。
+    // 弹层有时会抢不到 Overlay；让给出一帧再给 context。
     await Future<void>.delayed(Duration.zero);
 
     if (!mounted) return;
+    if (!_tabs.tabs.any((t) => identical(t.controller, failed))) return;
     final liveProfile = _profileById(profile.id) ?? profile;
     final cred = await showSavedHostConnectSheet(context, liveProfile);
     if (!mounted || cred == null) return;
+    if (!_tabs.tabs.any((t) => identical(t.controller, failed))) return;
     final pemForReconnect = cred.privateKeyPem ?? privateKeyPem;
-    final retryC = _tabs.openTab(
-      host: liveProfile.host,
-      port: liveProfile.port,
-      username: liveProfile.username,
+    await failed.reconnectWithCredentials(
       password: cred.password,
       privateKeyPem: pemForReconnect,
     );
-    _bindAuthFailureCredentialSheet(liveProfile, pemForReconnect, retryC);
+    _bindAuthFailureCredentialSheet(liveProfile, pemForReconnect, failed);
     if (cred.password.trim().isNotEmpty) {
       await _profiles.updateById(
         id: liveProfile.id,
@@ -486,7 +483,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
                 _tabs.closeAll();
               },
             ),
-            if (AppUpdateService.isSupportedPlatform)
+            if (AppUpdateService.isUpdateEnabled)
               ListTile(
                 leading: const Icon(Icons.system_update_outlined),
                 title: Text(l10n.menuCheckForUpdates),

@@ -220,6 +220,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   final ScrollController _scroll = ScrollController();
   Timer? _streamUiThrottle;
   int? _boundTabId;
+  AssistantChatSession? _boundSession;
 
   AssistantChatSession? get _session => widget.session;
   List<Map<String, Object?>> get _apiMessages =>
@@ -248,23 +249,35 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   void didUpdateWidget(AssistantChatPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.sessionTab?.id != widget.sessionTab?.id) {
-      oldWidget.session?.draftInput = _input.text;
+      _saveDraft(oldWidget.session);
       _bindSession(widget.sessionTab);
     }
+  }
+
+  void _saveDraft(AssistantChatSession? session) {
+    if (session == null || session.isDisposed) return;
+    session.draftInput = _input.text;
+  }
+
+  void _unbindSession(AssistantChatSession? session) {
+    if (session == null || session.isDisposed) return;
+    session.removeListener(_onSessionChanged);
   }
 
   void _onSessionChanged() {
     if (!mounted) return;
     if (widget.sessionTab?.id != _boundTabId) return;
+    if (_boundSession?.isDisposed ?? true) return;
     setState(() {});
     _scrollBottom();
   }
 
   void _bindSession(SessionTab? tab) {
-    widget.session?.removeListener(_onSessionChanged);
+    _unbindSession(_boundSession);
     final session = tab?.assistant;
+    _boundSession = session;
     session?.addListener(_onSessionChanged);
-    if (session != null) {
+    if (session != null && !session.isDisposed) {
       session.ensureSystemMessage(zh: _zh);
     }
     _boundTabId = tab?.id;
@@ -279,8 +292,9 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
 
   @override
   void dispose() {
-    widget.session?.removeListener(_onSessionChanged);
-    widget.session?.draftInput = _input.text;
+    _saveDraft(_boundSession);
+    _unbindSession(_boundSession);
+    _boundSession = null;
     _streamUiThrottle?.cancel();
     _input.dispose();
     _scroll.dispose();
@@ -304,6 +318,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   }
 
   void _scheduleStreamUi(AssistantChatSession session) {
+    if (session.isDisposed) return;
     _streamUiThrottle?.cancel();
     _streamUiThrottle = Timer(const Duration(milliseconds: 45), () {
       _streamUiThrottle = null;
@@ -331,7 +346,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
 
   Future<void> _send() async {
     final session = _session;
-    if (session == null) return;
+    if (session == null || session.isDisposed) return;
     final text = _input.text.trim();
     if (text.isEmpty || session.busy) return;
     final l = AppLocalizations.of(context)!;
@@ -371,11 +386,13 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
         onRequestTerminalApproval: _confirmTerminalCommand,
         cancel: cancel,
         onStreamRoundStart: () {
+          if (session.isDisposed) return;
           session.streamReasoning = '';
           session.streamContent = '';
           _scheduleStreamUi(session);
         },
         onStreamDelta: ({reasoningDelta, contentDelta}) {
+          if (session.isDisposed) return;
           if (reasoningDelta != null && reasoningDelta.isNotEmpty) {
             session.streamReasoning += reasoningDelta;
           }
@@ -384,20 +401,26 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
           }
           _scheduleStreamUi(session);
         },
-        onMessagesChanged: session.touch,
+        onMessagesChanged: () {
+          if (!session.isDisposed) session.touch();
+        },
       );
     } catch (e) {
-      session.messages.add({
-        'role': 'assistant',
-        'content': _zh ? '请求失败：$e' : 'Request failed: $e',
-      });
-      session.touch();
+      if (!session.isDisposed) {
+        session.messages.add({
+          'role': 'assistant',
+          'content': _zh ? '请求失败：$e' : 'Request failed: $e',
+        });
+        session.touch();
+      }
       if (mounted && widget.sessionTab?.id == tabId) setState(() {});
     } finally {
-      session.busy = false;
-      session.streamCancel = null;
-      session.streamReasoning = '';
-      session.streamContent = '';
+      if (!session.isDisposed) {
+        session.busy = false;
+        session.streamCancel = null;
+        session.streamReasoning = '';
+        session.streamContent = '';
+      }
       if (mounted && widget.sessionTab?.id == tabId) {
         setState(() {});
         _scrollBottom();

@@ -78,9 +78,7 @@ class SessionTabsController extends ChangeNotifier {
   void closeTab(int index) {
     if (index < 0 || index >= _tabs.length) return;
     final tab = _tabs[index];
-    tab.assistant.dispose();
-    tab.controller.removeListener(_onTabNotify);
-    tab.controller.dispose();
+    _disposeTabResources(tab);
     _tabs.removeAt(index);
     if (_tabs.isEmpty) {
       _selectedIndex = 0;
@@ -92,6 +90,12 @@ class SessionTabsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _disposeTabResources(SessionTab tab) {
+    tab.assistant.dispose();
+    tab.controller.removeListener(_onTabNotify);
+    tab.controller.dispose();
+  }
+
   void closeAll() {
     _stripAllTabs();
     notifyListeners();
@@ -99,9 +103,7 @@ class SessionTabsController extends ChangeNotifier {
 
   void _stripAllTabs() {
     for (final t in _tabs) {
-      t.assistant.dispose();
-      t.controller.removeListener(_onTabNotify);
-      t.controller.dispose();
+      _disposeTabResources(t);
     }
     _tabs.clear();
     _selectedIndex = 0;

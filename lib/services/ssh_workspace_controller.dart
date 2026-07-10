@@ -247,16 +247,20 @@ class SshWorkspaceController extends ChangeNotifier {
     required this.host,
     required this.port,
     required this.username,
-    required this.password,
-    this.privateKeyPem,
-  });
+    required String password,
+    String? privateKeyPem,
+  }) : _password = password,
+       _privateKeyPem = privateKeyPem;
 
   final WorkbenchSettingsStore settings;
   final String host;
   final int port;
   final String username;
-  final String password;
-  final String? privateKeyPem;
+  String _password;
+  String? _privateKeyPem;
+
+  String get password => _password;
+  String? get privateKeyPem => _privateKeyPem;
 
   SSHClient? _client;
   SSHSession? _shell;
@@ -398,23 +402,23 @@ class SshWorkspaceController extends ChangeNotifier {
           }
 
           List<SSHKeyPair>? identities;
-          final pem = privateKeyPem?.trim();
+          final pem = _privateKeyPem?.trim();
           if (pem != null && pem.isNotEmpty) {
             identities = SSHKeyPair.fromPem(
               pem,
-              password.isEmpty ? null : password,
+              _password.isEmpty ? null : _password,
             );
           }
 
           // 公钥失败时仍应尝试密码；部分服务端只开启 keyboard-interactive（未开启 password 方法）。
-          final hasPassword = password.isNotEmpty;
+          final hasPassword = _password.isNotEmpty;
           _client = SSHClient(
             socket,
             username: username,
             identities: identities,
-            onPasswordRequest: hasPassword ? () async => password : null,
+            onPasswordRequest: hasPassword ? () async => _password : null,
             onUserInfoRequest: hasPassword
-                ? (req) async => List<String>.filled(req.prompts.length, password)
+                ? (req) async => List<String>.filled(req.prompts.length, _password)
                 : null,
             keepAliveInterval: settings.sshKeepAliveSec <= 0
                 ? null
@@ -471,10 +475,10 @@ class SshWorkspaceController extends ChangeNotifier {
       // 须在 _connecting 置假之前写入；否则终端区域仍走「连接中」分支，用户看不到本地化错误文案。
       if (!_connected && lastError != null) {
         final hadPrivateKey =
-            privateKeyPem != null && privateKeyPem!.trim().isNotEmpty;
+            _privateKeyPem != null && _privateKeyPem!.trim().isNotEmpty;
         _suggestCredentialSheetAfterFailure = sshFailureShouldOfferCredentialSheet(
           lastError,
-          passwordProvided: password.isNotEmpty,
+          passwordProvided: _password.isNotEmpty,
           hadPrivateKey: hadPrivateKey,
         );
         try {
@@ -484,7 +488,7 @@ class SshWorkspaceController extends ChangeNotifier {
               lastError,
               l10n: l10n,
               hadPrivateKey: hadPrivateKey,
-              passwordProvided: password.isNotEmpty,
+              passwordProvided: _password.isNotEmpty,
             ),
             notify: false,
           );
@@ -1289,6 +1293,22 @@ class SshWorkspaceController extends ChangeNotifier {
     if (_sessionDisposed) return;
     uploadTasks.clear();
     notifyListeners();
+  }
+
+  /// 凭据错误后更新口令/密钥并在当前标签重连（不关闭标签）。
+  Future<void> reconnectWithCredentials({
+    required String password,
+    String? privateKeyPem,
+  }) async {
+    if (_sessionDisposed || _connecting) return;
+    _password = password;
+    _privateKeyPem = privateKeyPem;
+    _suggestCredentialSheetAfterFailure = false;
+    await _teardownConnection(keepTerminal: false);
+    if (_sessionDisposed) return;
+    uploadTasks.clear();
+    notifyListeners();
+    await connect();
   }
 
   /// 主动重连（掉线后用户点击「重新连接」）。

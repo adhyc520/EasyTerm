@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:archive/archive_io.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -28,6 +29,9 @@ final class AppUpdateService {
 
   static bool get isSupportedPlatform =>
       Platform.isMacOS || Platform.isWindows;
+
+  /// Auto/manual update checks are disabled in debug runs (`flutter run`).
+  static bool get isUpdateEnabled => isSupportedPlatform && !kDebugMode;
 
   Future<PackageInfo> packageInfo() => PackageInfo.fromPlatform();
 
@@ -63,8 +67,12 @@ final class AppUpdateService {
   Future<AppUpdateCheckResult> checkForUpdates({
     bool respectSkipped = true,
   }) async {
-    if (!isSupportedPlatform) {
-      return AppUpdateCheckResult.unsupported();
+    if (!isUpdateEnabled) {
+      if (!isSupportedPlatform) {
+        return AppUpdateCheckResult.unsupported();
+      }
+      final installed = await currentVersion();
+      return AppUpdateCheckResult.upToDate(installed: installed);
     }
     phase = AppUpdatePhase.checking;
     try {

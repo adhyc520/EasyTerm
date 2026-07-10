@@ -10,10 +10,17 @@ class AssistantChatSession extends ChangeNotifier {
   String streamReasoning = '';
   String streamContent = '';
   String draftInput = '';
+  bool _disposed = false;
 
-  void touch() => notifyListeners();
+  bool get isDisposed => _disposed;
+
+  void touch() {
+    if (_disposed) return;
+    notifyListeners();
+  }
 
   void ensureSystemMessage({required bool zh}) {
+    if (_disposed) return;
     if (messages.isEmpty) {
       messages.add(_systemMessage(zh: zh));
       return;
@@ -28,6 +35,7 @@ class AssistantChatSession extends ChangeNotifier {
   }
 
   void reset({required bool zh}) {
+    if (_disposed) return;
     streamReasoning = '';
     streamContent = '';
     busy = false;
@@ -41,6 +49,8 @@ class AssistantChatSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     streamCancel?.cancel();
     streamCancel = null;
     super.dispose();
