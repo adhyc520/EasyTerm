@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show kPrimaryButton;
+import 'package:flutter/gestures.dart' show kPrimaryButton, PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -40,17 +40,46 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   /// 终端滚动控制器：传入 [TerminalView] 后可读取/编程滚动，配合边缘自动滚动。
   final ScrollController _termScroll = ScrollController();
 
-  /// 鼠标主键拖选：起点（RenderTerminal 局部坐标）与起点时刻的滚动像素。
-  /// 起点以像素保存，每次延伸时按「当前滚动 − 起点滚动」对 dy 反向补偿，
-  /// 使 [RenderTerminal.getCellOffset] 始终落在原始缓冲区行，消除滚动漂移。
-  Offset? _selDragStart;
-  double _selDragStartScroll = 0;
+  /// 鼠标主键拖选：起点格坐标（缓冲区锚定）与当前指针位置（RenderTerminal 局部坐标）。
+  CellOffset? _selStartCell;
   Offset _selLastLocal = Offset.zero;
   Timer? _autoScrollTimer;
+  bool _selectionApplyScheduled = false;
+
+  /// 与工作台 terminalBg 对齐；选区须半透明，xterm 会把高亮画在文字上方。
+  static TerminalTheme _workbenchTerminalTheme(Color terminalBg) {
+    const base = TerminalThemes.defaultTheme;
+    return TerminalTheme(
+      cursor: base.cursor,
+      selection: const Color(0xAA264F78),
+      foreground: base.foreground,
+      background: terminalBg,
+      black: base.black,
+      red: base.red,
+      green: base.green,
+      yellow: base.yellow,
+      blue: base.blue,
+      magenta: base.magenta,
+      cyan: base.cyan,
+      white: base.white,
+      brightBlack: base.brightBlack,
+      brightRed: base.brightRed,
+      brightGreen: base.brightGreen,
+      brightYellow: base.brightYellow,
+      brightBlue: base.brightBlue,
+      brightMagenta: base.brightMagenta,
+      brightCyan: base.brightCyan,
+      brightWhite: base.brightWhite,
+      searchHitBackground: base.searchHitBackground,
+      searchHitBackgroundCurrent: base.searchHitBackgroundCurrent,
+      searchHitForeground: base.searchHitForeground,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    _termScroll.addListener(_onTermScrolled);
     widget.workbenchSettings.addListener(_onWorkbenchSettingsChanged);
     widget.controller.addListener(_onControllerChanged);
     _syncTerminalBufferListener();
@@ -60,6 +89,7 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   void dispose() {
     _selectCopyDebounce?.cancel();
     _autoScrollTimer?.cancel();
+    _termScroll.removeListener(_onTermScrolled);
     _termScroll.dispose();
     _terminalBound?.removeListener(_onTerminalBufferChanged);
     widget.workbenchSettings.removeListener(_onWorkbenchSettingsChanged);
@@ -106,21 +136,67 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   // RenderTerminal 未由 xterm 公开导出，这里以 dynamic 持有；调用方做空守卫。
   dynamic get _renderTerminal => _termViewKey.currentState?.renderTerminal;
 
-  double _scrollPixels() =>
-      _termScroll.hasClients ? _termScroll.position.pixels : 0.0;
-
-  void _extendSelection() {
+  /// 拖选时把滚动对齐到整行像素，避免 xterm 选区高亮与文字行 Y 取整不一致产生行间细线。
+  void _snapScrollToLineHeight() {
+    if (_selStartCell == null || !_termScroll.hasClients) return;
     final rt = _renderTerminal;
-    final start = _selDragStart;
-    if (rt == null || start == null) return;
-    // 反向补偿：滚动后仍把起点映射回原始缓冲区行。
-    final delta = _scrollPixels() - _selDragStartScroll;
-    final adjustedFrom = Offset(start.dx, start.dy - delta);
-    rt.selectCharacters(adjustedFrom, _selLastLocal);
+    if (rt == null) return;
+    final lineHeight = rt.lineHeight as double;
+    if (lineHeight <= 0) return;
+    final pos = _termScroll.position;
+    final snapped = (pos.pixels / lineHeight).roundToDouble() * lineHeight;
+    final clamped = snapped.clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    if ((clamped - pos.pixels).abs() > 0.5) {
+      pos.jumpTo(clamped);
+    }
+  }
+
+  /// 用缓冲区格坐标设置选区，避免滚动后视口坐标漂移。
+  void _applySelection() {
+    final rt = _renderTerminal;
+    final startCell = _selStartCell;
+    final term = widget.controller.terminal;
+    if (rt == null || startCell == null || term == null) return;
+
+    var endCell = rt.getCellOffset(_selLastLocal) as CellOffset;
+    if (endCell.x >= startCell.x) {
+      endCell = CellOffset(endCell.x + 1, endCell.y);
+    }
+
+    final existing = _viewController.selection;
+    if (existing != null &&
+        existing.begin.x == startCell.x &&
+        existing.begin.y == startCell.y &&
+        existing.end.x == endCell.x &&
+        existing.end.y == endCell.y) {
+      return;
+    }
+
+    _viewController.setSelection(
+      term.buffer.createAnchorFromOffset(startCell),
+      term.buffer.createAnchorFromOffset(endCell),
+    );
+  }
+
+  /// 外层 Listener 先于 xterm Tap/Pan 触发；延后到 microtask，等 xterm 处理完再写选区。
+  void _scheduleApplySelection() {
+    if (_selStartCell == null || _selectionApplyScheduled) return;
+    _selectionApplyScheduled = true;
+    scheduleMicrotask(() {
+      _selectionApplyScheduled = false;
+      if (!mounted || _selStartCell == null) return;
+      _applySelection();
+    });
+  }
+
+  /// 拖选过程中滚轮滚动不会触发 pointer move，需在滚动后重算选区终点。
+  void _onTermScrolled() {
+    if (_selStartCell == null) return;
+    _snapScrollToLineHeight();
+    _scheduleApplySelection();
   }
 
   static const double _kAutoScrollBand = 30.0;
-  static const double _kAutoScrollMaxSpeed = 22.0; // px / tick
 
   /// 指针位于上下边缘带内时持续滚动并延伸选区；离开则停止。
   void _ensureAutoScroll() {
@@ -143,35 +219,33 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
 
   void _autoScrollTick() {
     final rt = _renderTerminal;
-    if (rt == null || _selDragStart == null) {
+    if (rt == null || _selStartCell == null) {
       _stopAutoScroll();
       return;
     }
     final h = rt.size.height;
     final dy = _selLastLocal.dy;
-    double dir;
-    double depth;
+    final double dir;
     if (dy < _kAutoScrollBand) {
       dir = -1; // 向上滚动，回看历史
-      depth = _kAutoScrollBand - dy;
     } else if (dy > h - _kAutoScrollBand) {
       dir = 1; // 向下滚动，回到实时
-      depth = dy - (h - _kAutoScrollBand);
     } else {
       _stopAutoScroll();
       return;
     }
-    final speed =
-        (depth / _kAutoScrollBand).clamp(0.0, 1.0) * _kAutoScrollMaxSpeed;
     if (_termScroll.hasClients) {
       final pos = _termScroll.position;
-      final next = (pos.pixels + dir * speed)
-          .clamp(pos.minScrollExtent, pos.maxScrollExtent);
-      if ((next - pos.pixels).abs() > 0) {
-        pos.jumpTo(next);
+      final lineHeight = rt.lineHeight as double;
+      if (lineHeight > 0) {
+        final next = (pos.pixels + dir * lineHeight)
+            .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+        if ((next - pos.pixels).abs() > 0) {
+          pos.jumpTo(next);
+        }
       }
     }
-    _extendSelection();
+    _scheduleApplySelection();
   }
 
   void _stopAutoScroll() {
@@ -184,26 +258,53 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     if ((e.buttons & kPrimaryButton) == 0) return;
     final rt = _renderTerminal;
     if (rt == null) return;
-    _selDragStart = rt.globalToLocal(e.position);
-    _selDragStartScroll = _scrollPixels();
-    _selLastLocal = _selDragStart!;
+    final local = rt.globalToLocal(e.position) as Offset;
+    _selStartCell = rt.getCellOffset(local) as CellOffset;
+    _selLastLocal = local;
+    _scheduleApplySelection();
   }
 
   void _onTerminalPointerMove(PointerMoveEvent e) {
-    final start = _selDragStart;
-    if (start == null) return;
+    if (_selStartCell == null) return;
     if (e.kind != PointerDeviceKind.mouse) return;
     if ((e.buttons & kPrimaryButton) == 0) return;
     final rt = _renderTerminal;
     if (rt == null) return;
-    _selLastLocal = rt.globalToLocal(e.position);
-    _extendSelection();
+    _selLastLocal = rt.globalToLocal(e.position) as Offset;
+    _scheduleApplySelection();
     _ensureAutoScroll();
   }
 
+  void _onTerminalPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (_selStartCell == null) return;
+    _snapScrollToLineHeight();
+    _scheduleApplySelection();
+  }
+
+  void _onTerminalPointerUp(PointerUpEvent e) {
+    if (e.kind == PointerDeviceKind.mouse && _selStartCell != null) {
+      _selectionApplyScheduled = false;
+      _applySelection();
+    }
+    _endDrag();
+  }
+
   void _endDrag() {
-    _selDragStart = null;
+    _selStartCell = null;
     _stopAutoScroll();
+  }
+
+  /// 点击终端区域外时释放硬件键盘焦点，避免 xterm 拦截 ⌘Q 等系统快捷键。
+  void _releaseKeyboardFocus() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  Widget _terminalTapRegion({required Widget child}) {
+    return TapRegion(
+      onTapOutside: (_) => _releaseKeyboardFocus(),
+      child: child,
+    );
   }
 
   void _showTerminalContextMenu(BuildContext context, Offset globalPosition, Terminal term) {
@@ -346,36 +447,40 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
           final textStyle = TerminalStyle(
             fontSize: ws.terminalFontSize,
             fontFamily: ws.terminalFontFamily,
+            height: 1.0,
           );
 
-          final base = DecoratedBox(
-            decoration: BoxDecoration(
-              color: context.wb.terminalBg,
-              border: Border(left: BorderSide(color: context.wb.border)),
-            ),
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: _onTerminalPointerDown,
-              onPointerMove: _onTerminalPointerMove,
-              onPointerUp: (_) => _endDrag(),
-              onPointerCancel: (_) => _endDrag(),
-              child: TerminalView(
-                term,
-                key: _termViewKey,
-                controller: _viewController,
-                scrollController: _termScroll,
-                theme: TerminalThemes.defaultTheme,
-                textStyle: textStyle,
-                autofocus: widget.autofocusTerminal,
-                // macOS/desktop: TextInput + hardware keys can duplicate KeyDown and
-                // trip HardwareKeyboard assertions; IME path is for mobile keyboards.
-                hardwareKeyboardOnly: !kIsWeb,
-                // 断开/重连中冻结输入，避免向已关闭的 shell 写入。
-                readOnly: !c.connected,
-                autoResize: true,
-                onSecondaryTapDown: (_, _) {},
-                onSecondaryTapUp: (details, _) =>
-                    _showTerminalContextMenu(context, details.globalPosition, term),
+          final base = _terminalTapRegion(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: context.wb.terminalBg,
+                border: Border(left: BorderSide(color: context.wb.border)),
+              ),
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _onTerminalPointerDown,
+                onPointerMove: _onTerminalPointerMove,
+                onPointerSignal: _onTerminalPointerSignal,
+                onPointerUp: _onTerminalPointerUp,
+                onPointerCancel: (_) => _endDrag(),
+                child: TerminalView(
+                  term,
+                  key: _termViewKey,
+                  controller: _viewController,
+                  scrollController: _termScroll,
+                  theme: _workbenchTerminalTheme(context.wb.terminalBg),
+                  textStyle: textStyle,
+                  autofocus: widget.autofocusTerminal,
+                  // macOS/desktop: TextInput + hardware keys can duplicate KeyDown and
+                  // trip HardwareKeyboard assertions; IME path is for mobile keyboards.
+                  hardwareKeyboardOnly: !kIsWeb,
+                  // 断开/重连中冻结输入，避免向已关闭的 shell 写入。
+                  readOnly: !c.connected,
+                  autoResize: true,
+                  onSecondaryTapDown: (_, _) {},
+                  onSecondaryTapUp: (details, _) =>
+                      _showTerminalContextMenu(context, details.globalPosition, term),
+                ),
               ),
             ),
           );

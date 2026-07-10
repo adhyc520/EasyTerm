@@ -59,6 +59,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
   int? _sidebarSyncTabId;
   bool _sidebarSyncWasConnected = false;
 
+  /// 防止异步连接流程（读密钥、弹凭据层）未完成时重复触发。
+  String? _savedConnectBusyProfileId;
+  String? _launchConnectBusyKey;
+
   void _onRepaint() {
     _syncSidebarToFileOnConnect();
     setState(() {});
@@ -267,6 +271,19 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _persistLaunchAndConnect(ConnectionLaunch launch) async {
+    final busyKey = '${launch.username}@${launch.host}:${launch.port}';
+    if (_launchConnectBusyKey == busyKey) return;
+    _launchConnectBusyKey = busyKey;
+    try {
+      await _persistLaunchAndConnectImpl(launch);
+    } finally {
+      if (_launchConnectBusyKey == busyKey) {
+        _launchConnectBusyKey = null;
+      }
+    }
+  }
+
+  Future<void> _persistLaunchAndConnectImpl(ConnectionLaunch launch) async {
     await _profiles.ensureLoaded();
 
     final label = launch.deviceLabel ?? '${launch.username}@${launch.host}';
@@ -382,6 +399,18 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _connectFromSaved(SavedHostProfile profile) async {
+    if (_savedConnectBusyProfileId == profile.id) return;
+    _savedConnectBusyProfileId = profile.id;
+    try {
+      await _connectFromSavedImpl(profile);
+    } finally {
+      if (_savedConnectBusyProfileId == profile.id) {
+        _savedConnectBusyProfileId = null;
+      }
+    }
+  }
+
+  Future<void> _connectFromSavedImpl(SavedHostProfile profile) async {
     await _profiles.ensureLoaded();
 
     String? pem;

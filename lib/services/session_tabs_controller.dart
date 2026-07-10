@@ -29,6 +29,12 @@ class SessionTabsController extends ChangeNotifier {
 
   List<SessionTab> get tabs => List.unmodifiable(_tabs);
 
+  /// 短时间内重复点击（如双击）时只打开一个标签，与目标主机无关。
+  static const Duration _openTabDebounce = Duration(milliseconds: 500);
+
+  DateTime? _lastOpenTabAt;
+  SshWorkspaceController? _lastOpenedController;
+
   int get selectedIndex {
     if (_tabs.isEmpty) return 0;
     return _selectedIndex.clamp(0, _tabs.length - 1);
@@ -46,6 +52,23 @@ class SessionTabsController extends ChangeNotifier {
     required String password,
     String? privateKeyPem,
   }) {
+    final now = DateTime.now();
+
+    if (_lastOpenTabAt != null &&
+        _lastOpenedController != null &&
+        now.difference(_lastOpenTabAt!) < _openTabDebounce) {
+      for (var i = 0; i < _tabs.length; i++) {
+        if (identical(_tabs[i].controller, _lastOpenedController)) {
+          _selectedIndex = i;
+          notifyListeners();
+          break;
+        }
+      }
+      return _lastOpenedController!;
+    }
+
+    _lastOpenTabAt = now;
+
     final c = SshWorkspaceController(
       settings: settings,
       host: host,
@@ -58,6 +81,7 @@ class SessionTabsController extends ChangeNotifier {
     final tab = SessionTab(id: _idSeq++, controller: c);
     _tabs.add(tab);
     _selectedIndex = _tabs.length - 1;
+    _lastOpenedController = c;
     notifyListeners();
     unawaited(
       c.connect().whenComplete(() {
