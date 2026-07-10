@@ -47,6 +47,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuCloseTab => '关闭标签页';
 
   @override
+  String get menuTabCloseLeft => '关闭左侧标签';
+
+  @override
+  String get menuTabCloseRight => '关闭右侧标签';
+
+  @override
+  String get menuTabCloseOthers => '关闭其他标签';
+
+  @override
+  String get menuTabCloseAll => '关闭全部标签';
+
+  @override
   String get aboutDescription => '多会话 SSH 终端与 SFTP 文件浏览。';
 
   @override
