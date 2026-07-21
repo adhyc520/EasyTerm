@@ -170,6 +170,30 @@ abstract class AppLocalizations {
   /// **'Close Tab'**
   String get menuCloseTab;
 
+  /// No description provided for @menuTabCloseLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Close tabs to the left'**
+  String get menuTabCloseLeft;
+
+  /// No description provided for @menuTabCloseRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Close tabs to the right'**
+  String get menuTabCloseRight;
+
+  /// No description provided for @menuTabCloseOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'Close other tabs'**
+  String get menuTabCloseOthers;
+
+  /// No description provided for @menuTabCloseAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Close all tabs'**
+  String get menuTabCloseAll;
+
   /// No description provided for @aboutDescription.
   ///
   /// In en, this message translates to:

@@ -37,6 +37,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   /// 终端视图句柄：用于读取 [RenderTerminal] 做选区延伸与坐标换算。
   final GlobalKey<TerminalViewState> _termViewKey = GlobalKey();
 
+  /// 自管焦点：点击终端时主动 requestFocus，不依赖 xterm「无选区才聚焦」的路径。
+  final FocusNode _termFocus = FocusNode(debugLabel: 'sessionTerminal');
+
   /// 终端滚动控制器：传入 [TerminalView] 后可读取/编程滚动，配合边缘自动滚动。
   final ScrollController _termScroll = ScrollController();
 
@@ -45,6 +48,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   Offset _selLastLocal = Offset.zero;
   Timer? _autoScrollTimer;
   bool _selectionApplyScheduled = false;
+
+  /// 本次按下后是否发生过格级移动；纯点击不写选区，避免挡住 xterm 重新聚焦。
+  bool _selDidDrag = false;
 
   /// 与工作台 terminalBg 对齐；选区须半透明，xterm 会把高亮画在文字上方。
   static TerminalTheme _workbenchTerminalTheme(Color terminalBg) {
@@ -91,6 +97,7 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     _autoScrollTimer?.cancel();
     _termScroll.removeListener(_onTermScrolled);
     _termScroll.dispose();
+    _termFocus.dispose();
     _terminalBound?.removeListener(_onTerminalBufferChanged);
     widget.workbenchSettings.removeListener(_onWorkbenchSettingsChanged);
     widget.controller.removeListener(_onControllerChanged);
@@ -180,18 +187,18 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
 
   /// 外层 Listener 先于 xterm Tap/Pan 触发；延后到 microtask，等 xterm 处理完再写选区。
   void _scheduleApplySelection() {
-    if (_selStartCell == null || _selectionApplyScheduled) return;
+    if (_selStartCell == null || !_selDidDrag || _selectionApplyScheduled) return;
     _selectionApplyScheduled = true;
     scheduleMicrotask(() {
       _selectionApplyScheduled = false;
-      if (!mounted || _selStartCell == null) return;
+      if (!mounted || _selStartCell == null || !_selDidDrag) return;
       _applySelection();
     });
   }
 
   /// 拖选过程中滚轮滚动不会触发 pointer move，需在滚动后重算选区终点。
   void _onTermScrolled() {
-    if (_selStartCell == null) return;
+    if (_selStartCell == null || !_selDidDrag) return;
     _snapScrollToLineHeight();
     _scheduleApplySelection();
   }
@@ -258,10 +265,15 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     if ((e.buttons & kPrimaryButton) == 0) return;
     final rt = _renderTerminal;
     if (rt == null) return;
+    // 先于 xterm TapDown：有选区时 xterm 只清选区不 requestFocus，此处补回焦点。
+    if (!_termFocus.hasFocus) {
+      _termFocus.requestFocus();
+    }
     final local = rt.globalToLocal(e.position) as Offset;
     _selStartCell = rt.getCellOffset(local) as CellOffset;
     _selLastLocal = local;
-    _scheduleApplySelection();
+    _selDidDrag = false;
+    // 纯点击不写选区；等 pointer move 跨格后再 setSelection。
   }
 
   void _onTerminalPointerMove(PointerMoveEvent e) {
@@ -271,6 +283,13 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     final rt = _renderTerminal;
     if (rt == null) return;
     _selLastLocal = rt.globalToLocal(e.position) as Offset;
+    final endCell = rt.getCellOffset(_selLastLocal) as CellOffset;
+    if (!_selDidDrag &&
+        endCell.x == _selStartCell!.x &&
+        endCell.y == _selStartCell!.y) {
+      return;
+    }
+    _selDidDrag = true;
     _scheduleApplySelection();
     _ensureAutoScroll();
   }
@@ -278,12 +297,15 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
   void _onTerminalPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
     if (_selStartCell == null) return;
+    _selDidDrag = true;
     _snapScrollToLineHeight();
     _scheduleApplySelection();
   }
 
   void _onTerminalPointerUp(PointerUpEvent e) {
-    if (e.kind == PointerDeviceKind.mouse && _selStartCell != null) {
+    if (e.kind == PointerDeviceKind.mouse &&
+        _selStartCell != null &&
+        _selDidDrag) {
       _selectionApplyScheduled = false;
       _applySelection();
     }
@@ -292,12 +314,15 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
 
   void _endDrag() {
     _selStartCell = null;
+    _selDidDrag = false;
     _stopAutoScroll();
   }
 
   /// 点击终端区域外时释放硬件键盘焦点，避免 xterm 拦截 ⌘Q 等系统快捷键。
   void _releaseKeyboardFocus() {
-    FocusManager.instance.primaryFocus?.unfocus();
+    if (_termFocus.hasFocus) {
+      _termFocus.unfocus();
+    }
   }
 
   Widget _terminalTapRegion({required Widget child}) {
@@ -467,6 +492,7 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                   term,
                   key: _termViewKey,
                   controller: _viewController,
+                  focusNode: _termFocus,
                   scrollController: _termScroll,
                   theme: _workbenchTerminalTheme(context.wb.terminalBg),
                   textStyle: textStyle,

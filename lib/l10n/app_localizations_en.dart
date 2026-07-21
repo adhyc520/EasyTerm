@@ -47,6 +47,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuCloseTab => 'Close Tab';
 
   @override
+  String get menuTabCloseLeft => 'Close tabs to the left';
+
+  @override
+  String get menuTabCloseRight => 'Close tabs to the right';
+
+  @override
+  String get menuTabCloseOthers => 'Close other tabs';
+
+  @override
+  String get menuTabCloseAll => 'Close all tabs';
+
+  @override
   String get aboutDescription =>
       'Multi-session SSH terminal with SFTP file browsing.';
 

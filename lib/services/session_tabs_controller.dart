@@ -114,6 +114,42 @@ class SessionTabsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 关闭 [index] 左侧的全部标签，并选中 [index]。
+  void closeTabsToLeftOf(int index) {
+    if (index <= 0 || index >= _tabs.length) return;
+    for (var i = index - 1; i >= 0; i--) {
+      _disposeTabResources(_tabs[i]);
+    }
+    _tabs.removeRange(0, index);
+    _selectedIndex = 0;
+    notifyListeners();
+  }
+
+  /// 关闭 [index] 右侧的全部标签，并选中 [index]。
+  void closeTabsToRightOf(int index) {
+    if (index < 0 || index >= _tabs.length - 1) return;
+    for (var i = _tabs.length - 1; i > index; i--) {
+      _disposeTabResources(_tabs[i]);
+    }
+    _tabs.removeRange(index + 1, _tabs.length);
+    if (_selectedIndex > index) _selectedIndex = index;
+    notifyListeners();
+  }
+
+  /// 仅保留 [index] 标签。
+  void closeOtherTabs(int index) {
+    if (index < 0 || index >= _tabs.length || _tabs.length <= 1) return;
+    final keep = _tabs[index];
+    for (var i = 0; i < _tabs.length; i++) {
+      if (i != index) _disposeTabResources(_tabs[i]);
+    }
+    _tabs
+      ..clear()
+      ..add(keep);
+    _selectedIndex = 0;
+    notifyListeners();
+  }
+
   void _disposeTabResources(SessionTab tab) {
     tab.assistant.dispose();
     tab.controller.removeListener(_onTabNotify);

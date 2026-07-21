@@ -953,6 +953,59 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
   int _lastSelectionForScroll = -1;
   int _lastTabCount = -1;
 
+  void _showTabContextMenu(BuildContext context, Offset globalPosition, int index) {
+    final tabs = widget.tabs;
+    final l10n = AppLocalizations.of(context)!;
+    final n = tabs.tabs.length;
+    final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final topLeft = overlay.localToGlobal(Offset.zero);
+    final rel = RelativeRect.fromLTRB(
+      globalPosition.dx - topLeft.dx,
+      globalPosition.dy - topLeft.dy,
+      globalPosition.dx - topLeft.dx + 1,
+      globalPosition.dy - topLeft.dy + 1,
+    );
+    widget.onSelect(index);
+    showMenu<String>(
+      context: context,
+      position: rel,
+      items: [
+        PopupMenuItem(
+          value: 'left',
+          enabled: index > 0,
+          child: Text(l10n.menuTabCloseLeft),
+        ),
+        PopupMenuItem(
+          value: 'others',
+          enabled: n > 1,
+          child: Text(l10n.menuTabCloseOthers),
+        ),
+        PopupMenuItem(
+          value: 'all',
+          enabled: n > 0,
+          child: Text(l10n.menuTabCloseAll),
+        ),
+        PopupMenuItem(
+          value: 'right',
+          enabled: index < n - 1,
+          child: Text(l10n.menuTabCloseRight),
+        ),
+      ],
+    ).then((v) {
+      if (!context.mounted) return;
+      switch (v) {
+        case 'left':
+          tabs.closeTabsToLeftOf(index);
+        case 'right':
+          tabs.closeTabsToRightOf(index);
+        case 'others':
+          tabs.closeOtherTabs(index);
+        case 'all':
+          tabs.closeAll();
+      }
+    });
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -1021,7 +1074,9 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
                   final selected = i == tabs.selectedIndex;
                   return KeyedSubtree(
                     key: _itemKeys[i],
-                    child: Material(
+                    child: GestureDetector(
+                      onSecondaryTapUp: (d) => _showTabContextMenu(context, d.globalPosition, i),
+                      child: Material(
                       color: selected
                           ? context.wb.accentBlue.withValues(alpha: 0.22)
                           : context.wb.panel,
@@ -1076,6 +1131,7 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
                           ],
                         ),
                       ),
+                    ),
                     ),
                   );
                 },
