@@ -3,10 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 /// 传输方向（用于队列图标与语义）。
-enum SftpTransferDirection {
-  upload,
-  download,
-}
+enum SftpTransferDirection { upload, download }
 
 /// 列表中单行状态。
 enum SftpUploadRowState {

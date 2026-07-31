@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,10 +9,7 @@ import '../models/saved_host_profile.dart';
 import '../theme/workbench_theme.dart';
 import '../services/ssh_workspace_controller.dart';
 
-enum _ConnectionAuthMode {
-  password,
-  privateKey,
-}
+enum _ConnectionAuthMode { password, privateKey }
 
 class ConnectionLaunch {
   ConnectionLaunch({
@@ -70,6 +68,7 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
   late final TextEditingController _keyPassphrase;
   late final TextEditingController _keyPath;
   late _ConnectionAuthMode _authMode;
+
   /// 底部弹层出现时，底层 [TerminalView]（hardware keyboard Focus）仍可能占着焦点，Mac 上按键进不了表单。
   final FocusNode _firstFieldFocus = FocusNode();
   bool _busy = false;
@@ -83,7 +82,9 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     _user = TextEditingController(text: p?.username ?? '');
     final savedKeyPath = (p?.keyPath ?? '').trim();
     final hasKeyPath = savedKeyPath.isNotEmpty;
-    _authMode = hasKeyPath ? _ConnectionAuthMode.privateKey : _ConnectionAuthMode.password;
+    _authMode = hasKeyPath
+        ? _ConnectionAuthMode.privateKey
+        : _ConnectionAuthMode.password;
     if (hasKeyPath) {
       _sshPassword = TextEditingController();
       _keyPassphrase = TextEditingController(text: p!.password ?? '');
@@ -123,7 +124,8 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
       final r = await FilePicker.pickFiles(
         type: FileType.any,
         allowMultiple: false,
-        lockParentWindow: !kIsWeb && defaultTargetPlatform == TargetPlatform.windows,
+        lockParentWindow:
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.windows,
       );
       if (!mounted) return;
       if (r == null || r.files.isEmpty) return;
@@ -133,11 +135,11 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
-      final detail =
-          [
-            if (e.code.isNotEmpty) e.code,
-            if (e.message != null && e.message!.trim().isNotEmpty) e.message!.trim(),
-          ].join(': ');
+      final detail = [
+        if (e.code.isNotEmpty) e.code,
+        if (e.message != null && e.message!.trim().isNotEmpty)
+          e.message!.trim(),
+      ].join(': ');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -147,9 +149,9 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l.connectionPickKeyFailed('$e'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l.connectionPickKeyFailed('$e'))));
     }
   }
 
@@ -159,7 +161,9 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     final user = _user.text.trim();
     final port = int.tryParse(_port.text.trim()) ?? 22;
     if (host.isEmpty || user.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.connectionMissingHostUser)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l.connectionMissingHostUser)));
       return;
     }
 
@@ -176,7 +180,9 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
         final kp = _keyPath.text.trim();
         if (kp.isEmpty) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l.connectionMissingKeyPath)));
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(l.connectionMissingKeyPath)));
             setState(() => _busy = false);
           }
           return;
@@ -229,19 +235,29 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
     final editing = widget.editingProfile != null;
     // 与顶栏标题同级，避免默认 titleLarge 偏大。
     final sheetTitleStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: wb.primaryText,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.2,
-        );
-    final fieldStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(color: wb.primaryText);
+      color: wb.primaryText,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.2,
+    );
+    final fieldStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(color: wb.primaryText);
     return Padding(
-      padding: EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 16 + bottom),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 8,
+        bottom: 16 + bottom,
+      ),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(editing ? l.connectionEditTitle : l.connectionNewTitle, style: sheetTitleStyle),
+            Text(
+              editing ? l.connectionEditTitle : l.connectionNewTitle,
+              style: sheetTitleStyle,
+            ),
             const SizedBox(height: 16),
             TextField(
               focusNode: _firstFieldFocus,
@@ -296,7 +312,11 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
                     segments: [
                       ButtonSegment<_ConnectionAuthMode>(
                         value: _ConnectionAuthMode.password,
-                        icon: Icon(Icons.password_rounded, size: 18, color: wb.textMuted),
+                        icon: Icon(
+                          Icons.password_rounded,
+                          size: 18,
+                          color: wb.textMuted,
+                        ),
                         label: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           child: Text(l.connectionAuthPassword),
@@ -304,7 +324,11 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
                       ),
                       ButtonSegment<_ConnectionAuthMode>(
                         value: _ConnectionAuthMode.privateKey,
-                        icon: Icon(Icons.key_rounded, size: 18, color: wb.textMuted),
+                        icon: Icon(
+                          Icons.key_rounded,
+                          size: 18,
+                          color: wb.textMuted,
+                        ),
                         label: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           child: Text(l.connectionAuthPrivateKey),
@@ -384,7 +408,11 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
                         width: 22,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(editing ? l.connectionSubmitSave : l.connectionSubmitConnect),
+                    : Text(
+                        editing
+                            ? l.connectionSubmitSave
+                            : l.connectionSubmitConnect,
+                      ),
               ),
             ),
           ],

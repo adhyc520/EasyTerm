@@ -32,14 +32,17 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
                     child: Text(
                       l.interfaceSettingsTitle,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: context.wb.primaryText,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: context.wb.primaryText,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.close_rounded, color: context.wb.textMuted),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: context.wb.textMuted,
+                    ),
                   ),
                 ],
               ),
@@ -48,7 +51,10 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 l.settingsSectionLanguage,
-                style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                style: TextStyle(
+                  color: context.wb.textMuted.withValues(alpha: 0.9),
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(height: 6),
               ListenableBuilder(
@@ -58,19 +64,33 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
                     decoration: InputDecoration(
                       filled: true,
                       fillColor: context.wb.panel,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 2,
+                      ),
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         isExpanded: true,
                         value: settings.appLocaleCode,
                         dropdownColor: context.wb.panelElevated,
-                        style: TextStyle(color: context.wb.primaryText, fontSize: 14),
+                        style: TextStyle(
+                          color: context.wb.primaryText,
+                          fontSize: 14,
+                        ),
                         iconEnabledColor: context.wb.textMuted,
                         items: [
-                          DropdownMenuItem(value: 'zh', child: Text(l.settingsLanguageChinese)),
-                          DropdownMenuItem(value: 'en', child: Text(l.settingsLanguageEnglish)),
+                          DropdownMenuItem(
+                            value: 'zh',
+                            child: Text(l.settingsLanguageChinese),
+                          ),
+                          DropdownMenuItem(
+                            value: 'en',
+                            child: Text(l.settingsLanguageEnglish),
+                          ),
                         ],
                         onChanged: (v) async {
                           if (v == null) return;
@@ -85,7 +105,10 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
               const SizedBox(height: 20),
               Text(
                 l.interfaceThemeLabel,
-                style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                style: TextStyle(
+                  color: context.wb.textMuted.withValues(alpha: 0.9),
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(height: 6),
               ListenableBuilder(
@@ -94,9 +117,18 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
                   return SegmentedButton<String>(
                     showSelectedIcon: false,
                     segments: [
-                      ButtonSegment(value: 'dark', label: Text(l.interfaceThemeDark)),
-                      ButtonSegment(value: 'light', label: Text(l.interfaceThemeLight)),
-                      ButtonSegment(value: 'system', label: Text(l.interfaceThemeSystem)),
+                      ButtonSegment(
+                        value: 'dark',
+                        label: Text(l.interfaceThemeDark),
+                      ),
+                      ButtonSegment(
+                        value: 'light',
+                        label: Text(l.interfaceThemeLight),
+                      ),
+                      ButtonSegment(
+                        value: 'system',
+                        label: Text(l.interfaceThemeSystem),
+                      ),
                     ],
                     selected: {settings.appThemeMode},
                     onSelectionChanged: (s) async {
@@ -112,7 +144,9 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: FilledButton(
                   onPressed: () => Navigator.pop(context),
-                  style: FilledButton.styleFrom(backgroundColor: context.wb.accentBlue),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: context.wb.accentBlue,
+                  ),
                   child: Text(l.interfaceDone),
                 ),
               ),

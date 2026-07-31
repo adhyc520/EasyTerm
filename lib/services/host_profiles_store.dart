@@ -37,7 +37,11 @@ class HostProfilesStore extends ChangeNotifier {
         profiles
           ..clear()
           ..addAll(
-            list.map((e) => SavedHostProfile.fromJson(Map<String, Object?>.from(e as Map))),
+            list.map(
+              (e) => SavedHostProfile.fromJson(
+                Map<String, Object?>.from(e as Map),
+              ),
+            ),
           );
         profiles.sort((a, b) => b.updatedAtMs.compareTo(a.updatedAtMs));
       }
@@ -56,7 +60,10 @@ class HostProfilesStore extends ChangeNotifier {
     if (kIsWeb) return;
     final path = await _profilesPath();
     final list = profiles.map((p) => p.toJson()).toList();
-    await writeUtf8EnsureParent(path, const JsonEncoder.withIndent('  ').convert(list));
+    await writeUtf8EnsureParent(
+      path,
+      const JsonEncoder.withIndent('  ').convert(list),
+    );
   }
 
   /// 始终新增一条已保存连接（不因 host/port/user 与已有条目相同而合并）。
@@ -115,7 +122,9 @@ class HostProfilesStore extends ChangeNotifier {
     final old = profiles[i];
     final trimmedKey = keyPath?.trim();
     final kp = (trimmedKey == null || trimmedKey.isEmpty) ? null : trimmedKey;
-    final String? pwd = password == null ? old.password : (password.isEmpty ? null : password);
+    final String? pwd = password == null
+        ? old.password
+        : (password.isEmpty ? null : password);
 
     profiles[i] = SavedHostProfile(
       id: old.id,

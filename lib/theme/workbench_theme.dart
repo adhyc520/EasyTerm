@@ -41,47 +41,51 @@ final class WorkbenchColors {
   final Color topBarDivider;
 
   static const WorkbenchColors dark = WorkbenchColors(
-    bg: Color(0xFF0A0A0C),
-    topBar: Color(0xFF000000),
-    panel: Color(0xFF121215),
-    panelElevated: Color(0xFF18181C),
-    border: Color(0xFF2A2A32),
-    accentBlue: Color(0xFF2563EB),
+    bg: Color(0xFF111113),
+    topBar: Color(0xFF1B1B1F),
+    panel: Color(0xFF16171A),
+    panelElevated: Color(0xFF202126),
+    border: Color(0xFF303139),
+    accentBlue: Color(0xFF0A84FF),
     folder: Color(0xFFD4A72E),
-    terminalBg: Color(0xFF0D0D0F),
-    textMuted: Color(0xFF9CA3AF),
-    online: Color(0xFF22C55E),
-    offline: Color(0xFF6B7280),
+    terminalBg: Color(0xFF090A0C),
+    textMuted: Color(0xFFA1A1AA),
+    online: Color(0xFF32D74B),
+    offline: Color(0xFF73737D),
     primaryText: Color(0xFFFFFFFF),
-    secondaryText: Color(0xFFE5E7EB),
+    secondaryText: Color(0xFFE7E7EC),
     topBarDivider: Color(0x14FFFFFF),
   );
 
   static const WorkbenchColors light = WorkbenchColors(
-    bg: Color(0xFFF3F4F6),
-    topBar: Color(0xFFF9FAFB),
-    panel: Color(0xFFE5E7EB),
+    bg: Color(0xFFEDEFF2),
+    topBar: Color(0xFFF7F8FA),
+    panel: Color(0xFFF1F2F5),
     panelElevated: Color(0xFFFFFFFF),
-    border: Color(0xFFD1D5DB),
-    accentBlue: Color(0xFF2563EB),
+    border: Color(0xFFD4D7DE),
+    accentBlue: Color(0xFF006FE6),
     folder: Color(0xFFB45309),
     terminalBg: Color(0xFF0D0D0F),
-    textMuted: Color(0xFF6B7280),
-    online: Color(0xFF16A34A),
-    offline: Color(0xFF9CA3AF),
-    primaryText: Color(0xFF111827),
-    secondaryText: Color(0xFF374151),
+    textMuted: Color(0xFF626B7A),
+    online: Color(0xFF1F9D4C),
+    offline: Color(0xFF9AA1AD),
+    primaryText: Color(0xFF15171C),
+    secondaryText: Color(0xFF3C4452),
     topBarDivider: Color(0x1A000000),
   );
 }
 
 extension WorkbenchColorsContext on BuildContext {
-  WorkbenchColors get wb =>
-      Theme.of(this).brightness == Brightness.light ? WorkbenchColors.light : WorkbenchColors.dark;
+  WorkbenchColors get wb => Theme.of(this).brightness == Brightness.light
+      ? WorkbenchColors.light
+      : WorkbenchColors.dark;
 }
 
 /// 与 [WorkbenchColors] 配套的 Material 3 主题（浅色 / 深色各一套）。
-ThemeData buildWorkbenchMaterialTheme(WorkbenchColors c, Brightness brightness) {
+ThemeData buildWorkbenchMaterialTheme(
+  WorkbenchColors c,
+  Brightness brightness,
+) {
   final isDark = brightness == Brightness.dark;
   final scheme = isDark
       ? ColorScheme.dark(
@@ -115,8 +119,12 @@ ThemeData buildWorkbenchMaterialTheme(WorkbenchColors c, Brightness brightness) 
     brightness: brightness,
     scaffoldBackgroundColor: c.bg,
     colorScheme: scheme,
+    splashFactory: InkSparkle.splashFactory,
     textTheme: textTheme,
     primaryTextTheme: textTheme,
+    hoverColor: c.primaryText.withValues(alpha: 0.06),
+    highlightColor: c.primaryText.withValues(alpha: 0.05),
+    splashColor: c.accentBlue.withValues(alpha: 0.12),
     dividerTheme: DividerThemeData(color: c.border),
     appBarTheme: AppBarTheme(
       backgroundColor: c.panelElevated,
@@ -125,23 +133,25 @@ ThemeData buildWorkbenchMaterialTheme(WorkbenchColors c, Brightness brightness) 
     ),
     dialogTheme: DialogThemeData(
       backgroundColor: c.panelElevated,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: c.panelElevated,
       contentTextStyle: TextStyle(color: c.primaryText),
       behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: c.panelElevated,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide(color: c.border),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide(color: c.accentBlue, width: 1.5),
       ),
       labelStyle: TextStyle(color: c.textMuted),
@@ -151,9 +161,39 @@ ThemeData buildWorkbenchMaterialTheme(WorkbenchColors c, Brightness brightness) 
       color: c.panelElevated,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         side: BorderSide(color: c.border),
       ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0,
+        ),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        fixedSize: const Size.square(34),
+        minimumSize: const Size.square(34),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: c.panelElevated,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: c.border),
+      ),
+    ),
+    listTileTheme: ListTileThemeData(
+      iconColor: c.textMuted,
+      textColor: c.primaryText,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ),
   );
 }

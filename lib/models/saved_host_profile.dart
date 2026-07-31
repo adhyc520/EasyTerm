@@ -27,20 +27,24 @@ class SavedHostProfile {
 
   String get subtitle => '$username@$host:$port';
 
-  bool matchesEndpoint({required String host, required int port, required String username}) {
+  bool matchesEndpoint({
+    required String host,
+    required int port,
+    required String username,
+  }) {
     return this.host == host && this.port == port && this.username == username;
   }
 
   Map<String, Object?> toJson() => {
-        'id': id,
-        'label': label,
-        'host': host,
-        'port': port,
-        'username': username,
-        'keyPath': keyPath,
-        'password': password,
-        'updatedAtMs': updatedAtMs,
-      };
+    'id': id,
+    'label': label,
+    'host': host,
+    'port': port,
+    'username': username,
+    'keyPath': keyPath,
+    'password': password,
+    'updatedAtMs': updatedAtMs,
+  };
 
   factory SavedHostProfile.fromJson(Map<String, Object?> j) {
     return SavedHostProfile(

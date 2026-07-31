@@ -130,7 +130,9 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
       appLocaleCode = 'zh';
     }
     appThemeMode = p.getString(_kThemeMode) ?? 'dark';
-    if (appThemeMode != 'dark' && appThemeMode != 'light' && appThemeMode != 'system') {
+    if (appThemeMode != 'dark' &&
+        appThemeMode != 'light' &&
+        appThemeMode != 'system') {
       appThemeMode = 'dark';
     }
     llmBaseUrl = (p.getString(_kLlmBaseUrl) ?? llmBaseUrl).trim();
@@ -139,7 +141,10 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     if (llmModel.isEmpty) llmModel = 'gpt-4o-mini';
     llmApiKey = p.getString(_kLlmApiKey) ?? '';
     assistantPanelCollapsed = p.getBool(_kAssistantCollapsed) ?? true;
-    assistantPanelWidth = (p.getDouble(_kAssistantWidth) ?? 320).clamp(240, 560);
+    assistantPanelWidth = (p.getDouble(_kAssistantWidth) ?? 320).clamp(
+      240,
+      560,
+    );
     notifyListeners();
   }
 

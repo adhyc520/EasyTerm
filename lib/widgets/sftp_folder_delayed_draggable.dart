@@ -48,8 +48,8 @@ class _SftpFolderDragHostScope extends InheritedWidget {
   final PreSnapshotDragItemWidgetState hostState;
 
   static PreSnapshotDragItemWidgetState? maybeOf(BuildContext context) {
-    final scope =
-        context.getInheritedWidgetOfExactType<_SftpFolderDragHostScope>();
+    final scope = context
+        .getInheritedWidgetOfExactType<_SftpFolderDragHostScope>();
     return scope?.hostState;
   }
 
@@ -82,10 +82,7 @@ class PreSnapshotDragItemWidget extends StatefulWidget {
 }
 
 class _FolderDragPreviewImage {
-  _FolderDragPreviewImage({
-    required this.image,
-    this.liftImage,
-  });
+  _FolderDragPreviewImage({required this.image, this.liftImage});
 
   final TargetedWidgetSnapshot image;
   final TargetedWidgetSnapshot? liftImage;
@@ -152,10 +149,7 @@ class PreSnapshotDragItemWidgetState extends State<PreSnapshotDragItemWidget> {
       hostState: this,
       child: SftpFolderDelayedDraggable(
         hitTestBehavior: HitTestBehavior.opaque,
-        child: WidgetSnapshotter(
-          key: _snapshotterKey,
-          child: widget.child,
-        ),
+        child: WidgetSnapshotter(key: _snapshotterKey, child: widget.child),
       ),
     );
   }
@@ -332,8 +326,9 @@ Future<DragConfiguration?> _sftpDragConfigurationForFolderHost(
 ) async {
   final host = _SftpFolderDragHostScope.maybeOf(context);
   if (host == null) return null;
-  final allowedOperations =
-      List<DropOperation>.from(await host.getAllowedOperations());
+  final allowedOperations = List<DropOperation>.from(
+    await host.getAllowedOperations(),
+  );
   if (allowedOperations.isEmpty) return null;
   final dragItem = await host.createItem(location, session);
   if (dragItem == null) return null;
@@ -401,20 +396,21 @@ class _SftpFolderDesktopDragDetector extends StatelessWidget {
       gestures: <Type, GestureRecognizerFactory>{
         _SftpFolderImmediateMultiDragGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<
-                _SftpFolderImmediateMultiDragGestureRecognizer>(
-          () => _SftpFolderImmediateMultiDragGestureRecognizer(
-            isLocationDraggable: isLocationDraggable,
-          ),
-          (_SftpFolderImmediateMultiDragGestureRecognizer recognizer) {
-            recognizer.onStart = (offset) => _sftpMaybeStartDrag(
+              _SftpFolderImmediateMultiDragGestureRecognizer
+            >(
+              () => _SftpFolderImmediateMultiDragGestureRecognizer(
+                isLocationDraggable: isLocationDraggable,
+              ),
+              (_SftpFolderImmediateMultiDragGestureRecognizer recognizer) {
+                recognizer.onStart = (offset) => _sftpMaybeStartDrag(
                   context,
                   recognizer.lastPointer,
                   offset,
                   devicePixelRatio,
                   dragConfiguration,
                 );
-          },
-        ),
+              },
+            ),
       },
       child: child,
     );

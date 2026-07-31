@@ -30,10 +30,12 @@ class WorkbenchWindowControls extends StatefulWidget {
   final Brightness brightness;
 
   @override
-  State<WorkbenchWindowControls> createState() => _WorkbenchWindowControlsState();
+  State<WorkbenchWindowControls> createState() =>
+      _WorkbenchWindowControlsState();
 }
 
-class _WorkbenchWindowControlsState extends State<WorkbenchWindowControls> with WindowListener {
+class _WorkbenchWindowControlsState extends State<WorkbenchWindowControls>
+    with WindowListener {
   bool _maximized = false;
 
   @override
@@ -97,9 +99,6 @@ class _WorkbenchWindowControlsState extends State<WorkbenchWindowControls> with 
         break;
     }
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: children,
-    );
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
   }
 }

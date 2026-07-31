@@ -223,8 +223,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
   AssistantChatSession? _boundSession;
 
   AssistantChatSession? get _session => widget.session;
-  List<Map<String, Object?>> get _apiMessages =>
-      _session?.messages ?? const [];
+  List<Map<String, Object?>> get _apiMessages => _session?.messages ?? const [];
 
   bool get _zh => widget.settings.appLocaleCode == 'zh';
 
@@ -642,7 +641,6 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       ),
     );
   }
-
 }
 
 /// 参考 Cursor：图标标题、说明、深色代码块、安全提示、底部 Deny / Run。

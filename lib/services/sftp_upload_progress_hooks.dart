@@ -12,8 +12,14 @@ class SftpUploadProgressHooks {
     this.shouldCancelUpload,
   });
 
-  final void Function(String localFilePath, String displayLabel, int totalBytes)? onFileStart;
-  final void Function(String localFilePath, int uploadedBytes, int totalBytes)? onFileProgress;
+  final void Function(
+    String localFilePath,
+    String displayLabel,
+    int totalBytes,
+  )?
+  onFileStart;
+  final void Function(String localFilePath, int uploadedBytes, int totalBytes)?
+  onFileProgress;
   final void Function(String localFilePath, Object? error)? onFileEnd;
 
   /// 在打开文件前、每个写入块之后调用；返回 `true` 则中止该文件上传。

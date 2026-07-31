@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show kPrimaryButton, PointerScrollEvent, PointerSignalEvent;
+import 'package:flutter/gestures.dart'
+    show kPrimaryButton, PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -187,7 +188,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
 
   /// 外层 Listener 先于 xterm Tap/Pan 触发；延后到 microtask，等 xterm 处理完再写选区。
   void _scheduleApplySelection() {
-    if (_selStartCell == null || !_selDidDrag || _selectionApplyScheduled) return;
+    if (_selStartCell == null || !_selDidDrag || _selectionApplyScheduled) {
+      return;
+    }
     _selectionApplyScheduled = true;
     scheduleMicrotask(() {
       _selectionApplyScheduled = false;
@@ -245,8 +248,10 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
       final pos = _termScroll.position;
       final lineHeight = rt.lineHeight as double;
       if (lineHeight > 0) {
-        final next = (pos.pixels + dir * lineHeight)
-            .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+        final next = (pos.pixels + dir * lineHeight).clamp(
+          pos.minScrollExtent,
+          pos.maxScrollExtent,
+        );
         if ((next - pos.pixels).abs() > 0) {
           pos.jumpTo(next);
         }
@@ -332,9 +337,14 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
     );
   }
 
-  void _showTerminalContextMenu(BuildContext context, Offset globalPosition, Terminal term) {
+  void _showTerminalContextMenu(
+    BuildContext context,
+    Offset globalPosition,
+    Terminal term,
+  ) {
     final l = AppLocalizations.of(context)!;
-    final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
     final topLeft = overlay.localToGlobal(Offset.zero);
     final rel = RelativeRect.fromLTRB(
       globalPosition.dx - topLeft.dx,
@@ -355,21 +365,33 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
         PopupMenuItem(
           value: 'copy',
           enabled: hasSelection,
-          child: Text(l.terminalMenuCopy, style: TextStyle(color: context.wb.primaryText)),
+          child: Text(
+            l.terminalMenuCopy,
+            style: TextStyle(color: context.wb.primaryText),
+          ),
         ),
         PopupMenuItem(
           value: 'paste',
-          child: Text(l.terminalMenuPaste, style: TextStyle(color: context.wb.primaryText)),
+          child: Text(
+            l.terminalMenuPaste,
+            style: TextStyle(color: context.wb.primaryText),
+          ),
         ),
         const PopupMenuDivider(),
         PopupMenuItem(
           value: 'selectAll',
-          child: Text(l.terminalMenuSelectAll, style: TextStyle(color: context.wb.primaryText)),
+          child: Text(
+            l.terminalMenuSelectAll,
+            style: TextStyle(color: context.wb.primaryText),
+          ),
         ),
         PopupMenuItem(
           value: 'clearSelection',
           enabled: hasSelection,
-          child: Text(l.terminalMenuClearSelection, style: TextStyle(color: context.wb.primaryText)),
+          child: Text(
+            l.terminalMenuClearSelection,
+            style: TextStyle(color: context.wb.primaryText),
+          ),
         ),
       ],
     ).then((v) async {
@@ -437,17 +459,31 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Icon(Icons.error_outline_rounded, size: 40, color: Color(0xFFEF4444)),
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          size: 40,
+                          color: Color(0xFFEF4444),
+                        ),
                         const SizedBox(height: 12),
-                        Text(l.terminalConnectionFailed, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: context.wb.primaryText)),
+                        Text(
+                          l.terminalConnectionFailed,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: context.wb.primaryText),
+                        ),
                         const SizedBox(height: 8),
                         SelectableText(
                           c.error!,
-                          style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: context.wb.textMuted),
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: context.wb.textMuted,
+                          ),
                         ),
                         const SizedBox(height: 20),
                         FilledButton(
-                          style: FilledButton.styleFrom(backgroundColor: context.wb.accentBlue),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: context.wb.accentBlue,
+                          ),
                           onPressed: () async {
                             await c.disconnect();
                             await c.connect();
@@ -504,8 +540,11 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                   readOnly: !c.connected,
                   autoResize: true,
                   onSecondaryTapDown: (_, _) {},
-                  onSecondaryTapUp: (details, _) =>
-                      _showTerminalContextMenu(context, details.globalPosition, term),
+                  onSecondaryTapUp: (details, _) => _showTerminalContextMenu(
+                    context,
+                    details.globalPosition,
+                    term,
+                  ),
                 ),
               ),
             ),
@@ -537,7 +576,9 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (reconnecting) ...[
-                              CircularProgressIndicator(color: context.wb.accentBlue),
+                              CircularProgressIndicator(
+                                color: context.wb.accentBlue,
+                              ),
                               const SizedBox(height: 12),
                               Text(
                                 l.terminalReconnecting,
@@ -554,9 +595,7 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
                               Text(
                                 l.terminalDisconnected,
                                 textAlign: TextAlign.center,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
+                                style: Theme.of(context).textTheme.titleMedium
                                     ?.copyWith(color: context.wb.primaryText),
                               ),
                               if (c.error != null && c.error!.isNotEmpty) ...[

@@ -43,7 +43,9 @@ List<Widget> buildAssistantChatMessageTiles({
     }
 
     if (role == 'assistant') {
-      final reasoning = normalizeChatText(m['reasoning_content'] as String? ?? '');
+      final reasoning = normalizeChatText(
+        m['reasoning_content'] as String? ?? '',
+      );
       if (reasoning.isNotEmpty) {
         tiles.add(
           AssistantChatBubble(
@@ -60,13 +62,17 @@ List<Widget> buildAssistantChatMessageTiles({
 
       final toolCalls = m['tool_calls'];
       if (toolCalls is List && toolCalls.isNotEmpty) {
-        tiles.add(_ToolStatusRow(
-          text: l.assistantToolRunning(_toolNames(toolCalls)),
-          color: palette.metaText,
-        ));
+        tiles.add(
+          _ToolStatusRow(
+            text: l.assistantToolRunning(_toolNames(toolCalls)),
+            color: palette.metaText,
+          ),
+        );
       }
 
-      final answer = normalizeChatText(messageContentString(m['content']) ?? '');
+      final answer = normalizeChatText(
+        messageContentString(m['content']) ?? '',
+      );
       if (answer.isNotEmpty) {
         tiles.add(
           AssistantChatBubble(

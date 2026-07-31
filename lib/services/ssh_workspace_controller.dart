@@ -117,10 +117,7 @@ class _SftpDragVirtualFileSession {
       } else {
         // 流没有走到任何终态又没 cancel：通常是出现了未捕获的异常路径。
         // 视作失败，提交一次 addError 防止 OS 端无限等待。
-        finishFailed(
-          const SftpUserCancelled(),
-          StackTrace.current,
-        );
+        finishFailed(const SftpUserCancelled(), StackTrace.current);
       }
     } else if (!_sinkClosed) {
       _closeSinkOnce();
@@ -203,7 +200,9 @@ bool _sshAuthOrKeyIssueExhaustedNoBenefitFromTcpRetry(Object error) {
   if (error is SSHKeyDecodeError) return true;
   if (error is SSHAuthAbortError) {
     final reason = error.reason;
-    if (reason != null) return _sshAuthOrKeyIssueExhaustedNoBenefitFromTcpRetry(reason);
+    if (reason != null) {
+      return _sshAuthOrKeyIssueExhaustedNoBenefitFromTcpRetry(reason);
+    }
     return false;
   }
   return false;
@@ -418,7 +417,8 @@ class SshWorkspaceController extends ChangeNotifier {
             identities: identities,
             onPasswordRequest: hasPassword ? () async => _password : null,
             onUserInfoRequest: hasPassword
-                ? (req) async => List<String>.filled(req.prompts.length, _password)
+                ? (req) async =>
+                      List<String>.filled(req.prompts.length, _password)
                 : null,
             keepAliveInterval: settings.sshKeepAliveSec <= 0
                 ? null
@@ -476,11 +476,12 @@ class SshWorkspaceController extends ChangeNotifier {
       if (!_connected && lastError != null) {
         final hadPrivateKey =
             _privateKeyPem != null && _privateKeyPem!.trim().isNotEmpty;
-        _suggestCredentialSheetAfterFailure = sshFailureShouldOfferCredentialSheet(
-          lastError,
-          passwordProvided: _password.isNotEmpty,
-          hadPrivateKey: hadPrivateKey,
-        );
+        _suggestCredentialSheetAfterFailure =
+            sshFailureShouldOfferCredentialSheet(
+              lastError,
+              passwordProvided: _password.isNotEmpty,
+              hadPrivateKey: hadPrivateKey,
+            );
         try {
           final l10n = lookupAppLocalizations(Locale(settings.appLocaleCode));
           _setError(
@@ -706,12 +707,14 @@ class SshWorkspaceController extends ChangeNotifier {
     final taskViews = <SftpUploadTaskView>[];
     for (final (_, plan) in allPlans) {
       for (final e in plan) {
-        taskViews.add(SftpUploadTaskView(
-          id: e.localPath,
-          label: e.displayLabel,
-          totalBytes: e.sizeBytes,
-          direction: SftpTransferDirection.upload,
-        ));
+        taskViews.add(
+          SftpUploadTaskView(
+            id: e.localPath,
+            label: e.displayLabel,
+            totalBytes: e.sizeBytes,
+            direction: SftpTransferDirection.upload,
+          ),
+        );
       }
     }
     if (taskViews.isNotEmpty) {
@@ -756,8 +759,7 @@ class SshWorkspaceController extends ChangeNotifier {
 
   void _failRemainingTasks(Set<String> taskIds, Object error) {
     for (final row in List<SftpUploadTaskView>.of(uploadTasks.items)) {
-      if (taskIds.contains(row.id) &&
-          row.state != SftpUploadRowState.failed) {
+      if (taskIds.contains(row.id) && row.state != SftpUploadRowState.failed) {
         uploadTasks.fail(row.id, error);
       }
     }
@@ -947,12 +949,14 @@ class SshWorkspaceController extends ChangeNotifier {
 
     // 后台扫树 + 下载。任何阶段抛错都会被 _runBackgroundDirectoryDragDownload
     // 内部消化（队列 fail + 临时目录清理），不会让 unawaited future 留下未处理的异常。
-    unawaited(_runBackgroundDirectoryDragDownload(
-      relativeName: relativeName,
-      localDest: localDest,
-      tempParent: tempParent,
-      stamp: stamp,
-    ));
+    unawaited(
+      _runBackgroundDirectoryDragDownload(
+        relativeName: relativeName,
+        localDest: localDest,
+        tempParent: tempParent,
+        stamp: stamp,
+      ),
+    );
 
     return localDest;
   }
@@ -1335,6 +1339,13 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   void _handleTransportClosed(SSHClient client, Object? error) {
+    unawaited(_handleTransportClosedAsync(client, error));
+  }
+
+  Future<void> _handleTransportClosedAsync(
+    SSHClient client,
+    Object? error,
+  ) async {
     if (_sessionDisposed) return;
     // 已被重连替换的旧 client 关闭：忽略。
     if (!identical(_client, client)) return;
@@ -1342,7 +1353,8 @@ class SshWorkspaceController extends ChangeNotifier {
     if (!_connected) return;
 
     debugPrint('SSH transport closed unexpectedly: $error');
-    _teardownConnection(keepTerminal: true);
+    await _teardownConnection(keepTerminal: true);
+    if (_sessionDisposed) return;
     _dropped = true;
 
     String message;

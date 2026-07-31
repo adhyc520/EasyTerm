@@ -88,7 +88,10 @@ class AssistantChatMarkdownBody extends StatelessWidget {
         ),
         tableHead: base.copyWith(fontWeight: FontWeight.w700),
         tableBody: base,
-        tableCellsPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        tableCellsPadding: const EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: 4,
+        ),
         tableBorder: TableBorder.all(color: borderColor),
         tableColumnWidth: const IntrinsicColumnWidth(),
         tablePadding: EdgeInsets.zero,

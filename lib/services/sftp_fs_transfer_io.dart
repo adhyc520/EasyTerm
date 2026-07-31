@@ -235,7 +235,10 @@ Future<void> uploadLocalPathToRemote({
   required String localPath,
   SftpUploadProgressHooks? hooks,
 }) async {
-  final plan = await planLocalUpload(remoteCwd: remoteCwd, localPath: localPath);
+  final plan = await planLocalUpload(
+    remoteCwd: remoteCwd,
+    localPath: localPath,
+  );
   await uploadPlannedFiles(
     sftp: sftp,
     remoteCwd: remoteCwd,
@@ -311,7 +314,8 @@ Future<void> _uploadOneFile(
   try {
     out = await sftp.open(
       remotePath,
-      mode: SftpFileOpenMode.create |
+      mode:
+          SftpFileOpenMode.create |
           SftpFileOpenMode.write |
           SftpFileOpenMode.truncate,
     );
@@ -379,7 +383,8 @@ Future<List<SftpPlannedDownloadFile>> planDownloadSingleFile({
   final size = stat.size ?? 0;
   return [
     SftpPlannedDownloadFile(
-      taskId: 'dl_${DateTime.now().microsecondsSinceEpoch}_${p.basename(displayLabel)}',
+      taskId:
+          'dl_${DateTime.now().microsecondsSinceEpoch}_${p.basename(displayLabel)}',
       displayLabel: displayLabel,
       remotePath: remotePath,
       localPath: localPath,
@@ -398,7 +403,8 @@ Future<List<SftpPlannedDownloadFile>> planRemoteDirectoryDownload({
   void Function(SftpPlannedDownloadFile entry)? onEntryDiscovered,
 }) async {
   final out = <SftpPlannedDownloadFile>[];
-  final idPrefix = taskIdPrefix ??
+  final idPrefix =
+      taskIdPrefix ??
       'dl_${DateTime.now().microsecondsSinceEpoch}_${displayRootLabel.hashCode}';
   await _planRemoteDownloadRecursive(
     sftp: sftp,
@@ -581,8 +587,7 @@ Future<void> _downloadOneFileWithHooks({
           done += chunk.length;
           hooks?.onFileProgress?.call(taskId, done, total);
         }
-        if (!userCancelled &&
-            hooks?.shouldCancelUpload?.call(taskId) == true) {
+        if (!userCancelled && hooks?.shouldCancelUpload?.call(taskId) == true) {
           userCancelled = true;
           hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
         }

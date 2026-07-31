@@ -12,10 +12,12 @@ class WorkbenchTerminalSettingsDialog extends StatefulWidget {
   final WorkbenchSettingsStore settings;
 
   @override
-  State<WorkbenchTerminalSettingsDialog> createState() => _WorkbenchTerminalSettingsDialogState();
+  State<WorkbenchTerminalSettingsDialog> createState() =>
+      _WorkbenchTerminalSettingsDialogState();
 }
 
-class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSettingsDialog> {
+class _WorkbenchTerminalSettingsDialogState
+    extends State<WorkbenchTerminalSettingsDialog> {
   late final TextEditingController _timeoutCtrl;
   late final TextEditingController _retryCtrl;
   late final TextEditingController _intervalCtrl;
@@ -59,13 +61,21 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
     super.dispose();
   }
 
-  int? _parseInt(TextEditingController c, {required int min, required int max}) {
+  int? _parseInt(
+    TextEditingController c, {
+    required int min,
+    required int max,
+  }) {
     final v = int.tryParse(c.text.trim());
     if (v == null) return null;
     return v.clamp(min, max);
   }
 
-  double? _parseDouble(TextEditingController c, {required double min, required double max}) {
+  double? _parseDouble(
+    TextEditingController c, {
+    required double min,
+    required double max,
+  }) {
     final v = double.tryParse(c.text.trim());
     if (v == null) return null;
     if (v < min || v > max) return null;
@@ -90,9 +100,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
         ptyRows == null ||
         buffer == null ||
         fontSize == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l.settingsInvalidNumbers)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l.settingsInvalidNumbers)));
       return;
     }
     final s = widget.settings;
@@ -119,7 +129,13 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
         children: [
           SizedBox(
             width: 150,
-            child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: context.wb.secondaryText,
+                fontSize: 14,
+              ),
+            ),
           ),
           Expanded(child: field),
         ],
@@ -133,9 +149,15 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
       isDense: true,
       filled: true,
       fillColor: context.wb.panel,
-      border: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.border)),
-      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.border)),
-      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: context.wb.accentBlue)),
+      border: UnderlineInputBorder(
+        borderSide: BorderSide(color: context.wb.border),
+      ),
+      enabledBorder: UnderlineInputBorder(
+        borderSide: BorderSide(color: context.wb.border),
+      ),
+      focusedBorder: UnderlineInputBorder(
+        borderSide: BorderSide(color: context.wb.accentBlue),
+      ),
     );
   }
 
@@ -160,14 +182,17 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                   Text(
                     l.settingsDialogTitle,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: context.wb.primaryText,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      color: context.wb.primaryText,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.close_rounded, color: context.wb.textMuted),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: context.wb.textMuted,
+                    ),
                   ),
                 ],
               ),
@@ -181,7 +206,10 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                   children: [
                     Text(
                       l.settingsSectionConnection,
-                      style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                      style: TextStyle(
+                        color: context.wb.textMuted.withValues(alpha: 0.9),
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     _row(
@@ -189,7 +217,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _timeoutCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsTimeoutHint),
                       ),
@@ -199,7 +229,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _retryCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsRetryHint),
                       ),
@@ -209,7 +241,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _intervalCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsRetryIntervalHint),
                       ),
@@ -219,7 +253,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _keepAliveCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsKeepAliveHint),
                       ),
@@ -227,7 +263,10 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                     const SizedBox(height: 16),
                     Text(
                       l.settingsSectionTerminal,
-                      style: TextStyle(color: context.wb.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                      style: TextStyle(
+                        color: context.wb.textMuted.withValues(alpha: 0.9),
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     _row(
@@ -235,7 +274,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _ptyColsCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsPtyColsHint),
                       ),
@@ -245,7 +286,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _ptyRowsCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsPtyRowsHint),
                       ),
@@ -253,17 +296,26 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                     _row(
                       l.settingsTermTypeLabel,
                       Theme(
-                        data: Theme.of(context).copyWith(canvasColor: context.wb.panelElevated),
+                        data: Theme.of(
+                          context,
+                        ).copyWith(canvasColor: context.wb.panelElevated),
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: _termType,
                           dropdownColor: context.wb.panelElevated,
-                          style: TextStyle(color: context.wb.primaryText, fontSize: 14),
+                          style: TextStyle(
+                            color: context.wb.primaryText,
+                            fontSize: 14,
+                          ),
                           underline: const SizedBox(),
                           items: WorkbenchSettingsStore.terminalTypeChoices
-                              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                              .map(
+                                (e) =>
+                                    DropdownMenuItem(value: e, child: Text(e)),
+                              )
                               .toList(),
-                          onChanged: (v) => setState(() => _termType = v ?? _termType),
+                          onChanged: (v) =>
+                              setState(() => _termType = v ?? _termType),
                         ),
                       ),
                     ),
@@ -272,7 +324,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       TextField(
                         controller: _bufferCtrl,
                         keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsBufferHint),
                       ),
@@ -281,7 +335,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       l.settingsFontSizeLabel,
                       TextField(
                         controller: _fontSizeCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
                         style: TextStyle(color: context.wb.primaryText),
                         decoration: _decoration(l.settingsFontSizeHint),
                       ),
@@ -289,17 +345,26 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                     _row(
                       l.settingsFontFamilyLabel,
                       Theme(
-                        data: Theme.of(context).copyWith(canvasColor: context.wb.panelElevated),
+                        data: Theme.of(
+                          context,
+                        ).copyWith(canvasColor: context.wb.panelElevated),
                         child: DropdownButton<String>(
                           isExpanded: true,
                           value: _fontFamily,
                           dropdownColor: context.wb.panelElevated,
-                          style: TextStyle(color: context.wb.primaryText, fontSize: 14),
+                          style: TextStyle(
+                            color: context.wb.primaryText,
+                            fontSize: 14,
+                          ),
                           underline: const SizedBox(),
                           items: WorkbenchSettingsStore.fontFamilyChoices
-                              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                              .map(
+                                (e) =>
+                                    DropdownMenuItem(value: e, child: Text(e)),
+                              )
                               .toList(),
-                          onChanged: (v) => setState(() => _fontFamily = v ?? _fontFamily),
+                          onChanged: (v) =>
+                              setState(() => _fontFamily = v ?? _fontFamily),
                         ),
                       ),
                     ),
@@ -317,7 +382,10 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                       padding: const EdgeInsets.only(left: 150, bottom: 4),
                       child: Text(
                         l.settingsSelectCopyDescription,
-                        style: TextStyle(fontSize: 11, color: context.wb.textMuted.withValues(alpha: 0.85)),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
                       ),
                     ),
                   ],
@@ -336,7 +404,9 @@ class _WorkbenchTerminalSettingsDialogState extends State<WorkbenchTerminalSetti
                   const Spacer(),
                   FilledButton(
                     onPressed: _save,
-                    style: FilledButton.styleFrom(backgroundColor: context.wb.accentBlue),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: context.wb.accentBlue,
+                    ),
                     child: Text(l.settingsSave),
                   ),
                 ],

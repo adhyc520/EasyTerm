@@ -18,7 +18,7 @@ enum AppUpdatePhase { idle, checking, downloading, installing }
 /// Desktop auto-update via GitHub Releases (macOS arm64, Windows x64).
 final class AppUpdateService {
   AppUpdateService({GithubReleaseClient? client})
-      : _client = client ?? GithubReleaseClient();
+    : _client = client ?? GithubReleaseClient();
 
   static const _kSkipVersion = 'wb_skip_update_version';
 
@@ -27,8 +27,7 @@ final class AppUpdateService {
   AppUpdatePhase phase = AppUpdatePhase.idle;
   double downloadProgress = 0;
 
-  static bool get isSupportedPlatform =>
-      Platform.isMacOS || Platform.isWindows;
+  static bool get isSupportedPlatform => Platform.isMacOS || Platform.isWindows;
 
   /// Auto/manual update checks are disabled in debug runs (`flutter run`).
   static bool get isUpdateEnabled => isSupportedPlatform && !kDebugMode;
@@ -206,7 +205,8 @@ final class AppUpdateService {
       (await getTemporaryDirectory()).path,
       'easyterm-update-${DateTime.now().millisecondsSinceEpoch}.sh',
     );
-    final script = '''
+    final script =
+        '''
 #!/bin/bash
 set -e
 sleep 2
@@ -223,7 +223,9 @@ open "\$TARGET"
 ''';
     await File(scriptPath).writeAsString(script);
     await Process.start('/bin/chmod', ['+x', scriptPath]);
-    await Process.start('/bin/bash', [scriptPath], mode: ProcessStartMode.detached);
+    await Process.start('/bin/bash', [
+      scriptPath,
+    ], mode: ProcessStartMode.detached);
     exit(0);
   }
 
@@ -237,7 +239,8 @@ open "\$TARGET"
       (await getTemporaryDirectory()).path,
       'easyterm-update-${DateTime.now().millisecondsSinceEpoch}.ps1',
     );
-    final script = '''
+    final script =
+        '''
 Start-Sleep -Seconds 2
 \$src = ${_psQuote(stagingDir)}
 \$dst = ${_psQuote(installDir)}
@@ -245,11 +248,13 @@ Copy-Item -Path (Join-Path \$src '*') -Destination \$dst -Recurse -Force
 Start-Process (Join-Path \$dst ${_psQuote(exeName)})
 ''';
     await File(scriptPath).writeAsString(script, encoding: utf8);
-    await Process.start(
-      'powershell',
-      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
-      mode: ProcessStartMode.detached,
-    );
+    await Process.start('powershell', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+    ], mode: ProcessStartMode.detached);
     exit(0);
   }
 
@@ -294,12 +299,11 @@ final class AppUpdateCheckResult {
   factory AppUpdateCheckResult.available({
     required AppVersion installed,
     required GithubRelease release,
-  }) =>
-      AppUpdateCheckResult._(
-        kind: AppUpdateCheckKind.updateAvailable,
-        installed: installed,
-        release: release,
-      );
+  }) => AppUpdateCheckResult._(
+    kind: AppUpdateCheckKind.updateAvailable,
+    installed: installed,
+    release: release,
+  );
 
   factory AppUpdateCheckResult.upToDate({required AppVersion installed}) =>
       AppUpdateCheckResult._(
@@ -308,13 +312,12 @@ final class AppUpdateCheckResult {
       );
 
   factory AppUpdateCheckResult.error(String message) => AppUpdateCheckResult._(
-        kind: AppUpdateCheckKind.error,
-        errorMessage: message,
-      );
+    kind: AppUpdateCheckKind.error,
+    errorMessage: message,
+  );
 
-  factory AppUpdateCheckResult.unsupported() => const AppUpdateCheckResult._(
-        kind: AppUpdateCheckKind.unsupported,
-      );
+  factory AppUpdateCheckResult.unsupported() =>
+      const AppUpdateCheckResult._(kind: AppUpdateCheckKind.unsupported);
 
   final AppUpdateCheckKind kind;
   final AppVersion? installed;
@@ -324,9 +327,4 @@ final class AppUpdateCheckResult {
   bool get hasUpdate => kind == AppUpdateCheckKind.updateAvailable;
 }
 
-enum AppUpdateCheckKind {
-  updateAvailable,
-  upToDate,
-  error,
-  unsupported,
-}
+enum AppUpdateCheckKind { updateAvailable, upToDate, error, unsupported }

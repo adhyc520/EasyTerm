@@ -1,6 +1,7 @@
 import 'dart:io';
 
-String createSystemTempDir(String prefix) => Directory.systemTemp.createTempSync(prefix).path;
+String createSystemTempDir(String prefix) =>
+    Directory.systemTemp.createTempSync(prefix).path;
 
 void deletePathRecursive(String path) {
   try {

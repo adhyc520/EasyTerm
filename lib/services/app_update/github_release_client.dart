@@ -10,16 +10,16 @@ import 'app_version.dart';
 /// Release assets from CI use tag [GITHUB_REF_NAME], e.g.
 /// `easyterm-v0.0.3-windows-x64.zip`, `easyterm-v0.0.3-macos-arm64.zip`.
 final class GithubReleaseClient {
-  GithubReleaseClient({http.Client? client}) : _client = client ?? http.Client();
+  GithubReleaseClient({http.Client? client})
+    : _client = client ?? http.Client();
 
   static const owner = 'adhyc520';
   static const repo = 'EasyTerm';
 
   final http.Client _client;
 
-  Uri get _latestUri => Uri.parse(
-        'https://api.github.com/repos/$owner/$repo/releases/latest',
-      );
+  Uri get _latestUri =>
+      Uri.parse('https://api.github.com/repos/$owner/$repo/releases/latest');
 
   Future<GithubRelease?> fetchLatestRelease() async {
     final response = await _client.get(
@@ -55,7 +55,9 @@ final class GithubReleaseClient {
       }
     }
     if (match == null) {
-      throw GithubReleaseException('No release asset for this platform ($suffix)');
+      throw GithubReleaseException(
+        'No release asset for this platform ($suffix)',
+      );
     }
 
     final url = match['browser_download_url'] as String?;

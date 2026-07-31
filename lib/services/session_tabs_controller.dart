@@ -3,21 +3,60 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'assistant_chat_session.dart';
+import 'session_pane.dart';
 import 'ssh_workspace_controller.dart';
 import 'workbench_settings_store.dart';
 
 class SessionTab {
-  SessionTab({required this.id, required this.controller})
-    : assistant = AssistantChatSession();
+  SessionTab({
+    required this.id,
+    required SshWorkspaceController controller,
+    required int paneId,
+  }) : root = SessionPaneLeaf(paneId: paneId, controller: controller),
+       focusedPaneId = paneId,
+       assistant = AssistantChatSession();
 
   final int id;
-  final SshWorkspaceController controller;
+  SessionPaneNode root;
+  int focusedPaneId;
   final AssistantChatSession assistant;
 
-  String get title => '${controller.username}@${controller.host}';
+  /// 当前焦点窗格的控制器（侧栏 SFTP / 助手 / 状态栏共用）。
+  SshWorkspaceController get controller {
+    final leaf = root.findLeaf(focusedPaneId) ?? root.leaves.first;
+    return leaf.controller;
+  }
+
+  String get title {
+    final base = '${controller.username}@${controller.host}';
+    if (!hasSplit) return base;
+    final n = root.leaves.length;
+    return '$base ($n)';
+  }
+
+  bool get hasSplit => root is SessionPaneSplit;
+
+  bool containsController(SshWorkspaceController c) {
+    for (final leaf in root.leaves) {
+      if (identical(leaf.controller, c)) return true;
+    }
+    return false;
+  }
+
+  void focusPane(int paneId) {
+    if (root.containsPaneId(paneId)) {
+      focusedPaneId = paneId;
+    }
+  }
+
+  void ensureFocusValid() {
+    if (!root.containsPaneId(focusedPaneId)) {
+      focusedPaneId = root.leaves.first.paneId;
+    }
+  }
 }
 
-/// 多标签 SSH 会话：每个标签独立 [SshWorkspaceController]，关闭标签即释放连接。
+/// 多标签 SSH 会话：每个标签内可分屏，每个窗格独立 [SshWorkspaceController]。
 class SessionTabsController extends ChangeNotifier {
   SessionTabsController({required this.settings});
 
@@ -26,6 +65,7 @@ class SessionTabsController extends ChangeNotifier {
   final List<SessionTab> _tabs = [];
   int _selectedIndex = 0;
   int _idSeq = 1;
+  int _paneIdSeq = 1;
 
   List<SessionTab> get tabs => List.unmodifiable(_tabs);
 
@@ -44,6 +84,35 @@ class SessionTabsController extends ChangeNotifier {
 
   void _onTabNotify() => notifyListeners();
 
+  SshWorkspaceController _spawnController({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+    String? privateKeyPem,
+  }) {
+    final c = SshWorkspaceController(
+      settings: settings,
+      host: host,
+      port: port,
+      username: username,
+      password: password,
+      privateKeyPem: privateKeyPem,
+    );
+    c.addListener(_onTabNotify);
+    return c;
+  }
+
+  void _connectInBackground(SshWorkspaceController c) {
+    unawaited(
+      c.connect().whenComplete(() {
+        if (_tabs.any((t) => t.containsController(c))) {
+          notifyListeners();
+        }
+      }),
+    );
+  }
+
   /// 打开新标签并后台连接；返回该标签的 [SshWorkspaceController]。
   SshWorkspaceController openTab({
     required String host,
@@ -51,14 +120,16 @@ class SessionTabsController extends ChangeNotifier {
     required String username,
     required String password,
     String? privateKeyPem,
+    bool bypassDebounce = false,
   }) {
     final now = DateTime.now();
 
-    if (_lastOpenTabAt != null &&
+    if (!bypassDebounce &&
+        _lastOpenTabAt != null &&
         _lastOpenedController != null &&
         now.difference(_lastOpenTabAt!) < _openTabDebounce) {
       for (var i = 0; i < _tabs.length; i++) {
-        if (identical(_tabs[i].controller, _lastOpenedController)) {
+        if (_tabs[i].containsController(_lastOpenedController!)) {
           _selectedIndex = i;
           notifyListeners();
           break;
@@ -69,28 +140,133 @@ class SessionTabsController extends ChangeNotifier {
 
     _lastOpenTabAt = now;
 
-    final c = SshWorkspaceController(
-      settings: settings,
+    final c = _spawnController(
       host: host,
       port: port,
       username: username,
       password: password,
       privateKeyPem: privateKeyPem,
     );
-    c.addListener(_onTabNotify);
-    final tab = SessionTab(id: _idSeq++, controller: c);
+    final tab = SessionTab(id: _idSeq++, controller: c, paneId: _paneIdSeq++);
     _tabs.add(tab);
     _selectedIndex = _tabs.length - 1;
     _lastOpenedController = c;
     notifyListeners();
-    unawaited(
-      c.connect().whenComplete(() {
-        if (_tabs.any((t) => identical(t.controller, c))) {
-          notifyListeners();
-        }
-      }),
-    );
+    _connectInBackground(c);
     return c;
+  }
+
+  /// 复制 [index] 标签为新标签并重新连接（同主机凭据，独立会话）。
+  SshWorkspaceController? duplicateTab(int index) {
+    if (index < 0 || index >= _tabs.length) return null;
+    final src = _tabs[index].controller;
+    return openTab(
+      host: src.host,
+      port: src.port,
+      username: src.username,
+      password: src.password,
+      privateKeyPem: src.privateKeyPem,
+      bypassDebounce: true,
+    );
+  }
+
+  /// 复制当前选中标签。
+  SshWorkspaceController? duplicateSelectedTab() {
+    if (_tabs.isEmpty) return null;
+    return duplicateTab(selectedIndex);
+  }
+
+  /// 在焦点窗格旁分屏，新窗格用同主机凭据新建连接。
+  SshWorkspaceController? splitFocusedPane({
+    required SessionPaneAxis axis,
+    SessionSplitPlacement placement = SessionSplitPlacement.after,
+  }) {
+    final tab = selectedTab;
+    if (tab == null) return null;
+    return splitPane(
+      tabIndex: selectedIndex,
+      targetPaneId: tab.focusedPaneId,
+      axis: axis,
+      placement: placement,
+    );
+  }
+
+  SshWorkspaceController? splitPane({
+    required int tabIndex,
+    required int targetPaneId,
+    required SessionPaneAxis axis,
+    SessionSplitPlacement placement = SessionSplitPlacement.after,
+  }) {
+    if (tabIndex < 0 || tabIndex >= _tabs.length) return null;
+    final tab = _tabs[tabIndex];
+    final target = tab.root.findLeaf(targetPaneId);
+    if (target == null) return null;
+
+    final src = target.controller;
+    final c = _spawnController(
+      host: src.host,
+      port: src.port,
+      username: src.username,
+      password: src.password,
+      privateKeyPem: src.privateKeyPem,
+    );
+    final newLeaf = SessionPaneLeaf(paneId: _paneIdSeq++, controller: c);
+    tab.root = splitLeaf(
+      root: tab.root,
+      targetPaneId: targetPaneId,
+      newLeaf: newLeaf,
+      axis: axis,
+      placement: placement,
+    );
+    tab.focusedPaneId = newLeaf.paneId;
+    notifyListeners();
+    _connectInBackground(c);
+    return c;
+  }
+
+  void focusPane(int tabIndex, int paneId) {
+    if (tabIndex < 0 || tabIndex >= _tabs.length) return;
+    final tab = _tabs[tabIndex];
+    if (!tab.root.containsPaneId(paneId)) return;
+    tab.focusPane(paneId);
+    notifyListeners();
+  }
+
+  void setSplitRatio(SessionPaneSplit split, double ratio) {
+    split.ratio = ratio.clamp(0.15, 0.85);
+    notifyListeners();
+  }
+
+  /// 关闭窗格；若为标签内最后一个窗格则关闭整个标签。
+  void closePane(int tabIndex, int paneId) {
+    if (tabIndex < 0 || tabIndex >= _tabs.length) return;
+    final tab = _tabs[tabIndex];
+    final leaf = tab.root.findLeaf(paneId);
+    if (leaf == null) return;
+
+    final onlyOne = tab.root is SessionPaneLeaf;
+    if (onlyOne) {
+      closeTab(tabIndex);
+      return;
+    }
+
+    leaf.controller.removeListener(_onTabNotify);
+    leaf.controller.dispose();
+    final next = tab.root.removeLeaf(paneId);
+    if (next == null) {
+      closeTab(tabIndex);
+      return;
+    }
+    tab.root = next;
+    tab.ensureFocusValid();
+    notifyListeners();
+  }
+
+  /// 关闭当前焦点窗格（或无分屏时关闭标签）。
+  void closeFocusedPaneOrTab() {
+    final tab = selectedTab;
+    if (tab == null) return;
+    closePane(selectedIndex, tab.focusedPaneId);
   }
 
   void selectTab(int index) {
@@ -152,8 +328,10 @@ class SessionTabsController extends ChangeNotifier {
 
   void _disposeTabResources(SessionTab tab) {
     tab.assistant.dispose();
-    tab.controller.removeListener(_onTabNotify);
-    tab.controller.dispose();
+    for (final leaf in tab.root.leaves) {
+      leaf.controller.removeListener(_onTabNotify);
+      leaf.controller.dispose();
+    }
   }
 
   void closeAll() {

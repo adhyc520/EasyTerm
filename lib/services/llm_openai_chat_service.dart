@@ -273,11 +273,7 @@ final class LlmOpenAiChatService {
     } else {
       body = '$body${useZh ? '\n\n（输出已停止。）' : '\n\n(Output stopped.)'}';
     }
-    return {
-      'role': 'assistant',
-      'content': body,
-      'reasoning_content': rc,
-    };
+    return {'role': 'assistant', 'content': body, 'reasoning_content': rc};
   }
 
   Future<_StreamedAssistant> _streamOneAssistantResponse({

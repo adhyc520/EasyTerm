@@ -168,7 +168,9 @@ class _AppUpdateDialogState extends State<_AppUpdateDialog> {
                 ],
                 if (_busy) ...[
                   const SizedBox(height: 16),
-                  LinearProgressIndicator(value: _progress > 0 ? _progress : null),
+                  LinearProgressIndicator(
+                    value: _progress > 0 ? _progress : null,
+                  ),
                   if (_statusMessage != null) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -218,7 +220,9 @@ class _AppUpdateDialogState extends State<_AppUpdateDialog> {
           title: Text(l10n.updateErrorTitle),
           content: Text(
             _statusMessage ??
-                l10n.updateError(result.errorMessage ?? l10n.updateErrorUnknown),
+                l10n.updateError(
+                  result.errorMessage ?? l10n.updateErrorUnknown,
+                ),
           ),
           actions: [
             if (widget.manualCheck)

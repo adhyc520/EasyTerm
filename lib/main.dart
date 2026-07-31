@@ -71,10 +71,14 @@ class _EasyTermAppState extends State<EasyTermApp> {
 
   @override
   Widget build(BuildContext context) {
-    final lightTheme =
-        buildWorkbenchMaterialTheme(WorkbenchColors.light, Brightness.light);
-    final darkTheme =
-        buildWorkbenchMaterialTheme(WorkbenchColors.dark, Brightness.dark);
+    final lightTheme = buildWorkbenchMaterialTheme(
+      WorkbenchColors.light,
+      Brightness.light,
+    );
+    final darkTheme = buildWorkbenchMaterialTheme(
+      WorkbenchColors.dark,
+      Brightness.dark,
+    );
 
     return MaterialApp(
       onGenerateTitle: (ctx) =>
@@ -88,7 +92,9 @@ class _EasyTermAppState extends State<EasyTermApp> {
       darkTheme: darkTheme,
       themeMode: _settings.materialThemeMode,
       builder: (context, child) {
-        if (child == null || !workbenchDesktopShortcutsEnabled()) return child ?? const SizedBox.shrink();
+        if (child == null || !workbenchDesktopShortcutsEnabled()) {
+          return child ?? const SizedBox.shrink();
+        }
         return Shortcuts(
           shortcuts: workbenchGlobalShortcutIntents(),
           child: Actions(

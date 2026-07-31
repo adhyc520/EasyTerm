@@ -830,8 +830,8 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                                   ? InkWell(
                                                       onTap: _c.loadingDir
                                                           ? null
-                                                          : () => _c
-                                                                .navigateInto(
+                                                          : () =>
+                                                                _c.navigateInto(
                                                                   e.filename,
                                                                 ),
                                                       child: rowInner,
@@ -893,8 +893,7 @@ class _SftpSidePanelState extends State<SftpSidePanel> {
                                       formatBytes: _formatByteCount,
                                       onCancelFile:
                                           _c.uploadTasks.userCancelFile,
-                                      onCancelAll:
-                                          _c.uploadTasks.userCancelAll,
+                                      onCancelAll: _c.uploadTasks.userCancelAll,
                                     );
                                   },
                                 ),
@@ -985,16 +984,10 @@ class _SftpUploadQueueFooter extends StatelessWidget {
                 tooltip: l.sftpUploadCancelAllTooltip,
                 iconSize: 18,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 28,
-                  minHeight: 28,
-                ),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 visualDensity: VisualDensity.compact,
                 onPressed: () => onCancelAll(),
-                icon: Icon(
-                  Icons.cancel_outlined,
-                  color: wb.textMuted,
-                ),
+                icon: Icon(Icons.cancel_outlined, color: wb.textMuted),
               ),
             ],
           ),

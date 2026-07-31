@@ -56,9 +56,16 @@ class WorkbenchMinimizeIntent extends Intent {
 Map<ShortcutActivator, Intent> workbenchGlobalShortcutIntents() {
   if (!workbenchDesktopShortcutsEnabled()) return const {};
   return {
-    ...workbenchBindIntents(workbenchMetaOrControl(LogicalKeyboardKey.keyQ), const WorkbenchQuitIntent()),
-    const SingleActivator(LogicalKeyboardKey.f4, alt: true): const WorkbenchQuitIntent(),
-    ...workbenchBindIntents(workbenchMetaOrControl(LogicalKeyboardKey.keyM), const WorkbenchMinimizeIntent()),
+    ...workbenchBindIntents(
+      workbenchMetaOrControl(LogicalKeyboardKey.keyQ),
+      const WorkbenchQuitIntent(),
+    ),
+    const SingleActivator(LogicalKeyboardKey.f4, alt: true):
+        const WorkbenchQuitIntent(),
+    ...workbenchBindIntents(
+      workbenchMetaOrControl(LogicalKeyboardKey.keyM),
+      const WorkbenchMinimizeIntent(),
+    ),
   };
 }
 
