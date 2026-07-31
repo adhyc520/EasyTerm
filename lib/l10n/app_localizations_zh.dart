@@ -59,6 +59,158 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuTabCloseAll => '关闭全部标签';
 
   @override
+  String get menuTabDuplicate => '复制当前窗口';
+
+  @override
+  String get menuSplitRight => '向右分屏';
+
+  @override
+  String get menuSplitLeft => '向左分屏';
+
+  @override
+  String get menuSplitDown => '向下分屏';
+
+  @override
+  String get menuSplitUp => '向上分屏';
+
+  @override
+  String get menuView => '视图';
+
+  @override
+  String get menuCodeSnippets => '代码块';
+
+  @override
+  String get menuHealthBoard => '健康看板';
+
+  @override
+  String get paneMenuTooltip => '窗格操作';
+
+  @override
+  String get paneSplitRight => '向右分屏';
+
+  @override
+  String get paneSplitLeft => '向左分屏';
+
+  @override
+  String get paneSplitDown => '向下分屏';
+
+  @override
+  String get paneSplitUp => '向上分屏';
+
+  @override
+  String get paneClose => '关闭窗格';
+
+  @override
+  String get codeSnippetsTitle => '代码块';
+
+  @override
+  String get codeSnippetsEmpty => '还没有代码块。点「新建」创建可复用的命令或脚本。';
+
+  @override
+  String get codeSnippetNew => '新建';
+
+  @override
+  String get codeSnippetEdit => '编辑';
+
+  @override
+  String get codeSnippetDelete => '删除';
+
+  @override
+  String get codeSnippetRun => '运行';
+
+  @override
+  String get codeSnippetNameLabel => '名称';
+
+  @override
+  String get codeSnippetNameHint => '例如：重启服务';
+
+  @override
+  String get codeSnippetBodyLabel => '内容';
+
+  @override
+  String get codeSnippetBodyHint => '将写入所选终端的命令或脚本';
+
+  @override
+  String get codeSnippetSave => '保存';
+
+  @override
+  String get codeSnippetCancel => '取消';
+
+  @override
+  String codeSnippetDeleteConfirm(String name) {
+    return '确定删除「$name」？';
+  }
+
+  @override
+  String get codeSnippetNeedSession => '请先打开并连接一个终端会话。';
+
+  @override
+  String get codeSnippetRan => '已发送到终端';
+
+  @override
+  String get codeSnippetClickTargetHint => '点击要运行的终端窗口（可先切换标签）';
+
+  @override
+  String get codeSnippetClickToRun => '点击运行';
+
+  @override
+  String get healthBoardTitle => '健康看板';
+
+  @override
+  String get healthBoardSessions => '会话';
+
+  @override
+  String get healthBoardActive => '活跃连接';
+
+  @override
+  String get healthBoardConnecting => '连接中';
+
+  @override
+  String get healthBoardErrors => '异常';
+
+  @override
+  String get healthBoardPanes => '终端窗格';
+
+  @override
+  String get healthBoardCpu => 'CPU';
+
+  @override
+  String get healthBoardMemory => '内存';
+
+  @override
+  String get healthBoardDisk => '磁盘';
+
+  @override
+  String get healthBoardLoad => '负载';
+
+  @override
+  String get healthBoardFetching => '正在拉取远端指标…';
+
+  @override
+  String get healthBoardMetricsUnavailable => '暂无法获取远端指标（需 Linux /proc）';
+
+  @override
+  String get healthBoardNoSessions => '暂无会话。新建连接后可在此查看服务器状态。';
+
+  @override
+  String get healthBoardNoConnected => '没有已连接的主机。连接后可查看远端 CPU、内存、磁盘与负载。';
+
+  @override
+  String get healthBoardSessionStatus => '连接状态';
+
+  @override
+  String get healthBoardRefresh => '刷新';
+
+  @override
+  String get healthBoardConnected => '已连接';
+
+  @override
+  String get healthBoardDisconnected => '未连接';
+
+  @override
+  String get healthBoardHost => '远端主机';
+
+  @override
   String get aboutDescription => '多会话 SSH 终端与 SFTP 文件浏览。';
 
   @override

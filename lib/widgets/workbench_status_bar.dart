@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../l10n/app_localizations.dart';
+import '../services/remote_host_metrics.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 
@@ -17,180 +18,11 @@ class WorkbenchStatusBar extends StatefulWidget {
   State<WorkbenchStatusBar> createState() => _WorkbenchStatusBarState();
 }
 
-/// 单次 SSH 拉取的多段输出解析结果。
-class _ParsedRemoteSnapshot {
-  _ParsedRemoteSnapshot({
-    this.memUsed01,
-    this.cpuUsed01,
-    this.diskUsed01,
-    this.inodeUsed01,
-    this.loadPressure01,
-    this.loadLine,
-    this.dfSpaceLine,
-    this.dfInodeLine,
-    this.uptimeLine,
-  });
-
-  final double? memUsed01;
-  final double? cpuUsed01;
-  final double? diskUsed01;
-  final double? inodeUsed01;
-  final double? loadPressure01;
-  final String? loadLine;
-  final String? dfSpaceLine;
-  final String? dfInodeLine;
-  final String? uptimeLine;
-
-  static _ParsedRemoteSnapshot? parse(String raw) {
-    if (raw.isEmpty) return null;
-    const a = '__A__';
-    const b = '__B__';
-    const c = '__C__';
-    const d = '__D__';
-    const e = '__E__';
-    const f = '__F__';
-    const g = '__G__';
-    const z = '__Z__';
-    if (!raw.contains(a)) return null;
-
-    String section(String start, String end) {
-      final i0 = raw.indexOf(start);
-      if (i0 < 0) return '';
-      var from = i0 + start.length;
-      while (from < raw.length && (raw[from] == '\n' || raw[from] == '\r')) {
-        from++;
-      }
-      final i1 = raw.indexOf(end, from);
-      if (i1 < 0) return raw.substring(from).trim();
-      return raw.substring(from, i1).trim();
-    }
-
-    final memBlock = section(a, b);
-    final vmBlock = section(b, c);
-    final dfP = section(c, d);
-    final dfPi = section(d, e);
-    final loadBlock = section(e, f);
-    final nprocBlock = section(f, g);
-    final uptimeBlock = section(g, z);
-
-    final mem = _parseMeminfo(memBlock);
-    final cpu = _parseVmstatIdle(vmBlock);
-    final disk = _parseDfPercent(dfP);
-    final inode = _parseDfPercent(dfPi);
-    final loadParts = _parseLoadavg(loadBlock);
-    final nproc = int.tryParse(nprocBlock.split('\n').first.trim()) ?? 1;
-    double? loadPressure;
-    if (loadParts != null && loadParts.isNotEmpty && nproc > 0) {
-      loadPressure = (loadParts[0] / nproc).clamp(0.0, 1.0);
-    }
-
-    final uptime = uptimeBlock.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).join(' ');
-
-    return _ParsedRemoteSnapshot(
-      memUsed01: mem,
-      cpuUsed01: cpu,
-      diskUsed01: disk,
-      inodeUsed01: inode,
-      loadPressure01: loadPressure,
-      loadLine: loadParts?.map((e) => e.toStringAsFixed(2)).join(', '),
-      dfSpaceLine: dfP.isEmpty ? null : dfP.replaceAll('|', ' '),
-      dfInodeLine: dfPi.isEmpty ? null : dfPi.replaceAll('|', ' '),
-      uptimeLine: uptime.isEmpty ? null : uptime,
-    );
-  }
-}
-
-double? _parseMeminfo(String block) {
-  if (block.isEmpty) return null;
-  int? kb(String prefix) {
-    for (final line in block.split('\n')) {
-      final t = line.trim();
-      if (!t.startsWith(prefix)) continue;
-      final parts = t.split(RegExp(r'\s+'));
-      if (parts.length >= 2) return int.tryParse(parts[1]);
-    }
-    return null;
-  }
-
-  final total = kb('MemTotal:');
-  final avail = kb('MemAvailable:');
-  if (total != null && total > 0 && avail != null) {
-    return ((total - avail) / total).clamp(0.0, 1.0);
-  }
-  final free = kb('MemFree:');
-  final buffers = kb('Buffers:') ?? 0;
-  final cached = kb('Cached:') ?? 0;
-  if (total != null && total > 0 && free != null) {
-    final approxAvail = free + buffers + cached;
-    return ((total - approxAvail) / total).clamp(0.0, 1.0);
-  }
-  return null;
-}
-
-double? _parseVmstatIdle(String block) {
-  if (block.isEmpty) return null;
-  String? lastNumeric;
-  for (final line in block.split('\n')) {
-    final t = line.trimLeft();
-    if (t.isEmpty) continue;
-    if (RegExp(r'^\d').hasMatch(t)) lastNumeric = line;
-  }
-  if (lastNumeric == null) return null;
-  final fields = lastNumeric.trim().split(RegExp(r'\s+'));
-  if (fields.length < 15) return null;
-  // 常见 Linux vmstat 数据行：… us sy id wa [st]，id 在 0-based 第 14 列（15 列及以上）
-  final idle = double.tryParse(fields[14]);
-  if (idle == null) return null;
-  return ((100 - idle) / 100).clamp(0.0, 1.0);
-}
-
-double? _parseDfPercent(String line) {
-  if (line.isEmpty) return null;
-  for (final part in line.split(RegExp(r'\s+'))) {
-    if (part.endsWith('%')) {
-      final n = double.tryParse(part.replaceAll('%', ''));
-      if (n != null) return (n / 100).clamp(0.0, 1.0);
-    }
-  }
-  return null;
-}
-
-List<double>? _parseLoadavg(String block) {
-  final line = block.split('\n').first.trim();
-  if (line.isEmpty) return null;
-  final parts = line.split(RegExp(r'\s+'));
-  if (parts.length < 3) return null;
-  final a = double.tryParse(parts[0]);
-  final b = double.tryParse(parts[1]);
-  final c = double.tryParse(parts[2]);
-  if (a == null || b == null || c == null) return null;
-  return [a, b, c];
-}
-
-/// 多段输出：避免远端 awk 引号问题，在客户端解析。
-const String _kRemoteStatusBundle = r'''
-printf '__A__\n'
-cat /proc/meminfo 2>/dev/null
-printf '__B__\n'
-vmstat 1 2 2>/dev/null
-printf '__C__\n'
-df -P / 2>/dev/null | tail -n 1
-printf '__D__\n'
-df -Pi / 2>/dev/null | tail -n 1
-printf '__E__\n'
-cat /proc/loadavg 2>/dev/null
-printf '__F__\n'
-nproc 2>/dev/null || echo 1
-printf '__G__\n'
-uptime 2>/dev/null || true
-printf '__Z__\n'
-''';
-
 class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
   Timer? _pollTimer;
   Timer? _clockTimer;
   String? _uptimeSnippet;
-  _ParsedRemoteSnapshot? _snap;
+  RemoteHostSnapshot? _snap;
 
   @override
   void initState() {
@@ -246,15 +78,16 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
 
     _syncClockTimer();
 
-    final bundle = await c.runRemoteForStatus(_kRemoteStatusBundle.replaceAll('\n', ';'));
+    final snap = await fetchRemoteHostSnapshot(c);
     if (!mounted) return;
 
-    final snap = _ParsedRemoteSnapshot.parse(bundle ?? '');
     final uptime = snap?.uptimeLine;
     setState(() {
       _snap = snap;
       if (uptime != null && uptime.isNotEmpty) {
-        _uptimeSnippet = uptime.length > 96 ? '${uptime.substring(0, 93)}…' : uptime;
+        _uptimeSnippet = uptime.length > 96
+            ? '${uptime.substring(0, 93)}…'
+            : uptime;
       } else {
         _uptimeSnippet = null;
       }
@@ -276,7 +109,9 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
     }
     final clock = _wallClockForLocale(lang);
     final up = _uptimeSnippet;
-    final tail = (up != null && up.isNotEmpty) ? l10n.statusRemoteUptimeLine(up) : l10n.statusNoRemoteInfo;
+    final tail = (up != null && up.isNotEmpty)
+        ? l10n.statusRemoteUptimeLine(up)
+        : l10n.statusNoRemoteInfo;
     if (lang == 'zh') {
       return '北京时间 $clock · $tail';
     }
@@ -357,19 +192,19 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
   }
 }
 
-String _tooltipMem(AppLocalizations l, _ParsedRemoteSnapshot? s) {
+String _tooltipMem(AppLocalizations l, RemoteHostSnapshot? s) {
   if (s?.memUsed01 == null) return l.tooltipMemNoData;
   final p = (s!.memUsed01! * 100).toStringAsFixed(1);
   return l.tooltipMem(p);
 }
 
-String _tooltipCpu(AppLocalizations l, _ParsedRemoteSnapshot? s) {
+String _tooltipCpu(AppLocalizations l, RemoteHostSnapshot? s) {
   if (s?.cpuUsed01 == null) return l.tooltipCpuNoData;
   final p = (s!.cpuUsed01! * 100).toStringAsFixed(1);
   return l.tooltipCpu(p);
 }
 
-String _tooltipDisk(AppLocalizations l, _ParsedRemoteSnapshot? s) {
+String _tooltipDisk(AppLocalizations l, RemoteHostSnapshot? s) {
   final buf = StringBuffer(l.tooltipDiskTitle);
   if (s?.diskUsed01 != null) {
     buf.write(l.tooltipDiskUsed((s!.diskUsed01! * 100).toStringAsFixed(1)));
@@ -382,7 +217,7 @@ String _tooltipDisk(AppLocalizations l, _ParsedRemoteSnapshot? s) {
   return buf.toString();
 }
 
-String _tooltipInode(AppLocalizations l, _ParsedRemoteSnapshot? s) {
+String _tooltipInode(AppLocalizations l, RemoteHostSnapshot? s) {
   final buf = StringBuffer(l.tooltipInodeTitle);
   if (s?.inodeUsed01 != null) {
     buf.write(l.tooltipInodeUsed((s!.inodeUsed01! * 100).toStringAsFixed(1)));
@@ -395,7 +230,7 @@ String _tooltipInode(AppLocalizations l, _ParsedRemoteSnapshot? s) {
   return buf.toString();
 }
 
-String _tooltipLoad(AppLocalizations l, _ParsedRemoteSnapshot? s) {
+String _tooltipLoad(AppLocalizations l, RemoteHostSnapshot? s) {
   final buf = StringBuffer(l.tooltipLoadTitle);
   if (s?.loadLine != null && s!.loadLine!.isNotEmpty) {
     buf.write(l.tooltipLoadLine(s.loadLine!));
@@ -403,7 +238,9 @@ String _tooltipLoad(AppLocalizations l, _ParsedRemoteSnapshot? s) {
     buf.write(l.tooltipLoadNoData);
   }
   if (s?.loadPressure01 != null) {
-    buf.write(l.tooltipLoadPressure((s!.loadPressure01! * 100).toStringAsFixed(0)));
+    buf.write(
+      l.tooltipLoadPressure((s!.loadPressure01! * 100).toStringAsFixed(0)),
+    );
   }
   return buf.toString();
 }

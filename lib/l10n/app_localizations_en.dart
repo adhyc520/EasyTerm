@@ -59,6 +59,165 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuTabCloseAll => 'Close all tabs';
 
   @override
+  String get menuTabDuplicate => 'Duplicate Tab';
+
+  @override
+  String get menuSplitRight => 'Split Right';
+
+  @override
+  String get menuSplitLeft => 'Split Left';
+
+  @override
+  String get menuSplitDown => 'Split Down';
+
+  @override
+  String get menuSplitUp => 'Split Up';
+
+  @override
+  String get menuView => 'View';
+
+  @override
+  String get menuCodeSnippets => 'Code Snippets';
+
+  @override
+  String get menuHealthBoard => 'Health Board';
+
+  @override
+  String get paneMenuTooltip => 'Pane actions';
+
+  @override
+  String get paneSplitRight => 'Split Right';
+
+  @override
+  String get paneSplitLeft => 'Split Left';
+
+  @override
+  String get paneSplitDown => 'Split Down';
+
+  @override
+  String get paneSplitUp => 'Split Up';
+
+  @override
+  String get paneClose => 'Close Pane';
+
+  @override
+  String get codeSnippetsTitle => 'Code Snippets';
+
+  @override
+  String get codeSnippetsEmpty =>
+      'No snippets yet. Create one to reuse commands or scripts.';
+
+  @override
+  String get codeSnippetNew => 'New';
+
+  @override
+  String get codeSnippetEdit => 'Edit';
+
+  @override
+  String get codeSnippetDelete => 'Delete';
+
+  @override
+  String get codeSnippetRun => 'Run';
+
+  @override
+  String get codeSnippetNameLabel => 'Name';
+
+  @override
+  String get codeSnippetNameHint => 'e.g. Restart service';
+
+  @override
+  String get codeSnippetBodyLabel => 'Body';
+
+  @override
+  String get codeSnippetBodyHint =>
+      'Commands or script sent to the chosen terminal';
+
+  @override
+  String get codeSnippetSave => 'Save';
+
+  @override
+  String get codeSnippetCancel => 'Cancel';
+
+  @override
+  String codeSnippetDeleteConfirm(String name) {
+    return 'Delete “$name”?';
+  }
+
+  @override
+  String get codeSnippetNeedSession =>
+      'Open and connect a terminal session first.';
+
+  @override
+  String get codeSnippetRan => 'Sent to terminal';
+
+  @override
+  String get codeSnippetClickTargetHint =>
+      'Click the terminal window to run in (switch tabs first if needed)';
+
+  @override
+  String get codeSnippetClickToRun => 'Click to run';
+
+  @override
+  String get healthBoardTitle => 'Health Board';
+
+  @override
+  String get healthBoardSessions => 'Sessions';
+
+  @override
+  String get healthBoardActive => 'Active';
+
+  @override
+  String get healthBoardConnecting => 'Connecting';
+
+  @override
+  String get healthBoardErrors => 'Errors';
+
+  @override
+  String get healthBoardPanes => 'Panes';
+
+  @override
+  String get healthBoardCpu => 'CPU';
+
+  @override
+  String get healthBoardMemory => 'Memory';
+
+  @override
+  String get healthBoardDisk => 'Disk';
+
+  @override
+  String get healthBoardLoad => 'Load';
+
+  @override
+  String get healthBoardFetching => 'Fetching remote metrics…';
+
+  @override
+  String get healthBoardMetricsUnavailable =>
+      'Remote metrics unavailable (needs Linux /proc)';
+
+  @override
+  String get healthBoardNoSessions =>
+      'No sessions yet. Connect a host to see remote status here.';
+
+  @override
+  String get healthBoardNoConnected =>
+      'No connected hosts. Connect to view remote CPU, memory, disk, and load.';
+
+  @override
+  String get healthBoardSessionStatus => 'Connection status';
+
+  @override
+  String get healthBoardRefresh => 'Refresh';
+
+  @override
+  String get healthBoardConnected => 'Connected';
+
+  @override
+  String get healthBoardDisconnected => 'Disconnected';
+
+  @override
+  String get healthBoardHost => 'Remote hosts';
+
+  @override
   String get aboutDescription =>
       'Multi-session SSH terminal with SFTP file browsing.';
 

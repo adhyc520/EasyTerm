@@ -194,6 +194,306 @@ abstract class AppLocalizations {
   /// **'Close all tabs'**
   String get menuTabCloseAll;
 
+  /// No description provided for @menuTabDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate Tab'**
+  String get menuTabDuplicate;
+
+  /// No description provided for @menuSplitRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Right'**
+  String get menuSplitRight;
+
+  /// No description provided for @menuSplitLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Left'**
+  String get menuSplitLeft;
+
+  /// No description provided for @menuSplitDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Down'**
+  String get menuSplitDown;
+
+  /// No description provided for @menuSplitUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Up'**
+  String get menuSplitUp;
+
+  /// No description provided for @menuView.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get menuView;
+
+  /// No description provided for @menuCodeSnippets.
+  ///
+  /// In en, this message translates to:
+  /// **'Code Snippets'**
+  String get menuCodeSnippets;
+
+  /// No description provided for @menuHealthBoard.
+  ///
+  /// In en, this message translates to:
+  /// **'Health Board'**
+  String get menuHealthBoard;
+
+  /// No description provided for @paneMenuTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Pane actions'**
+  String get paneMenuTooltip;
+
+  /// No description provided for @paneSplitRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Right'**
+  String get paneSplitRight;
+
+  /// No description provided for @paneSplitLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Left'**
+  String get paneSplitLeft;
+
+  /// No description provided for @paneSplitDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Down'**
+  String get paneSplitDown;
+
+  /// No description provided for @paneSplitUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Split Up'**
+  String get paneSplitUp;
+
+  /// No description provided for @paneClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Pane'**
+  String get paneClose;
+
+  /// No description provided for @codeSnippetsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Code Snippets'**
+  String get codeSnippetsTitle;
+
+  /// No description provided for @codeSnippetsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No snippets yet. Create one to reuse commands or scripts.'**
+  String get codeSnippetsEmpty;
+
+  /// No description provided for @codeSnippetNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New'**
+  String get codeSnippetNew;
+
+  /// No description provided for @codeSnippetEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get codeSnippetEdit;
+
+  /// No description provided for @codeSnippetDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get codeSnippetDelete;
+
+  /// No description provided for @codeSnippetRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Run'**
+  String get codeSnippetRun;
+
+  /// No description provided for @codeSnippetNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get codeSnippetNameLabel;
+
+  /// No description provided for @codeSnippetNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. Restart service'**
+  String get codeSnippetNameHint;
+
+  /// No description provided for @codeSnippetBodyLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Body'**
+  String get codeSnippetBodyLabel;
+
+  /// No description provided for @codeSnippetBodyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Commands or script sent to the chosen terminal'**
+  String get codeSnippetBodyHint;
+
+  /// No description provided for @codeSnippetSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get codeSnippetSave;
+
+  /// No description provided for @codeSnippetCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get codeSnippetCancel;
+
+  /// No description provided for @codeSnippetDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}”?'**
+  String codeSnippetDeleteConfirm(String name);
+
+  /// No description provided for @codeSnippetNeedSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Open and connect a terminal session first.'**
+  String get codeSnippetNeedSession;
+
+  /// No description provided for @codeSnippetRan.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent to terminal'**
+  String get codeSnippetRan;
+
+  /// No description provided for @codeSnippetClickTargetHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click the terminal window to run in (switch tabs first if needed)'**
+  String get codeSnippetClickTargetHint;
+
+  /// No description provided for @codeSnippetClickToRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to run'**
+  String get codeSnippetClickToRun;
+
+  /// No description provided for @healthBoardTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Health Board'**
+  String get healthBoardTitle;
+
+  /// No description provided for @healthBoardSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Sessions'**
+  String get healthBoardSessions;
+
+  /// No description provided for @healthBoardActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get healthBoardActive;
+
+  /// No description provided for @healthBoardConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting'**
+  String get healthBoardConnecting;
+
+  /// No description provided for @healthBoardErrors.
+  ///
+  /// In en, this message translates to:
+  /// **'Errors'**
+  String get healthBoardErrors;
+
+  /// No description provided for @healthBoardPanes.
+  ///
+  /// In en, this message translates to:
+  /// **'Panes'**
+  String get healthBoardPanes;
+
+  /// No description provided for @healthBoardCpu.
+  ///
+  /// In en, this message translates to:
+  /// **'CPU'**
+  String get healthBoardCpu;
+
+  /// No description provided for @healthBoardMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get healthBoardMemory;
+
+  /// No description provided for @healthBoardDisk.
+  ///
+  /// In en, this message translates to:
+  /// **'Disk'**
+  String get healthBoardDisk;
+
+  /// No description provided for @healthBoardLoad.
+  ///
+  /// In en, this message translates to:
+  /// **'Load'**
+  String get healthBoardLoad;
+
+  /// No description provided for @healthBoardFetching.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetching remote metrics…'**
+  String get healthBoardFetching;
+
+  /// No description provided for @healthBoardMetricsUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote metrics unavailable (needs Linux /proc)'**
+  String get healthBoardMetricsUnavailable;
+
+  /// No description provided for @healthBoardNoSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions yet. Connect a host to see remote status here.'**
+  String get healthBoardNoSessions;
+
+  /// No description provided for @healthBoardNoConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No connected hosts. Connect to view remote CPU, memory, disk, and load.'**
+  String get healthBoardNoConnected;
+
+  /// No description provided for @healthBoardSessionStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection status'**
+  String get healthBoardSessionStatus;
+
+  /// No description provided for @healthBoardRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get healthBoardRefresh;
+
+  /// No description provided for @healthBoardConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get healthBoardConnected;
+
+  /// No description provided for @healthBoardDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnected'**
+  String get healthBoardDisconnected;
+
+  /// No description provided for @healthBoardHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote hosts'**
+  String get healthBoardHost;
+
   /// No description provided for @aboutDescription.
   ///
   /// In en, this message translates to:
