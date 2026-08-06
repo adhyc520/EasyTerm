@@ -2,6 +2,7 @@ import 'package:easyterm/services/browser_gateway_rewrite.dart';
 import 'package:easyterm/services/desktop_layout_store.dart';
 import 'package:easyterm/services/remote_browser_backend.dart';
 import 'package:easyterm/services/remote_host_metrics.dart';
+import 'package:easyterm/services/remote_network.dart';
 import 'package:easyterm/services/remote_process_list.dart';
 import 'package:easyterm/util/remote_paths.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -222,8 +223,13 @@ __WB__
 0.25
 __WC__
 0.61
+__WD__
+C:|100000000000|61000000000|39000000000|0.61
+D:|50000000000|10000000000|40000000000|0.2
 __WG__
 2d 5h 10m
+__WH__
+WIN-BOX · Windows Server 2022 · 10.0.20348
 __WZ__
 ''';
       final snap = RemoteHostSnapshot.parseWindows(raw);
@@ -232,6 +238,21 @@ __WZ__
       expect(snap.cpuUsed01, closeTo(0.25, 0.0001));
       expect(snap.diskUsed01, closeTo(0.61, 0.0001));
       expect(snap.uptimeLine, '2d 5h 10m');
+      expect(snap.hostInfoLine, contains('WIN-BOX'));
+      expect(snap.mounts, hasLength(2));
+      expect(snap.mounts.first.mountPoint, 'C:');
+      expect(snap.mounts.first.used01, closeTo(0.61, 0.0001));
+    });
+
+    test('parseDfMounts skips virtual mounts', () {
+      const raw = '''
+/dev/sda1       10485760  5242880  5242880  50% /
+tmpfs             102400     100   102300   1% /run
+/dev/sdb1       20971520 18874368  2097152  90% /data
+''';
+      final mounts = parseDfMounts(raw);
+      expect(mounts.map((m) => m.mountPoint).toList(), ['/data', '/']);
+      expect(mounts.first.used01, closeTo(0.9, 0.001));
     });
 
     test('isSafeRemoteServiceName', () {
@@ -240,6 +261,113 @@ __WZ__
       expect(isSafeRemoteServiceName('Spooler'), isTrue);
       expect(isSafeRemoteServiceName('bad;rm -rf'), isFalse);
       expect(isSafeRemoteServiceName('a b'), isFalse);
+    });
+  });
+
+  group('remote network', () {
+    test('parseProcNetDev', () {
+      const raw = '''
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0
+  eth0: 5000000 100 0 0 0 0 0 0 8000000 200 0 0 0 0 0 0
+''';
+      final list = parseProcNetDev(raw);
+      expect(list, hasLength(2));
+      expect(list.first.name, 'eth0');
+      expect(list.first.rxBytes, 5000000);
+      expect(list.first.txBytes, 8000000);
+      expect(list.last.isLoopback, isTrue);
+    });
+
+    test('parseLinuxListenSockets ss and netstat', () {
+      const ss = '''
+LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+LISTEN 0 511 *:80 *:*
+UNCONN 0 0 127.0.0.1:323 0.0.0.0:*
+''';
+      final a = parseLinuxListenSockets(ss);
+      expect(a.map((s) => s.port).toList(), [22, 80, 323]);
+      expect(a.first.protocol, 'tcp');
+      expect(a.firstWhere((s) => s.port == 323).protocol, 'udp');
+
+      const netstat = '''
+Active Internet connections
+Proto Recv-Q Send-Q Local Address Foreign Address State
+tcp        0      0 0.0.0.0:443           0.0.0.0:*               LISTEN
+udp        0      0 0.0.0.0:53            0.0.0.0:*
+''';
+      final b = parseLinuxListenSockets(netstat);
+      expect(b.any((s) => s.port == 443 && s.protocol.startsWith('tcp')), isTrue);
+      expect(b.any((s) => s.port == 53 && s.protocol.startsWith('udp')), isTrue);
+    });
+
+    test('parseWindows network bundle', () {
+      const raw = '''
+__IF__
+Ethernet|1000000|2000000
+Loopback Pseudo-Interface 1|100|200
+__LISTEN__
+tcp|0.0.0.0|22|1234
+tcp|127.0.0.1|3389|5678
+udp|0.0.0.0|53|90
+__SUM__
+Established=12 Listen=4 TimeWait=3
+__Z__
+''';
+      final snap = parseWindowsNetworkBundle(raw);
+      expect(snap, isNotNull);
+      expect(snap!.interfaces.first.name, 'Ethernet');
+      expect(snap.listeners, hasLength(3));
+      expect(snap.tcpEstablished, 12);
+      expect(snap.tcpListen, 4);
+      expect(snap.tcpTimeWait, 3);
+    });
+
+    test('ratesAgainst needs prior sample', () {
+      final t0 = DateTime.utc(2026, 1, 1, 0, 0, 0);
+      final t1 = DateTime.utc(2026, 1, 1, 0, 0, 2);
+      final a = RemoteNetworkSnapshot(
+        os: RemoteOsKind.linux,
+        interfaces: const [
+          RemoteNetIface(name: 'eth0', rxBytes: 1000, txBytes: 2000),
+        ],
+        listeners: const [],
+        sampledAt: t0,
+      );
+      final b = RemoteNetworkSnapshot(
+        os: RemoteOsKind.linux,
+        interfaces: const [
+          RemoteNetIface(name: 'eth0', rxBytes: 3000, txBytes: 6000),
+        ],
+        listeners: const [],
+        sampledAt: t1,
+      );
+      final rates = b.ratesAgainst(a);
+      expect(rates, hasLength(1));
+      expect(rates.first.rxBytesPerSec, closeTo(1000, 0.1));
+      expect(rates.first.txBytesPerSec, closeTo(2000, 0.1));
+      expect(formatNetRate(1024), '1.0 KB/s');
+      expect(formatNetBytes(5 * 1024 * 1024), '5.0 MB');
+    });
+
+    test('parseLinuxNetworkBundle listen + summary', () {
+      const raw = '''
+__IF__
+eth0: 1000 1 0 0 0 0 0 0 2000 2 0 0 0 0 0 0
+__LISTEN__
+LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
+__SUM__
+TCP:   12 (estab 3, closed 4, orphaned 0, synrecv 0, timewait 2/0), ports 0
+Listen       8      20
+__Z__
+''';
+      final snap = parseLinuxNetworkBundle(raw)!;
+      expect(snap.listeners, hasLength(1));
+      expect(snap.tcpEstablished, 3);
+      expect(snap.tcpListen, 8);
+      expect(formatNetBytes(500), '500 B');
+      expect(formatNetRate(null), '—');
     });
   });
 

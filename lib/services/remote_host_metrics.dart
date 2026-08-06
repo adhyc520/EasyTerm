@@ -1,6 +1,25 @@
 import 'remote_process_list.dart';
 import 'ssh_workspace_controller.dart';
 
+/// 磁盘挂载点用量。
+class RemoteDiskMount {
+  const RemoteDiskMount({
+    required this.filesystem,
+    required this.mountPoint,
+    required this.used01,
+    this.sizeBytes,
+    this.usedBytes,
+    this.availBytes,
+  });
+
+  final String filesystem;
+  final String mountPoint;
+  final double used01;
+  final int? sizeBytes;
+  final int? usedBytes;
+  final int? availBytes;
+}
+
 /// 远端主机一次采样的资源快照（Linux：/proc；Windows：CIM/WMI）。
 class RemoteHostSnapshot {
   const RemoteHostSnapshot({
@@ -13,6 +32,8 @@ class RemoteHostSnapshot {
     this.dfSpaceLine,
     this.dfInodeLine,
     this.uptimeLine,
+    this.hostInfoLine,
+    this.mounts = const [],
   });
 
   final double? memUsed01;
@@ -24,6 +45,8 @@ class RemoteHostSnapshot {
   final String? dfSpaceLine;
   final String? dfInodeLine;
   final String? uptimeLine;
+  final String? hostInfoLine;
+  final List<RemoteDiskMount> mounts;
 
   /// Linux 多段标记输出。
   static RemoteHostSnapshot? parse(String raw) {
@@ -35,6 +58,8 @@ class RemoteHostSnapshot {
     const e = '__E__';
     const f = '__F__';
     const g = '__G__';
+    const h = '__H__';
+    const i = '__I__';
     const z = '__Z__';
     if (!raw.contains(a)) return null;
 
@@ -56,7 +81,13 @@ class RemoteHostSnapshot {
     final dfPi = section(d, e);
     final loadBlock = section(e, f);
     final nprocBlock = section(f, g);
-    final uptimeBlock = section(g, z);
+    // 兼容旧输出（无 __H__/__I__）：uptime 直至 __Z__
+    final hasMounts = raw.contains(h);
+    final uptimeBlock = hasMounts ? section(g, h) : section(g, z);
+    final mountsBlock = hasMounts ? section(h, i) : '';
+    final hostBlock = hasMounts
+        ? (raw.contains(i) ? section(i, z) : '')
+        : '';
 
     final mem = _parseMeminfo(memBlock);
     final cpu = _parseVmstatIdle(vmBlock);
@@ -74,6 +105,12 @@ class RemoteHostSnapshot {
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .join(' ');
+    final mounts = parseDfMounts(mountsBlock);
+    final hostInfo = hostBlock
+        .split(RegExp(r'[\r\n]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .join(' · ');
 
     return RemoteHostSnapshot(
       memUsed01: mem,
@@ -85,10 +122,12 @@ class RemoteHostSnapshot {
       dfSpaceLine: dfP.isEmpty ? null : dfP.replaceAll('|', ' '),
       dfInodeLine: dfPi.isEmpty ? null : dfPi.replaceAll('|', ' '),
       uptimeLine: uptime.isEmpty ? null : uptime,
+      hostInfoLine: hostInfo.isEmpty ? null : hostInfo,
+      mounts: mounts,
     );
   }
 
-  /// Windows 标记输出：`__WA__ mem __WB__ cpu __WC__ disk __WG__ uptime __WZ__`
+  /// Windows：`__WA__ mem __WB__ cpu __WC__ disk __WD__ mounts __WG__ uptime __WH__ host __WZ__`
   static RemoteHostSnapshot? parseWindows(String raw) {
     if (raw.isEmpty || !raw.contains('__WA__')) return null;
 
@@ -114,14 +153,32 @@ class RemoteHostSnapshot {
 
     final mem = ratio(section('__WA__', '__WB__'));
     final cpu = ratio(section('__WB__', '__WC__'));
-    final disk = ratio(section('__WC__', '__WG__'));
-    final uptime = section('__WG__', '__WZ__')
+    final hasMounts = raw.contains('__WD__');
+    final disk = ratio(
+      hasMounts ? section('__WC__', '__WD__') : section('__WC__', '__WG__'),
+    );
+    final mounts = hasMounts
+        ? parseWindowsMountLines(section('__WD__', '__WG__'))
+        : const <RemoteDiskMount>[];
+    final hasHost = raw.contains('__WH__');
+    final uptime = section('__WG__', hasHost ? '__WH__' : '__WZ__')
         .split('\n')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .join(' ');
+    final hostInfo = hasHost
+        ? section('__WH__', '__WZ__')
+            .split(RegExp(r'[\r\n]+'))
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .join(' · ')
+        : '';
 
-    if (mem == null && cpu == null && disk == null && uptime.isEmpty) {
+    if (mem == null &&
+        cpu == null &&
+        disk == null &&
+        uptime.isEmpty &&
+        mounts.isEmpty) {
       return null;
     }
 
@@ -130,6 +187,8 @@ class RemoteHostSnapshot {
       cpuUsed01: cpu,
       diskUsed01: disk,
       uptimeLine: uptime.isEmpty ? null : uptime,
+      hostInfoLine: hostInfo.isEmpty ? null : hostInfo,
+      mounts: mounts,
     );
   }
 }
@@ -150,15 +209,19 @@ printf '__F__\n'
 nproc 2>/dev/null || echo 1
 printf '__G__\n'
 uptime 2>/dev/null || true
+printf '__H__\n'
+df -P 2>/dev/null | tail -n +2 | head -n 40
+printf '__I__\n'
+hostname 2>/dev/null; uname -srm 2>/dev/null
 printf '__Z__\n'
 ''';
 
 String get kRemoteStatusBundleOneLine =>
     kRemoteStatusBundle.replaceAll('\n', ';');
 
-/// Windows：内存 / CPU / C: 磁盘占用 + 运行时间。
+/// Windows：内存 / CPU / C: 磁盘 + 各盘符 + 运行时间 + 主机名。
 const String kWindowsStatusBundle =
-    r'''powershell -NoProfile -NonInteractive -Command "$os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $mem=1-($os.FreePhysicalMemory/[double]$os.TotalVisibleMemorySize); $disk=0; if($d -and $d.Size -gt 0){$disk=1-($d.FreeSpace/[double]$d.Size)}; $up=(Get-Date)-$os.LastBootUpTime; Write-Output '__WA__'; Write-Output ([math]::Round($mem,4)); Write-Output '__WB__'; Write-Output ([math]::Round(($cpu/100.0),4)); Write-Output '__WC__'; Write-Output ([math]::Round($disk,4)); Write-Output '__WG__'; Write-Output ($up.Days.ToString()+'d '+$up.Hours.ToString()+'h '+$up.Minutes.ToString()+'m'); Write-Output '__WZ__'"''';
+    r'''powershell -NoProfile -NonInteractive -Command "$os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $mem=1-($os.FreePhysicalMemory/[double]$os.TotalVisibleMemorySize); $disk=0; if($d -and $d.Size -gt 0){$disk=1-($d.FreeSpace/[double]$d.Size)}; $up=(Get-Date)-$os.LastBootUpTime; Write-Output '__WA__'; Write-Output ([math]::Round($mem,4)); Write-Output '__WB__'; Write-Output ([math]::Round(($cpu/100.0),4)); Write-Output '__WC__'; Write-Output ([math]::Round($disk,4)); Write-Output '__WD__'; Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | ForEach-Object { if($_.Size -gt 0){ $u=1-($_.FreeSpace/[double]$_.Size); $_.DeviceID + '|' + [int64]$_.Size + '|' + [int64]($_.Size-$_.FreeSpace) + '|' + [int64]$_.FreeSpace + '|' + ([math]::Round($u,4)) } }; Write-Output '__WG__'; Write-Output ($up.Days.ToString()+'d '+$up.Hours.ToString()+'h '+$up.Minutes.ToString()+'m'); Write-Output '__WH__'; Write-Output ($env:COMPUTERNAME + ' · ' + $os.Caption + ' · ' + $os.Version); Write-Output '__WZ__'"''';
 
 Future<RemoteHostSnapshot?> fetchRemoteHostSnapshot(
   SshWorkspaceController controller, {
@@ -250,4 +313,93 @@ List<double>? _parseLoadavg(String block) {
   final c = double.tryParse(parts[2]);
   if (a == null || b == null || c == null) return null;
   return [a, b, c];
+}
+
+/// 解析 `df -P` 数据行（Filesystem 1024-blocks Used Available Capacity Mounted）。
+List<RemoteDiskMount> parseDfMounts(String raw) {
+  if (raw.isEmpty) return const [];
+  final out = <RemoteDiskMount>[];
+  final skip = RegExp(
+    r'^/(dev|sys|proc|run)(/|$)',
+    caseSensitive: false,
+  );
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trim();
+    if (t.isEmpty) continue;
+    final parts = t.split(RegExp(r'\s+'));
+    if (parts.length < 6) continue;
+    final fs = parts[0];
+    final sizeKb = int.tryParse(parts[1]);
+    final usedKb = int.tryParse(parts[2]);
+    final availKb = int.tryParse(parts[3]);
+    final pct = _parseDfPercent(parts[4].endsWith('%') ? parts[4] : '${parts[4]}%') ??
+        _parseDfPercent(parts[4]);
+    final mount = parts.sublist(5).join(' ');
+    if (mount.isEmpty || skip.hasMatch(mount)) continue;
+    // 跳过 tmpfs/devtmpfs 等虚拟盘（除非挂在 /）
+    final fsLower = fs.toLowerCase();
+    if ((fsLower.contains('tmpfs') || fsLower.contains('devtmpfs')) &&
+        mount != '/') {
+      continue;
+    }
+    final used01 = pct ??
+        (sizeKb != null && sizeKb > 0 && usedKb != null
+            ? (usedKb / sizeKb).clamp(0.0, 1.0)
+            : null);
+    if (used01 == null) continue;
+    out.add(
+      RemoteDiskMount(
+        filesystem: fs,
+        mountPoint: mount,
+        used01: used01,
+        sizeBytes: sizeKb == null ? null : sizeKb * 1024,
+        usedBytes: usedKb == null ? null : usedKb * 1024,
+        availBytes: availKb == null ? null : availKb * 1024,
+      ),
+    );
+  }
+  out.sort((a, b) => b.used01.compareTo(a.used01));
+  return out;
+}
+
+/// `DeviceID|Size|Used|Free|used01`
+List<RemoteDiskMount> parseWindowsMountLines(String raw) {
+  if (raw.isEmpty) return const [];
+  final out = <RemoteDiskMount>[];
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trim();
+    if (t.isEmpty || t.startsWith('__')) continue;
+    final parts = t.split('|');
+    if (parts.length < 5) continue;
+    final id = parts[0].trim();
+    final size = int.tryParse(parts[1].trim());
+    final used = int.tryParse(parts[2].trim());
+    final free = int.tryParse(parts[3].trim());
+    final ratio = double.tryParse(parts[4].trim());
+    if (id.isEmpty || ratio == null) continue;
+    out.add(
+      RemoteDiskMount(
+        filesystem: id,
+        mountPoint: id,
+        used01: ratio.clamp(0.0, 1.0),
+        sizeBytes: size,
+        usedBytes: used,
+        availBytes: free,
+      ),
+    );
+  }
+  out.sort((a, b) => b.used01.compareTo(a.used01));
+  return out;
+}
+
+String formatDiskBytes(int? bytes) {
+  if (bytes == null || bytes < 0) return '—';
+  if (bytes < 1024) return '$bytes B';
+  final kb = bytes / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(0)} KB';
+  final mb = kb / 1024;
+  if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
+  final gb = mb / 1024;
+  if (gb < 1024) return '${gb.toStringAsFixed(1)} GB';
+  return '${(gb / 1024).toStringAsFixed(2)} TB';
 }

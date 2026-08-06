@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/remote_host_metrics.dart';
+import '../../services/remote_network.dart';
 import '../../services/remote_process_list.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
@@ -12,7 +13,9 @@ enum _ProcSort { name, pid, user, cpu, memory }
 
 enum _SvcSort { name, status, startType }
 
-/// 任务管理器：进程 / 性能 / 服务，贴近 Windows 任务管理器结构。
+enum _NetSort { port, protocol, address, process }
+
+/// 任务管理器：进程 / 性能 / 网络 / 服务。
 class TaskManagerApp extends StatefulWidget {
   const TaskManagerApp({
     super.key,
@@ -51,6 +54,17 @@ class _TaskManagerAppState extends State<TaskManagerApp>
   final List<double> _memHist = [];
   static const int _histMax = 36;
 
+  // Network
+  RemoteNetworkSnapshot? _netSnap;
+  RemoteNetworkSnapshot? _netPrev;
+  String _netFilter = '';
+  _NetSort _netSort = _NetSort.port;
+  bool _netSortAsc = true;
+  bool _netHideLoopback = true;
+  final _netFilterCtrl = TextEditingController();
+  final List<double> _rxHist = [];
+  final List<double> _txHist = [];
+
   // Services
   List<RemoteService> _services = const [];
   String _svcFilter = '';
@@ -66,7 +80,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _tabs.addListener(_onTab);
     widget.wm.addListener(_onWm);
     widget.controller.addListener(_onController);
@@ -81,6 +95,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     _tabs.dispose();
     _procFilterCtrl.dispose();
     _svcFilterCtrl.dispose();
+    _netFilterCtrl.dispose();
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
@@ -111,6 +126,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       case 1:
         return const Duration(seconds: 2);
       case 2:
+        return const Duration(seconds: 3);
+      case 3:
         return const Duration(seconds: 8);
       default:
         return const Duration(seconds: 3);
@@ -138,7 +155,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     setState(() {
       _loading = (_tabs.index == 0 && _processes.isEmpty) ||
           (_tabs.index == 1 && _snap == null) ||
-          (_tabs.index == 2 && _services.isEmpty);
+          (_tabs.index == 2 && _netSnap == null) ||
+          (_tabs.index == 3 && _services.isEmpty);
       _error = null;
     });
     try {
@@ -148,6 +166,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
         case 1:
           await _loadPerf();
         case 2:
+          await _loadNetwork();
+        case 3:
           await _loadServices();
       }
     } catch (e) {
@@ -209,6 +229,53 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       _snap = snap;
       _loading = false;
       _error = null;
+    });
+  }
+
+  Future<void> _loadNetwork() async {
+    final snap = await fetchRemoteNetworkSnapshot(
+      widget.controller,
+      osHint: _os,
+    );
+    if (!mounted) return;
+    if (snap == null) {
+      setState(() {
+        _error = '无法获取网络信息';
+        _loading = false;
+      });
+      return;
+    }
+    if (snap.os != RemoteOsKind.unknown) _os = snap.os;
+    final prev = _netSnap;
+    double rxTotal = 0;
+    double txTotal = 0;
+    var haveRate = false;
+    for (final r in snap.ratesAgainst(prev)) {
+      if (r.iface.isLoopback) continue;
+      if (r.rxBytesPerSec != null) {
+        rxTotal += r.rxBytesPerSec!;
+        haveRate = true;
+      }
+      if (r.txBytesPerSec != null) {
+        txTotal += r.txBytesPerSec!;
+        haveRate = true;
+      }
+    }
+    if (haveRate) {
+      _rxHist.add(rxTotal);
+      _txHist.add(txTotal);
+      if (_rxHist.length > _histMax) _rxHist.removeAt(0);
+      if (_txHist.length > _histMax) _txHist.removeAt(0);
+    }
+    setState(() {
+      _netPrev = prev;
+      _netSnap = snap;
+      _loading = false;
+      _error = snap.interfaces.isEmpty && snap.listeners.isEmpty
+          ? (_os == RemoteOsKind.windows
+              ? '无网络数据（需 PowerShell / Get-NetAdapterStatistics）'
+              : '无网络数据（需 /proc/net/dev 或 ss）')
+          : null;
     });
   }
 
@@ -319,6 +386,53 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       } else {
         _svcSort = col;
         _svcSortAsc = col == _SvcSort.name;
+      }
+    });
+  }
+
+  List<RemoteListenSocket> get _visibleListeners {
+    final snap = _netSnap;
+    if (snap == null) return const [];
+    final q = _netFilter.trim().toLowerCase();
+    var list = snap.listeners;
+    if (q.isNotEmpty) {
+      list = list
+          .where(
+            (s) =>
+                '${s.port}'.contains(q) ||
+                s.protocol.toLowerCase().contains(q) ||
+                s.address.toLowerCase().contains(q) ||
+                s.endpoint.toLowerCase().contains(q) ||
+                (s.process?.toLowerCase().contains(q) ?? false) ||
+                (s.pid != null && '${s.pid}'.contains(q)),
+          )
+          .toList();
+    } else {
+      list = List<RemoteListenSocket>.from(list);
+    }
+    int cmp(RemoteListenSocket a, RemoteListenSocket b) {
+      final int r = switch (_netSort) {
+        _NetSort.port => a.port.compareTo(b.port),
+        _NetSort.protocol => a.protocol.compareTo(b.protocol),
+        _NetSort.address => a.address.compareTo(b.address),
+        _NetSort.process => (a.process ?? '${a.pid ?? ''}')
+            .toLowerCase()
+            .compareTo((b.process ?? '${b.pid ?? ''}').toLowerCase()),
+      };
+      return _netSortAsc ? r : -r;
+    }
+
+    list.sort(cmp);
+    return list;
+  }
+
+  void _toggleNetSort(_NetSort col) {
+    setState(() {
+      if (_netSort == col) {
+        _netSortAsc = !_netSortAsc;
+      } else {
+        _netSort = col;
+        _netSortAsc = col == _NetSort.port || col == _NetSort.protocol;
       }
     });
   }
@@ -473,6 +587,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
               tabs: const [
                 Tab(text: '进程'),
                 Tab(text: '性能'),
+                Tab(text: '网络'),
                 Tab(text: '服务'),
               ],
             ),
@@ -513,6 +628,24 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                   onEndTaskPid: (pid) => unawaited(_endTask(pidOverride: pid)),
                 ),
                 _PerformancePane(snap: _snap, cpuHist: _cpuHist, memHist: _memHist),
+                _NetworkPane(
+                  snap: _netSnap,
+                  prev: _netPrev,
+                  rates: _netSnap?.ratesAgainst(_netPrev) ?? const [],
+                  rxHist: _rxHist,
+                  txHist: _txHist,
+                  filterCtrl: _netFilterCtrl,
+                  filter: _netFilter,
+                  onFilter: (v) => setState(() => _netFilter = v),
+                  listeners: _visibleListeners,
+                  totalListeners: _netSnap?.listeners.length ?? 0,
+                  sort: _netSort,
+                  sortAsc: _netSortAsc,
+                  onSort: _toggleNetSort,
+                  hideLoopback: _netHideLoopback,
+                  onHideLoopback: (v) => setState(() => _netHideLoopback = v),
+                  connected: _connected,
+                ),
                 _ServicesPane(
                   filterCtrl: _svcFilterCtrl,
                   filter: _svcFilter,
@@ -1008,8 +1141,21 @@ class _PerformancePane extends StatelessWidget {
             ),
           ],
         ),
-        if (s?.uptimeLine != null) ...[
+        if (s?.hostInfoLine != null) ...[
           const SizedBox(height: 16),
+          Text('主机', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          const SizedBox(height: 4),
+          Text(
+            s!.hostInfoLine!,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: wb.secondaryText,
+            ),
+          ),
+        ],
+        if (s?.uptimeLine != null) ...[
+          const SizedBox(height: 12),
           Text('运行时间', style: TextStyle(fontSize: 11, color: wb.textMuted)),
           const SizedBox(height: 4),
           Text(
@@ -1021,7 +1167,12 @@ class _PerformancePane extends StatelessWidget {
             ),
           ),
         ],
-        if (s?.dfSpaceLine != null) ...[
+        if (s != null && s.mounts.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text('磁盘挂载', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          const SizedBox(height: 8),
+          _MountBars(mounts: s.mounts),
+        ] else if (s?.dfSpaceLine != null) ...[
           const SizedBox(height: 12),
           Text('磁盘详情', style: TextStyle(fontSize: 11, color: wb.textMuted)),
           const SizedBox(height: 4),
@@ -1036,7 +1187,7 @@ class _PerformancePane extends StatelessWidget {
         ],
         const SizedBox(height: 16),
         Text(
-          'Linux：/proc + df；Windows：CIM（内存 / CPU / C: 磁盘）。',
+          'Linux：/proc + df；Windows：CIM（内存 / CPU / 逻辑磁盘）。',
           style: TextStyle(fontSize: 11, color: wb.textMuted),
         ),
       ],
@@ -1155,6 +1306,475 @@ class _SparkPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _SparkPainter old) =>
       old.values != values || old.color != color;
+}
+
+class _MountBars extends StatelessWidget {
+  const _MountBars({required this.mounts});
+
+  final List<RemoteDiskMount> mounts;
+
+  Color _tone(BuildContext context, double t) {
+    if (t >= 0.9) return const Color(0xFFEF4444);
+    if (t >= 0.75) return const Color(0xFFEAB308);
+    return context.wb.online;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Column(
+      children: [
+        for (final m in mounts.take(12))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        m.mountPoint,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          color: wb.primaryText,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${(m.used01 * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: _tone(context, m.used01),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${formatDiskBytes(m.usedBytes)} / ${formatDiskBytes(m.sizeBytes)}'
+                  '${m.filesystem != m.mountPoint ? ' · ${m.filesystem}' : ''}',
+                  style: TextStyle(fontSize: 11, color: wb.textMuted),
+                ),
+                const SizedBox(height: 4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: m.used01.clamp(0.0, 1.0),
+                    minHeight: 5,
+                    backgroundColor: wb.border,
+                    color: _tone(context, m.used01),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Network
+// ---------------------------------------------------------------------------
+
+class _NetworkPane extends StatelessWidget {
+  const _NetworkPane({
+    required this.snap,
+    required this.prev,
+    required this.rates,
+    required this.rxHist,
+    required this.txHist,
+    required this.filterCtrl,
+    required this.filter,
+    required this.onFilter,
+    required this.listeners,
+    required this.totalListeners,
+    required this.sort,
+    required this.sortAsc,
+    required this.onSort,
+    required this.hideLoopback,
+    required this.onHideLoopback,
+    required this.connected,
+  });
+
+  final RemoteNetworkSnapshot? snap;
+  final RemoteNetworkSnapshot? prev;
+  final List<RemoteNetIfaceRate> rates;
+  final List<double> rxHist;
+  final List<double> txHist;
+  final TextEditingController filterCtrl;
+  final String filter;
+  final ValueChanged<String> onFilter;
+  final List<RemoteListenSocket> listeners;
+  final int totalListeners;
+  final _NetSort sort;
+  final bool sortAsc;
+  final ValueChanged<_NetSort> onSort;
+  final bool hideLoopback;
+  final ValueChanged<bool> onHideLoopback;
+  final bool connected;
+
+  List<double> _norm(List<double> hist) {
+    if (hist.isEmpty) return hist;
+    var max = 0.0;
+    for (final v in hist) {
+      if (v > max) max = v;
+    }
+    if (max <= 0) return List<double>.filled(hist.length, 0);
+    return [for (final v in hist) (v / max).clamp(0.0, 1.0)];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final s = snap;
+    final visibleRates = [
+      for (final r in rates)
+        if (!hideLoopback || !r.iface.isLoopback) r,
+    ];
+
+    double? rxSum;
+    double? txSum;
+    for (final r in visibleRates) {
+      if (r.rxBytesPerSec != null) {
+        rxSum = (rxSum ?? 0) + r.rxBytesPerSec!;
+      }
+      if (r.txBytesPerSec != null) {
+        txSum = (txSum ?? 0) + r.txBytesPerSec!;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _PerfCard(
+                label: '下行',
+                value: formatNetRate(rxSum),
+                history: _norm(rxHist),
+              ),
+              _PerfCard(
+                label: '上行',
+                value: formatNetRate(txSum),
+                history: _norm(txHist),
+              ),
+              _PerfCard(
+                label: '已建立',
+                value: s?.tcpEstablished?.toString() ?? '—',
+              ),
+              _PerfCard(
+                label: '监听',
+                value: s?.tcpListen?.toString() ??
+                    (s == null ? '—' : '${s.listeners.length}'),
+              ),
+              _PerfCard(
+                label: 'TIME_WAIT',
+                value: s?.tcpTimeWait?.toString() ?? '—',
+              ),
+            ],
+          ),
+        ),
+        if (visibleRates.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
+            child: Row(
+              children: [
+                Text('网卡', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+                const Spacer(),
+                FilterChip(
+                  label: const Text('隐藏回环', style: TextStyle(fontSize: 11)),
+                  selected: hideLoopback,
+                  onSelected: onHideLoopback,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: Column(
+              children: [
+                for (final r in visibleRates.take(8))
+                  _IfaceRow(rate: r),
+              ],
+            ),
+          ),
+        ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(
+            children: [
+              Text(
+                filter.isEmpty
+                    ? '$totalListeners 个监听端口'
+                    : '${listeners.length} / $totalListeners',
+                style: TextStyle(fontSize: 11, color: wb.textMuted),
+              ),
+              const Spacer(),
+              if (prev == null && s != null)
+                Text(
+                  '速率需再采一次样',
+                  style: TextStyle(fontSize: 11, color: wb.textMuted),
+                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: TextField(
+            controller: filterCtrl,
+            onChanged: onFilter,
+            style: TextStyle(fontSize: 13, color: wb.primaryText),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: '筛选端口 / 地址 / 协议 / PID',
+              hintStyle: TextStyle(color: wb.textMuted, fontSize: 13),
+              prefixIcon: Icon(Icons.search, size: 18, color: wb.textMuted),
+              filled: true,
+              fillColor: wb.panel,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: wb.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: wb.border),
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              _NetHeader(
+                label: '协议',
+                width: 56,
+                active: sort == _NetSort.protocol,
+                asc: sortAsc,
+                onTap: () => onSort(_NetSort.protocol),
+              ),
+              _NetHeader(
+                label: '端口',
+                width: 64,
+                active: sort == _NetSort.port,
+                asc: sortAsc,
+                onTap: () => onSort(_NetSort.port),
+              ),
+              Expanded(
+                child: _NetHeader(
+                  label: '地址',
+                  active: sort == _NetSort.address,
+                  asc: sortAsc,
+                  onTap: () => onSort(_NetSort.address),
+                ),
+              ),
+              _NetHeader(
+                label: '进程',
+                width: 72,
+                alignEnd: true,
+                active: sort == _NetSort.process,
+                asc: sortAsc,
+                onTap: () => onSort(_NetSort.process),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: !connected && s == null
+              ? Center(
+                  child: Text('未连接', style: TextStyle(color: wb.textMuted)),
+                )
+              : listeners.isEmpty
+                  ? Center(
+                      child: Text(
+                        connected ? '无匹配监听端口' : '未连接',
+                        style: TextStyle(color: wb.textMuted),
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: listeners.length,
+                      itemBuilder: (context, i) {
+                        final sock = listeners[i];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 1,
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 56,
+                                child: Text(
+                                  sock.protocol,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    color: wb.secondaryText,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 64,
+                                child: Text(
+                                  '${sock.port}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.w600,
+                                    color: wb.primaryText,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  sock.address,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    color: wb.secondaryText,
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 72,
+                                child: Text(
+                                  sock.process ??
+                                      (sock.pid != null ? '${sock.pid}' : '—'),
+                                  textAlign: TextAlign.right,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    color: wb.textMuted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+}
+
+class _IfaceRow extends StatelessWidget {
+  const _IfaceRow({required this.rate});
+
+  final RemoteNetIfaceRate rate;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final i = rate.iface;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              i.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: wb.primaryText,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '↓ ${formatNetRate(rate.rxBytesPerSec)}  ·  ↑ ${formatNetRate(rate.txBytesPerSec)}',
+              style: TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: wb.secondaryText,
+              ),
+            ),
+          ),
+          Text(
+            '累计 ${formatNetBytes(i.rxBytes + i.txBytes)}',
+            style: TextStyle(fontSize: 11, color: wb.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetHeader extends StatelessWidget {
+  const _NetHeader({
+    required this.label,
+    required this.active,
+    required this.asc,
+    required this.onTap,
+    this.width,
+    this.alignEnd = false,
+  });
+
+  final String label;
+  final bool active;
+  final bool asc;
+  final VoidCallback onTap;
+  final double? width;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final child = InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: Row(
+          mainAxisAlignment:
+              alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                color: active ? wb.accentBlue : wb.textMuted,
+              ),
+            ),
+            if (active)
+              Icon(
+                asc ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 12,
+                color: wb.accentBlue,
+              ),
+          ],
+        ),
+      ),
+    );
+    if (width != null) return SizedBox(width: width, child: child);
+    return child;
+  }
 }
 
 // ---------------------------------------------------------------------------
