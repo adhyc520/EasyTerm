@@ -92,6 +92,16 @@ bool localFileExistsSync(String path) {
   }
 }
 
+/// 文件或目录是否存在（剪贴板物化后校验）。
+bool localPathExistsSync(String path) {
+  try {
+    return FileSystemEntity.typeSync(path, followLinks: false) !=
+        FileSystemEntityType.notFound;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ─── 远端冲突探测与覆盖删除 ───────────────────────────────────────────────────
 
 /// 探测当前远程目录下是否已有与本地 [localPath] 最后一级同名的项。

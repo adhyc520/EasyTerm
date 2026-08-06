@@ -9,18 +9,21 @@ import '../util/remote_paths.dart';
 import 'sftp_browser_host.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
 import 'sftp_planned_upload.dart';
+import 'sftp_remote_copy.dart' as sftp_copy;
 import 'sftp_upload_progress_hooks.dart';
 import 'sftp_upload_task_list.dart';
 import 'ssh_workspace_controller.dart';
 
-/// 桌面文件管理器窗口专用：共享父会话的 [SftpClient]，独立 cwd / entries / 上传队列。
+/// 桌面文件管理器窗口专用：共享父会话的 [SftpClient] 与传输队列，独立 cwd / entries。
 class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   DesktopSftpController(this._workspace, {String? initialCwd}) {
     _remoteCwd = initialCwd ?? _workspace.remoteCwd;
+    _wasConnected = _workspace.connected && !_workspace.dropped;
     _workspace.addListener(_onWorkspace);
   }
 
   final SshWorkspaceController _workspace;
+  bool _wasConnected = false;
 
   /// 底层会话（拖出/临时文件登记等仍走工作区静态与实例方法）。
   SshWorkspaceController get workspace => _workspace;
@@ -29,8 +32,9 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   List<SftpName> _entries = [];
   bool _loadingDir = false;
 
+  /// 与主会话共用，便于桌面「传输」面板统一展示。
   @override
-  final SftpUploadTaskList uploadTasks = SftpUploadTaskList();
+  SftpUploadTaskList get uploadTasks => _workspace.uploadTasks;
 
   @override
   SftpClient? get sftp => _workspace.sftp;
@@ -45,8 +49,21 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   bool get loadingDir => _loadingDir;
 
   void _onWorkspace() {
-    if (!_workspace.connected) {
-      _entries = [];
+    final nowConnected = _workspace.connected && !_workspace.dropped;
+    if (!nowConnected) {
+      _wasConnected = false;
+      if (_entries.isNotEmpty) {
+        _entries = [];
+        notifyListeners();
+      } else {
+        notifyListeners();
+      }
+      return;
+    }
+    // 重连成功：强制刷新当前目录（SFTP 客户端已重建）。
+    if (!_wasConnected) {
+      _wasConnected = true;
+      unawaited(refreshDirectory());
       notifyListeners();
       return;
     }
@@ -64,8 +81,12 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   Future<void> refreshDirectory() async {
     final client = sftp;
     if (client == null) return;
-    _loadingDir = true;
-    notifyListeners();
+    // 已有列表时静默刷新，避免整页 loading；仅首次/切目录后才转圈。
+    final showLoading = _entries.isEmpty;
+    if (showLoading) {
+      _loadingDir = true;
+      notifyListeners();
+    }
     try {
       final list = await client.listdir(_remoteCwd);
       list.sort((a, b) {
@@ -74,15 +95,41 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
         }
         return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
       });
-      _entries = list
+      final next = list
           .where((e) => e.filename != '.' && e.filename != '..')
           .toList();
+      if (!_sameDirectoryEntries(_entries, next)) {
+        _entries = next;
+        if (!showLoading) notifyListeners();
+      }
     } catch (e) {
       debugPrint('DesktopSftpController.refreshDirectory: $e');
     } finally {
-      _loadingDir = false;
-      notifyListeners();
+      if (showLoading) {
+        _loadingDir = false;
+        notifyListeners();
+      }
     }
+  }
+
+  /// 切到新路径：清空当前项，让 UI 走 loading，避免短暂显示旧目录内容。
+  void _beginNavigate(String path) {
+    _remoteCwd = path;
+    _entries = [];
+  }
+
+  static bool _sameDirectoryEntries(List<SftpName> a, List<SftpName> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x.filename != y.filename) return false;
+      if (x.attr.isDirectory != y.attr.isDirectory) return false;
+      if (x.attr.size != y.attr.size) return false;
+      if (x.attr.modifyTime != y.attr.modifyTime) return false;
+    }
+    return true;
   }
 
   @override
@@ -93,7 +140,7 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     try {
       final attrs = await client.stat(path);
       if (attrs.isDirectory) {
-        _remoteCwd = path;
+        _beginNavigate(path);
         await refreshDirectory();
       }
     } catch (e) {
@@ -115,7 +162,11 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     try {
       final attrs = await client.stat(path);
       if (!attrs.isDirectory) return;
-      _remoteCwd = path;
+      if (path == _remoteCwd) {
+        await refreshDirectory();
+        return;
+      }
+      _beginNavigate(path);
       await refreshDirectory();
     } catch (e) {
       debugPrint('DesktopSftpController.navigateToAbsolutePath: $e');
@@ -184,6 +235,98 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
       debugPrint('DesktopSftpController.deleteRemote: $e');
     }
     await refreshDirectory();
+  }
+
+  @override
+  Future<void> createRemoteDirectory(String name) async {
+    final client = sftp;
+    if (client == null) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.contains('/') || trimmed.contains('\\')) {
+      throw ArgumentError('invalid directory name');
+    }
+    final path = remoteJoin(_remoteCwd, trimmed);
+    await client.mkdir(path);
+    await refreshDirectory();
+  }
+
+  @override
+  Future<void> createRemoteFile(String name) async {
+    final client = sftp;
+    if (client == null) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.contains('/') || trimmed.contains('\\')) {
+      throw ArgumentError('invalid file name');
+    }
+    final path = remoteJoin(_remoteCwd, trimmed);
+    final file = await client.open(
+      path,
+      mode:
+          SftpFileOpenMode.create |
+          SftpFileOpenMode.write |
+          SftpFileOpenMode.exclusive,
+    );
+    await file.close();
+    await refreshDirectory();
+  }
+
+  @override
+  Future<void> renameRemote(String oldName, String newName) async {
+    final client = sftp;
+    if (client == null) return;
+    final next = newName.trim();
+    if (next.isEmpty || next.contains('/') || next.contains('\\')) {
+      throw ArgumentError('invalid name');
+    }
+    if (next == oldName) return;
+    final from = remoteJoin(_remoteCwd, oldName);
+    final to = remoteJoin(_remoteCwd, next);
+    await client.rename(from, to);
+    await refreshDirectory();
+  }
+
+  @override
+  Future<List<String>> copyRemoteNamesFrom({
+    required String fromCwd,
+    required List<String> names,
+  }) async {
+    final client = sftp;
+    if (client == null) return const [];
+    try {
+      final pasted = await sftp_copy.sftpCopyRemoteNames(
+        client: client,
+        fromCwd: fromCwd,
+        toCwd: _remoteCwd,
+        names: names,
+      );
+      await refreshDirectory();
+      return pasted;
+    } on sftp_copy.SftpRemotePastePartialFailure {
+      await refreshDirectory();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<String>> moveRemoteNamesFrom({
+    required String fromCwd,
+    required List<String> names,
+  }) async {
+    final client = sftp;
+    if (client == null) return const [];
+    try {
+      final pasted = await sftp_copy.sftpMoveRemoteNames(
+        client: client,
+        fromCwd: fromCwd,
+        toCwd: _remoteCwd,
+        names: names,
+      );
+      await refreshDirectory();
+      return pasted;
+    } on sftp_copy.SftpRemotePastePartialFailure {
+      await refreshDirectory();
+      rethrow;
+    }
   }
 
   SftpUploadProgressHooks _hooks() {
@@ -365,7 +508,6 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   @override
   void dispose() {
     _workspace.removeListener(_onWorkspace);
-    uploadTasks.dispose();
     super.dispose();
   }
 }

@@ -1,14 +1,15 @@
 import 'package:easyterm/services/browser_gateway_rewrite.dart';
-import 'package:easyterm/services/desktop_layout_store.dart';
+import 'package:easyterm/services/desktop_window_size_store.dart';
 import 'package:easyterm/services/remote_browser_backend.dart';
 import 'package:easyterm/services/remote_containers.dart';
+import 'package:easyterm/services/remote_disk_usage.dart';
+import 'package:easyterm/services/remote_gpu.dart';
 import 'package:easyterm/services/remote_host_metrics.dart';
 import 'package:easyterm/services/remote_logs.dart';
 import 'package:easyterm/services/remote_network.dart';
 import 'package:easyterm/services/remote_process_list.dart';
 import 'package:easyterm/util/remote_paths.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   group('parseBrowserAddressBar', () {
@@ -40,6 +41,57 @@ void main() {
       final t = parseBrowserAddressBar('http://box:443/');
       expect(t.port, 443);
       expect(t.https, isTrue);
+    });
+  });
+
+  group('isSshTunneledBrowserHost', () {
+    test('localhost private and single-label are tunneled', () {
+      expect(isSshTunneledBrowserHost('localhost'), isTrue);
+      expect(isSshTunneledBrowserHost('127.0.0.1'), isTrue);
+      expect(isSshTunneledBrowserHost('10.0.0.5'), isTrue);
+      expect(isSshTunneledBrowserHost('192.168.1.1'), isTrue);
+      expect(isSshTunneledBrowserHost('172.16.0.1'), isTrue);
+      expect(isSshTunneledBrowserHost('api'), isTrue);
+      expect(isSshTunneledBrowserHost('svc.internal'), isTrue);
+      expect(isSshTunneledBrowserHost('printer.local'), isTrue);
+    });
+
+    test('public domains are not tunneled', () {
+      expect(isSshTunneledBrowserHost('www.baidu.com'), isFalse);
+      expect(isSshTunneledBrowserHost('google.com'), isFalse);
+      expect(isSshTunneledBrowserHost('cdn.jsdelivr.net'), isFalse);
+      expect(isSshTunneledBrowserHost('8.8.8.8'), isFalse);
+    });
+  });
+
+  group('buildDirectBrowserNavigationUri', () {
+    test('https omits default port', () {
+      final u = buildDirectBrowserNavigationUri(
+        const BrowserAddressTarget(
+          host: 'www.example.com',
+          port: 443,
+          pathAndQuery: '/a?q=1',
+          https: true,
+        ),
+      );
+      expect(u.toString(), 'https://www.example.com/a?q=1');
+    });
+  });
+
+  group('externalBrowserNavigationUri', () {
+    test('public hosts return real http(s) uri', () {
+      final u = externalBrowserNavigationUri('https://www.example.com/a?q=1&b=2');
+      expect(u, isNotNull);
+      expect(u!.scheme, 'https');
+      expect(u.host, 'www.example.com');
+      expect(u.query, contains('q=1'));
+      expect(u.query, contains('b=2'));
+    });
+
+    test('tunneled hosts return null (no gateway leak)', () {
+      expect(externalBrowserNavigationUri('localhost:3000'), isNull);
+      expect(externalBrowserNavigationUri('10.0.0.5:8080'), isNull);
+      expect(externalBrowserNavigationUri('api.internal/health'), isNull);
     });
   });
 
@@ -86,6 +138,16 @@ void main() {
 
       expect(
         rewriteRemoteAbsoluteUrl('/relative', gatewayPort: 9, token: 'tok'),
+        isNull,
+      );
+
+      // Public CDN must stay absolute so WebView loads it locally.
+      expect(
+        rewriteRemoteAbsoluteUrl(
+          'https://cdn.jsdelivr.net/npm/x.js',
+          gatewayPort: 9,
+          token: 'tok',
+        ),
         isNull,
       );
     });
@@ -137,6 +199,21 @@ void main() {
       expect(remoteBasename('/var/www/a.txt'), 'a.txt');
       expect(remoteDirname('/var/www/a.txt'), '/var/www');
       expect(remoteDirname('/'), '/');
+    });
+
+    test('isRemoteAbsolutePath / normalizeRemotePath', () {
+      expect(isRemoteAbsolutePath('/etc/passwd'), isTrue);
+      expect(isRemoteAbsolutePath(r'C:\Windows'), isTrue);
+      expect(isRemoteAbsolutePath('C:/Windows'), isTrue);
+      expect(isRemoteAbsolutePath('relative/path'), isFalse);
+      expect(isRemoteAbsolutePath(''), isFalse);
+      expect(normalizeRemotePath(r'C:/Users/a'), r'C:\Users\a');
+      expect(normalizeRemotePath(r'/var\www'), '/var/www');
+    });
+
+    test('isRemotePathUnderOrEqual', () {
+      expect(isRemotePathUnderOrEqual('/a', '/a/b'), isTrue);
+      expect(isRemotePathUnderOrEqual('/a/b', '/a/b copy'), isFalse);
     });
   });
 
@@ -292,6 +369,36 @@ UNCONN 0 0 127.0.0.1:323 0.0.0.0:*
       expect(a.map((s) => s.port).toList(), [22, 80, 323]);
       expect(a.first.protocol, 'tcp');
       expect(a.firstWhere((s) => s.port == 323).protocol, 'udp');
+      expect(a.first.browserTarget, 'localhost:22');
+      expect(
+        a.firstWhere((s) => s.port == 323).browserTarget,
+        isNull,
+      );
+
+      expect(
+        const RemoteListenSocket(
+          protocol: 'tcp6',
+          address: '2001:db8::1',
+          port: 8080,
+        ).browserTarget,
+        '[2001:db8::1]:8080',
+      );
+      expect(
+        const RemoteListenSocket(
+          protocol: 'tcp6',
+          address: '::',
+          port: 443,
+        ).browserTarget,
+        'localhost:443',
+      );
+      final v6Target = const RemoteListenSocket(
+        protocol: 'tcp6',
+        address: '2001:db8::1',
+        port: 8080,
+      ).browserTarget!;
+      final parsed = parseBrowserAddressBar(v6Target);
+      expect(parsed.host, '2001:db8::1');
+      expect(parsed.port, 8080);
 
       const netstat = '''
 Active Internet connections
@@ -373,60 +480,6 @@ __Z__
     });
   });
 
-  group('DesktopLayoutStore', () {
-    setUp(() {
-      SharedPreferences.setMockInitialValues({});
-    });
-
-    test('save and load round-trip', () async {
-      final store = DesktopLayoutStore();
-      const hostKey = 'u@h:22';
-      final data = DesktopLayoutData(
-        hostKey: hostKey,
-        windows: [
-          DesktopLayoutWindow(
-            type: 'terminal',
-            args: const {'usePrimary': true},
-            rect: const [0.1, 0.1, 0.5, 0.5],
-            state: 'normal',
-            z: 1,
-          ),
-          DesktopLayoutWindow(
-            type: 'browser',
-            args: const {'url': 'localhost:3000', 'mode': 'gateway'},
-            rect: const [0.4, 0.2, 0.4, 0.5],
-            state: 'maximized',
-            z: 2,
-          ),
-        ],
-      );
-      await store.save(data);
-      final loaded = await store.load(hostKey);
-      expect(loaded, isNotNull);
-      expect(loaded!.hostKey, hostKey);
-      expect(loaded.windows, hasLength(2));
-      expect(loaded.windows[0].type, 'terminal');
-      expect(loaded.windows[1].args['url'], 'localhost:3000');
-      expect(loaded.windows[1].state, 'maximized');
-    });
-
-    test('corrupt JSON returns null', () async {
-      SharedPreferences.setMockInitialValues({
-        'desktop_layout_u@h:22': '{not-json',
-      });
-      final store = DesktopLayoutStore();
-      expect(await store.load('u@h:22'), isNull);
-    });
-
-    test('hostKey mismatch returns null', () async {
-      final store = DesktopLayoutStore();
-      await store.save(
-        const DesktopLayoutData(hostKey: 'a@b:22', windows: []),
-      );
-      expect(await store.load('other@b:22'), isNull);
-    });
-  });
-
   group('remote logs', () {
     test('isSafeLogUnit and isSafeLogPath', () {
       expect(isSafeLogUnit('nginx.service'), isTrue);
@@ -494,6 +547,81 @@ a1b2c3d4e5f6|12.5%|40.0%|100MiB / 1GiB|1kB / 2kB
       expect(merged.first.cpuPercent, closeTo(12.5, 0.01));
       expect(merged.first.memPercent, closeTo(40.0, 0.01));
       expect(merged.first.memUsage, contains('100MiB'));
+    });
+  });
+
+  group('remote gpu', () {
+    test('parseNvidiaSmiCsv', () {
+      const raw = '''
+0, NVIDIA GeForce RTX 4090, 45 %, 8192, 24576, 62
+1, Tesla T4, 12, 1024, 15360, 41
+''';
+      final list = parseNvidiaSmiCsv(raw);
+      expect(list, hasLength(2));
+      expect(list.first.index, 0);
+      expect(list.first.name, contains('4090'));
+      expect(list.first.util01, closeTo(0.45, 0.001));
+      expect(list.first.memUsed01, closeTo(8192 / 24576, 0.001));
+      expect(list.first.tempC, 62);
+      expect(list.last.util01, closeTo(0.12, 0.001));
+    });
+
+    test('parseNvidiaSmiCsv ignores junk', () {
+      expect(parseNvidiaSmiCsv('NVIDIA-SMI has failed'), isEmpty);
+      expect(parseNvidiaSmiCsv(''), isEmpty);
+    });
+  });
+
+  group('remote disk usage', () {
+    test('isSafeDiskUsagePath', () {
+      expect(isSafeDiskUsagePath('/var/www'), isTrue);
+      expect(isSafeDiskUsagePath(r'C:\Users'), isTrue);
+      expect(isSafeDiskUsagePath('../etc'), isFalse);
+      expect(isSafeDiskUsagePath('bad;rm'), isFalse);
+    });
+
+    test('parseLinuxDu', () {
+      const raw = '''
+1024\t/var/www/a
+4096\t/var/www/b
+8192\t/var/www
+''';
+      final snap = parseLinuxDu(raw, path: '/var/www');
+      expect(snap.error, isNull);
+      expect(snap.entries.any((e) => e.isTotal && e.bytes == 8192), isTrue);
+      expect(snap.entries.first.name, 'b');
+      expect(snap.entries.first.bytes, 4096);
+      expect(snap.totalBytes, 8192);
+    });
+
+    test('parseWindowsDu', () {
+      const raw = '''
+1048576|Logs
+2097152|Data
+''';
+      final snap = parseWindowsDu(raw, path: r'C:\app');
+      expect(snap.entries, hasLength(3)); // + total
+      expect(snap.totalBytes, 1048576 + 2097152);
+      expect(snap.entries.first.name, 'Data');
+    });
+  });
+
+  group('desktop window size store', () {
+    test('round-trips fractions and clamps', () {
+      final encoded = DesktopWindowSizeStore.encodeSizesJson({
+        'terminal': (w: 0.6, h: 0.4),
+        'files': (w: 2.0, h: 0.01),
+      });
+      final parsed = DesktopWindowSizeStore.parseSizesJson(encoded);
+      expect(parsed['terminal']!.w, closeTo(0.6, 1e-9));
+      expect(parsed['terminal']!.h, closeTo(0.4, 1e-9));
+      expect(parsed['files']!.w, 1.0);
+      expect(parsed['files']!.h, 0.05);
+    });
+
+    test('ignores corrupt payload', () {
+      expect(DesktopWindowSizeStore.parseSizesJson('not-json'), isEmpty);
+      expect(DesktopWindowSizeStore.parseSizesJson('{"x":1}'), isEmpty);
     });
   });
 }

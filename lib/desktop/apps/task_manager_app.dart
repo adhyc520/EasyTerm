@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/remote_network.dart';
 import '../../services/remote_process_list.dart';
@@ -50,6 +51,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   // Performance
   RemoteHostSnapshot? _snap;
+  RemoteGpuSnapshot? _gpu;
   final List<double> _cpuHist = [];
   final List<double> _memHist = [];
   static const int _histMax = 36;
@@ -205,28 +207,36 @@ class _TaskManagerAppState extends State<TaskManagerApp>
   }
 
   Future<void> _loadPerf() async {
-    final snap = await fetchRemoteHostSnapshot(
-      widget.controller,
-      osHint: _os,
-    );
+    final results = await Future.wait([
+      fetchRemoteHostSnapshot(widget.controller, osHint: _os),
+      fetchRemoteGpuSnapshot(widget.controller, osHint: _os),
+    ]);
     if (!mounted) return;
-    if (snap == null) {
+    final snap = results[0] as RemoteHostSnapshot?;
+    final gpu = results[1] as RemoteGpuSnapshot?;
+    if (snap == null && gpu == null) {
       setState(() {
         _error = '无法获取性能指标';
         _loading = false;
       });
       return;
     }
-    if (snap.cpuUsed01 != null) {
-      _cpuHist.add(snap.cpuUsed01!);
-      if (_cpuHist.length > _histMax) _cpuHist.removeAt(0);
+    if (snap != null) {
+      if (snap.cpuUsed01 != null) {
+        _cpuHist.add(snap.cpuUsed01!);
+        if (_cpuHist.length > _histMax) _cpuHist.removeAt(0);
+      }
+      if (snap.memUsed01 != null) {
+        _memHist.add(snap.memUsed01!);
+        if (_memHist.length > _histMax) _memHist.removeAt(0);
+      }
     }
-    if (snap.memUsed01 != null) {
-      _memHist.add(snap.memUsed01!);
-      if (_memHist.length > _histMax) _memHist.removeAt(0);
+    if (gpu != null && gpu.os != RemoteOsKind.unknown) {
+      _os = gpu.os;
     }
     setState(() {
-      _snap = snap;
+      if (snap != null) _snap = snap;
+      if (gpu != null) _gpu = gpu;
       _loading = false;
       _error = null;
     });
@@ -437,6 +447,12 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     });
   }
 
+  void _openListenerInBrowser(RemoteListenSocket sock) {
+    final target = sock.browserTarget;
+    if (target == null) return;
+    widget.wm.open(DesktopAppType.browser, args: {'url': target});
+  }
+
   Future<void> _endTask({int? pidOverride}) async {
     final pid = pidOverride ?? _selectedPid;
     final os = _os;
@@ -627,7 +643,12 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                   onEndTask: () => unawaited(_endTask()),
                   onEndTaskPid: (pid) => unawaited(_endTask(pidOverride: pid)),
                 ),
-                _PerformancePane(snap: _snap, cpuHist: _cpuHist, memHist: _memHist),
+                _PerformancePane(
+                  snap: _snap,
+                  gpu: _gpu,
+                  cpuHist: _cpuHist,
+                  memHist: _memHist,
+                ),
                 _NetworkPane(
                   snap: _netSnap,
                   prev: _netPrev,
@@ -645,6 +666,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                   hideLoopback: _netHideLoopback,
                   onHideLoopback: (v) => setState(() => _netHideLoopback = v),
                   connected: _connected,
+                  onOpenInBrowser: _openListenerInBrowser,
                 ),
                 _ServicesPane(
                   filterCtrl: _svcFilterCtrl,
@@ -1088,11 +1110,13 @@ class _ProcRow extends StatelessWidget {
 class _PerformancePane extends StatelessWidget {
   const _PerformancePane({
     required this.snap,
+    required this.gpu,
     required this.cpuHist,
     required this.memHist,
   });
 
   final RemoteHostSnapshot? snap;
+  final RemoteGpuSnapshot? gpu;
   final List<double> cpuHist;
   final List<double> memHist;
 
@@ -1141,6 +1165,36 @@ class _PerformancePane extends StatelessWidget {
             ),
           ],
         ),
+        if (gpu != null && gpu!.available && gpu!.gpus.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text('GPU', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final g in gpu!.gpus)
+                _PerfCard(
+                  label: 'GPU${g.index} · ${g.name}',
+                  value: _pct(g.util01),
+                  tone: g.util01,
+                  subtitle: [
+                    if (g.memUsedMiB != null && g.memTotalMiB != null)
+                      '${g.memUsedMiB!.toStringAsFixed(0)}/${g.memTotalMiB!.toStringAsFixed(0)} MiB',
+                    if (g.tempC != null) '${g.tempC!.toStringAsFixed(0)}°C',
+                  ].where((e) => e.isNotEmpty).join(' · '),
+                ),
+            ],
+          ),
+        ] else if (gpu != null && !gpu!.available) ...[
+          const SizedBox(height: 16),
+          Text(
+            gpu!.error == null
+                ? '未检测到 NVIDIA GPU（需 nvidia-smi）'
+                : 'GPU：${gpu!.error}',
+            style: TextStyle(fontSize: 11, color: wb.textMuted),
+          ),
+        ],
         if (s?.hostInfoLine != null) ...[
           const SizedBox(height: 16),
           Text('主机', style: TextStyle(fontSize: 11, color: wb.textMuted)),
@@ -1187,7 +1241,7 @@ class _PerformancePane extends StatelessWidget {
         ],
         const SizedBox(height: 16),
         Text(
-          'Linux：/proc + df；Windows：CIM（内存 / CPU / 逻辑磁盘）。',
+          'Linux：/proc + df；Windows：CIM；GPU：nvidia-smi（可选）。',
           style: TextStyle(fontSize: 11, color: wb.textMuted),
         ),
       ],
@@ -1201,12 +1255,14 @@ class _PerfCard extends StatelessWidget {
     required this.value,
     this.tone,
     this.history,
+    this.subtitle,
   });
 
   final String label;
   final String value;
   final double? tone;
   final List<double>? history;
+  final String? subtitle;
 
   Color _toneColor(BuildContext context) {
     final t = tone;
@@ -1220,8 +1276,9 @@ class _PerfCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final hist = history;
+    final sub = subtitle?.trim();
     return Container(
-      width: 160,
+      width: sub == null || sub.isEmpty ? 160 : 200,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: wb.panel,
@@ -1231,7 +1288,12 @@ class _PerfCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: wb.textMuted),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
@@ -1244,6 +1306,15 @@ class _PerfCard extends StatelessWidget {
               fontFamily: 'monospace',
             ),
           ),
+          if (sub != null && sub.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              sub,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: wb.textMuted),
+            ),
+          ],
           if (hist != null && hist.isNotEmpty) ...[
             const SizedBox(height: 8),
             SizedBox(
@@ -1401,6 +1472,7 @@ class _NetworkPane extends StatelessWidget {
     required this.hideLoopback,
     required this.onHideLoopback,
     required this.connected,
+    required this.onOpenInBrowser,
   });
 
   final RemoteNetworkSnapshot? snap;
@@ -1419,6 +1491,7 @@ class _NetworkPane extends StatelessWidget {
   final bool hideLoopback;
   final ValueChanged<bool> onHideLoopback;
   final bool connected;
+  final ValueChanged<RemoteListenSocket> onOpenInBrowser;
 
   List<double> _norm(List<double> hist) {
     if (hist.isEmpty) return hist;
@@ -1611,64 +1684,97 @@ class _NetworkPane extends StatelessWidget {
                       itemCount: listeners.length,
                       itemBuilder: (context, i) {
                         final sock = listeners[i];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 1,
-                          ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 56,
-                                child: Text(
-                                  sock.protocol,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    color: wb.secondaryText,
-                                  ),
-                                ),
+                        final canBrowse = sock.browserTarget != null;
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onDoubleTap: canBrowse
+                                ? () => onOpenInBrowser(sock)
+                                : null,
+                            onSecondaryTapDown: canBrowse
+                                ? (d) async {
+                                    final selected = await showMenu<String>(
+                                      context: context,
+                                      position: RelativeRect.fromLTRB(
+                                        d.globalPosition.dx,
+                                        d.globalPosition.dy,
+                                        d.globalPosition.dx,
+                                        d.globalPosition.dy,
+                                      ),
+                                      items: const [
+                                        PopupMenuItem(
+                                          value: 'browser',
+                                          child: Text('在浏览器中打开'),
+                                        ),
+                                      ],
+                                    );
+                                    if (selected == 'browser') {
+                                      onOpenInBrowser(sock);
+                                    }
+                                  }
+                                : null,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 1,
                               ),
-                              SizedBox(
-                                width: 64,
-                                child: Text(
-                                  '${sock.port}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    fontWeight: FontWeight.w600,
-                                    color: wb.primaryText,
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 56,
+                                    child: Text(
+                                      sock.protocol,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        color: wb.secondaryText,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  sock.address,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    color: wb.secondaryText,
+                                  SizedBox(
+                                    width: 64,
+                                    child: Text(
+                                      '${sock.port}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.w600,
+                                        color: wb.primaryText,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 72,
-                                child: Text(
-                                  sock.process ??
-                                      (sock.pid != null ? '${sock.pid}' : '—'),
-                                  textAlign: TextAlign.right,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    color: wb.textMuted,
+                                  Expanded(
+                                    child: Text(
+                                      sock.address,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        color: wb.secondaryText,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  SizedBox(
+                                    width: 72,
+                                    child: Text(
+                                      sock.process ??
+                                          (sock.pid != null
+                                              ? '${sock.pid}'
+                                              : '—'),
+                                      textAlign: TextAlign.right,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        color: wb.textMuted,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         );
                       },

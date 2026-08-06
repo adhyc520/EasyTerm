@@ -46,6 +46,30 @@ class RemoteListenSocket {
     }
     return '$a:$port';
   }
+
+  /// 供桌面浏览器打开的目标（仅 TCP）；通配地址映射为 `localhost`。
+  ///
+  /// IPv6 必须带方括号（如 `[2001:db8::1]:8080`），否则 [Uri.parse] 会把端口拆错。
+  String? get browserTarget {
+    final p = protocol.toLowerCase();
+    if (!p.startsWith('tcp')) return null;
+    if (port <= 0 || port > 65535) return null;
+    var host = address.trim();
+    if (host.isEmpty ||
+        host == '*' ||
+        host == '0.0.0.0' ||
+        host == '::' ||
+        host == '[::]' ||
+        host.toLowerCase() == '::0') {
+      host = 'localhost';
+    } else if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.substring(1, host.length - 1);
+    }
+    if (host.contains(':')) {
+      return '[$host]:$port';
+    }
+    return '$host:$port';
+  }
 }
 
 /// 一次网络采样。

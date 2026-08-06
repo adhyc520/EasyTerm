@@ -33,7 +33,8 @@ const _hopByHopExact = {
 /// **Important (dartssh2):** [SSHClient.forwardLocal] is a **single** direct-tcpip
 /// channel, not a local listener. Each proxied HTTP request opens one channel.
 /// For HTTPS upstream we instead use [LocalPortForwarder] (real `ssh -L` style
-/// ServerSocket) + [SecureSocket.connect] so TLS wraps a normal TCP socket.
+/// ServerSocket) + [SecureSocket.secure] (SNI = remote host) so TLS wraps a
+/// normal TCP socket to loopback.
 class BrowserGateway {
   BrowserGateway(this.client);
 
@@ -497,11 +498,18 @@ class BrowserGateway {
       if (localPort == null) {
         throw StateError('HTTPS forwarder has no local port');
       }
-      final sock = await SecureSocket.connect(
+      // Connect to loopback forwarder, then TLS with the *remote* hostname as
+      // SNI. SecureSocket.connect('127.0.0.1', …) would send SNI=127.0.0.1 and
+      // break virtually all public / multi-vhost HTTPS sites.
+      final raw = await Socket.connect(
         '127.0.0.1',
         localPort,
-        onBadCertificate: (_) => true,
         timeout: connectTimeout,
+      );
+      final sock = await SecureSocket.secure(
+        raw,
+        host: target.host,
+        onBadCertificate: (_) => true,
       );
       return _UpstreamConn.socket(sock);
     }

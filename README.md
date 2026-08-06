@@ -1,8 +1,8 @@
 # EasyTerm
 
-**EasyTerm** is a Flutter desktop SSH client: a multi-tab terminal with an integrated SFTP file browser, saved connections, optional AI assistant (OpenAI-compatible Chat API) with guarded terminal actions, and a status bar that surfaces remote health hints (uptime, load, and more on supported Linux hosts).
+**EasyTerm** is a Flutter desktop SSH client: multi-tab terminals with split panes, an integrated SFTP file browser, an optional **remote visual desktop** (windows for terminal, files, browser, monitor, and more on the same SSH session), saved connections, an optional AI assistant (OpenAI-compatible Chat API) with guarded terminal actions, and a status bar / health board for remote metrics.
 
-**EasyTerm** 是一款基于 Flutter 的桌面端 SSH 客户端：支持多标签终端、内置 SFTP 文件浏览（含远程文本编辑）、已保存连接、可选的 AI 助手（OpenAI 兼容对话接口，终端操作建议需用户确认），以及可在状态栏查看远端运行概况（运行时间、负载等，在支持的 Linux 主机上信息更丰富）。
+**EasyTerm** 是一款基于 Flutter 的桌面端 SSH 客户端：支持多标签终端与分屏、内置 SFTP 文件浏览（含远程文本编辑）、可选的 **远程可视化桌面**（同一 SSH 会话上以窗口打开终端、文件、浏览器、监控等）、已保存连接、可选的 AI 助手（OpenAI 兼容对话接口，终端操作建议需用户确认），以及状态栏 / 健康看板展示远端运行指标。
 
 <p align="center">
   <img src="images/home.png" alt="EasyTerm main window — terminal with SFTP sidebar and status bar" width="920" />
@@ -14,13 +14,14 @@
 
 ### Highlights
 
-- **SSH sessions in tabs** — Open several `user@host` sessions in one window; each tab owns its own connection and resources.
-- **Integrated SFTP file browser** — After you connect, browse remote paths with name, size, and modification time; switch between “Saved hosts” and “Files” in the left sidebar; open supported text files in a simple remote editor with save and change detection.
+- **SSH sessions in tabs** — Open several `user@host` sessions in one window; each tab owns its own connection and resources. Split panes (left/right/up/down) within a tab when you need side-by-side terminals.
+- **Remote visual desktop** — Per-tab switch between classic terminal and a rendered desktop shell. Open multiple windows: terminal, file manager, internal browser (SSH gateway to remote localhost / LAN sites), host monitor (CPU/memory/disk/network, GPU via `nvidia-smi` when available), task manager, logs, Docker containers, disk-usage analyzer, transfer queue, and remote editor. Drag, resize, snap to edges, and remember preferred window sizes per host/app type.
+- **Integrated SFTP file browser** — Browse remote paths with list or icon view; create/rename folders and files; copy, cut, and paste on the remote tree; upload files/folders; analyze disk usage; open a terminal at the current path; edit text with syntax highlighting and light syntax checks for common languages.
 - **Flexible authentication** — Password, optional PEM private key (with passphrase when needed), plus handling for setups where keyboard-interactive is required.
 - **Saved connections** — Store hosts, ports, users, optional device labels, and key paths; connect or edit from the sidebar.
-- **AI assistant (optional)** — Right-side panel talks to an **OpenAI Chat Completions–compatible** endpoint (configurable base URL, model, and API key stored only on this machine). Streaming replies; optional **terminal tool** that proposes shell input—**each execution is confirmed in a dialog** before anything is sent to the PTY.
+- **AI assistant (optional)** — Right-side panel talks to an **OpenAI Chat Completions–compatible** endpoint (configurable base URL, model, and API key stored only on this machine). Streaming replies; optional **terminal tool** that proposes shell input—**each execution is confirmed in a dialog** before anything is sent to the PTY. Hidden while a tab is in desktop mode.
 - **Workbench settings** — Grouped dialogs for **Terminal** (timeouts/retries, SSH keep-alive, PTY size and `TERM`, scrollback, font size and family, select-to-copy), **Interface** (English / 中文, light / dark / system theme, assistant panel width), and **LLM** (base URL, model, API key).
-- **Status bar** — Local and remote clock, plus remote snippets such as uptime and load average where the shell snapshot can read them (e.g. typical Linux environments).
+- **Status bar & health board** — Local and remote clock, plus remote snippets such as uptime and load; health board aggregates remote CPU, memory, disk, and load for connected hosts.
 
 ### Requirements
 
@@ -51,6 +52,7 @@ flutter build macos
 | SSH / SFTP | [`dartssh2`](https://pub.dev/packages/dartssh2) |
 | Terminal UI | [`xterm`](https://pub.dev/packages/xterm) |
 | Desktop window | [`window_manager`](https://pub.dev/packages/window_manager) |
+| Embedded browser | [`flutter_inappwebview`](https://pub.dev/packages/flutter_inappwebview) (remote desktop browser app) |
 | Settings | [`shared_preferences`](https://pub.dev/packages/shared_preferences) |
 | Key file pick | [`file_picker`](https://pub.dev/packages/file_picker) |
 | LLM HTTP | [`http`](https://pub.dev/packages/http) (OpenAI-compatible chat + streaming) |
@@ -63,13 +65,14 @@ This repo vendors a small [`desktop_drop`](https://pub.dev/packages/desktop_drop
 
 ### 功能概览
 
-- **多标签 SSH** — 在同一窗口管理多个 `用户名@主机` 会话；每个标签独立连接与资源。
-- **内置 SFTP 文件管理** — 连接后可浏览远端目录，展示名称、大小、修改时间；左侧可在「已保存主机」与「文件」视图间切换；可对合适类型的文本文件进行简单的远程编辑、保存与变更提示。
+- **多标签 SSH** — 在同一窗口管理多个 `用户名@主机` 会话；每个标签独立连接与资源。支持分屏（左右上下）以便并排操作。
+- **远程可视化桌面** — 每个标签可在「终端 / 桌面」间切换。桌面内可开多窗口：终端、文件管理器、内网浏览器（经 SSH 网关访问远端 localhost / 内网站点）、主机监控（CPU/内存/磁盘/网络，可用时通过 `nvidia-smi` 显示 GPU）、任务管理器、日志、Docker 容器、磁盘占用分析、传输队列与远程编辑器。支持拖动、缩放、贴边吸附，并按主机与应用类型记住窗口尺寸。
+- **内置 SFTP 文件管理** — 列表 / 图标视图浏览远端目录；新建与重命名文件夹/文件；远端复制、剪切与粘贴；上传文件/文件夹；分析目录占用；在当前路径打开终端；编辑文本时支持语法高亮与常见语言的轻量语法检查。
 - **多种登录方式** — 支持密码、可选 PEM 私钥（及密钥口令），并兼顾部分仅开启 keyboard-interactive 的服务端场景。
 - **已保存连接** — 保存主机、端口、用户名、可选设备备注与私钥路径；在侧栏快速连接或编辑。
-- **AI 助手（可选）** — 右侧助手面板通过 **OpenAI Chat Completions 兼容接口**对话（可配置基础地址、模型；**API Key 仅保存在本机**）。支持流式回复；可选 **终端工具** 由模型建议向当前 PTY 注入命令——**每次执行前均需用户在弹窗中确认**。
+- **AI 助手（可选）** — 右侧助手面板通过 **OpenAI Chat Completions 兼容接口**对话（可配置基础地址、模型；**API Key 仅保存在本机**）。支持流式回复；可选 **终端工具** 由模型建议向当前 PTY 注入命令——**每次执行前均需用户在弹窗中确认**。标签处于桌面模式时助手面板隐藏。
 - **工作台设置** — 分为 **终端**（连接超时与重试、SSH keep-alive、PTY 行列与终端类型、滚动缓冲、字号与字体、选中复制）、**界面**（**English / 中文**、浅色 / 深色 / 跟随系统、助手栏宽度等）与 **LLM**（基础 URL、模型、密钥）等对话框。
-- **底部状态栏** — 本地与远端时间；在可获取远端输出的环境下展示运行时间、负载等信息（常见于 Linux 远端）。
+- **底部状态栏与健康看板** — 本地与远端时间；展示运行时间、负载等；健康看板汇总已连接主机的远端 CPU、内存、磁盘与负载。
 
 ### 环境要求
 
@@ -100,6 +103,7 @@ flutter build macos
 | SSH / SFTP | [`dartssh2`](https://pub.dev/packages/dartssh2) |
 | 终端界面 | [`xterm`](https://pub.dev/packages/xterm) |
 | 桌面窗口 | [`window_manager`](https://pub.dev/packages/window_manager) |
+| 内嵌浏览器 | [`flutter_inappwebview`](https://pub.dev/packages/flutter_inappwebview)（远程桌面浏览器应用） |
 | 配置持久化 | [`shared_preferences`](https://pub.dev/packages/shared_preferences) |
 | 私钥文件选择 | [`file_picker`](https://pub.dev/packages/file_picker) |
 | 助手网络请求 | [`http`](https://pub.dev/packages/http)（兼容 OpenAI 的对话与流式响应） |

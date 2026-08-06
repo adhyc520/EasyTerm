@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -18,6 +18,40 @@ Iterable<SingleActivator> workbenchMetaOrControl(
 }) sync* {
   yield SingleActivator(key, meta: true, shift: shift, alt: alt);
   yield SingleActivator(key, control: true, shift: shift, alt: alt);
+}
+
+/// Whether the host OS uses ⌘ (meta) as the primary chord modifier.
+bool workbenchUsesMetaPrimaryModifier() =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS);
+
+/// Platform-native clipboard shortcuts for the terminal (local OS clipboard).
+///
+/// - macOS / iOS: ⌘C / ⌘V / ⌘A
+/// - Windows / Linux: Ctrl+Shift+C / Ctrl+V / Ctrl+A
+///
+/// Windows/Linux Ctrl+C is intentionally omitted so an empty selection still
+/// sends SIGINT; [TerminalSurface] copies on Ctrl+C only when text is selected.
+Map<ShortcutActivator, Intent> workbenchTerminalClipboardShortcuts() {
+  if (workbenchUsesMetaPrimaryModifier()) {
+    return {
+      const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+          CopySelectionTextIntent.copy,
+      const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+          const PasteTextIntent(SelectionChangedCause.keyboard),
+      const SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+          const SelectAllTextIntent(SelectionChangedCause.keyboard),
+    };
+  }
+  return {
+    const SingleActivator(LogicalKeyboardKey.keyC, control: true, shift: true):
+        CopySelectionTextIntent.copy,
+    const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+        const PasteTextIntent(SelectionChangedCause.keyboard),
+    const SingleActivator(LogicalKeyboardKey.keyA, control: true):
+        const SelectAllTextIntent(SelectionChangedCause.keyboard),
+  };
 }
 
 /// Merge [activators] into a [CallbackShortcuts] bindings map.

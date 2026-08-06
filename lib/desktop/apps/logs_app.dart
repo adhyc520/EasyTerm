@@ -46,7 +46,11 @@ class _LogsAppState extends State<LogsApp> {
     super.initState();
     final args = widget.window.args;
     final src = args['source']?.toString();
-    if (src == 'file') _source = RemoteLogSource.file;
+    if (src == 'file') {
+      _source = RemoteLogSource.file;
+    } else if (src == 'docker') {
+      _source = RemoteLogSource.docker;
+    }
     final unit = args['unit']?.toString();
     if (unit != null && unit.isNotEmpty) _unitCtrl.text = unit;
     final path = args['path']?.toString();
@@ -201,6 +205,11 @@ class _LogsAppState extends State<LogsApp> {
                       label: Text('文件'),
                       icon: Icon(Icons.description_outlined, size: 16),
                     ),
+                    const ButtonSegment(
+                      value: RemoteLogSource.docker,
+                      label: Text('Docker'),
+                      icon: Icon(Icons.view_in_ar_rounded, size: 16),
+                    ),
                   ],
                   selected: {_source},
                   onSelectionChanged: (s) {
@@ -245,7 +254,8 @@ class _LogsAppState extends State<LogsApp> {
             padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
             child: Row(
               children: [
-                if (_source == RemoteLogSource.journal) ...[
+                if (_source == RemoteLogSource.journal ||
+                    _source == RemoteLogSource.docker) ...[
                   SizedBox(
                     width: 180,
                     child: TextField(
@@ -257,7 +267,9 @@ class _LogsAppState extends State<LogsApp> {
                       ),
                       decoration: InputDecoration(
                         isDense: true,
-                        hintText: isWin ? 'System / Application' : 'unit（可空）',
+                        hintText: _source == RemoteLogSource.docker
+                            ? '容器名 / ID'
+                            : (isWin ? 'System / Application' : 'unit（可空）'),
                         hintStyle: TextStyle(color: wb.textMuted, fontSize: 12),
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 10,

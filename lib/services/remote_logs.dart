@@ -1,3 +1,4 @@
+import 'remote_containers.dart' show isSafeContainerRef;
 import 'remote_process_list.dart';
 import 'ssh_workspace_controller.dart';
 
@@ -8,6 +9,9 @@ enum RemoteLogSource {
 
   /// 指定文件尾部（tail）。
   file,
+
+  /// `docker logs`（unit 字段存容器名/ID）。
+  docker,
 }
 
 /// 一条日志行。
@@ -128,6 +132,22 @@ Future<RemoteLogSnapshot> _fetchLinux(
   required int lines,
   String? priority,
 }) async {
+  if (source == RemoteLogSource.docker) {
+    final ref = (unit ?? '').trim();
+    if (!isSafeContainerRef(ref)) {
+      return const RemoteLogSnapshot(
+        os: RemoteOsKind.linux,
+        source: RemoteLogSource.docker,
+        lines: [],
+        error: '非法容器名',
+      );
+    }
+    final cmd =
+        'docker logs --tail $lines $ref 2>&1 || echo "__ET_LOG_ERR__ docker logs failed"';
+    final raw = await controller.runRemoteForStatus(cmd);
+    return parseDockerLogs(raw ?? '', ref: ref, os: RemoteOsKind.linux);
+  }
+
   if (source == RemoteLogSource.file) {
     final p = (path ?? '').trim();
     if (!isSafeLogPath(p)) {
@@ -183,6 +203,22 @@ Future<RemoteLogSnapshot> _fetchWindows(
   String? path,
   required int lines,
 }) async {
+  if (source == RemoteLogSource.docker) {
+    final ref = (unit ?? '').trim();
+    if (!isSafeContainerRef(ref)) {
+      return const RemoteLogSnapshot(
+        os: RemoteOsKind.windows,
+        source: RemoteLogSource.docker,
+        lines: [],
+        error: '非法容器名',
+      );
+    }
+    final cmd =
+        'docker.exe logs --tail $lines $ref 2>&1 || docker logs --tail $lines $ref 2>&1 || echo "__ET_LOG_ERR__ docker logs failed"';
+    final raw = await controller.runRemoteForStatus(cmd);
+    return parseDockerLogs(raw ?? '', ref: ref, os: RemoteOsKind.windows);
+  }
+
   if (source == RemoteLogSource.file) {
     final p = (path ?? '').trim();
     if (!isSafeLogPath(p)) {
@@ -260,6 +296,41 @@ RemoteLogLine _parseJournalLine(String t) {
     );
   }
   return RemoteLogLine(text: t, level: _inferLevel(t));
+}
+
+RemoteLogSnapshot parseDockerLogs(
+  String raw, {
+  required String ref,
+  required RemoteOsKind os,
+}) {
+  if (raw.contains('__ET_LOG_ERR__')) {
+    final msg = raw
+        .split('__ET_LOG_ERR__')
+        .last
+        .trim()
+        .split(RegExp(r'[\r\n]+'))
+        .first
+        .trim();
+    return RemoteLogSnapshot(
+      os: os,
+      source: RemoteLogSource.docker,
+      lines: const [],
+      label: ref,
+      error: msg.isEmpty ? '无法读取 docker logs' : msg,
+    );
+  }
+  final lines = <RemoteLogLine>[];
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trimRight();
+    if (t.isEmpty) continue;
+    lines.add(RemoteLogLine(text: t, level: _inferLevel(t)));
+  }
+  return RemoteLogSnapshot(
+    os: os,
+    source: RemoteLogSource.docker,
+    lines: lines,
+    label: ref,
+  );
 }
 
 RemoteLogSnapshot parseLinuxFileTail(String raw, {required String path}) {

@@ -1058,6 +1058,18 @@ abstract class AppLocalizations {
   /// **'Refresh'**
   String get sftpRefreshTooltip;
 
+  /// No description provided for @sftpViewListTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'List view'**
+  String get sftpViewListTooltip;
+
+  /// No description provided for @sftpViewGridTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Icon view'**
+  String get sftpViewGridTooltip;
+
   /// No description provided for @sftpColumnName.
   ///
   /// In en, this message translates to:
@@ -1093,6 +1105,180 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open in editor…'**
   String get sftpOpenInEditorMenu;
+
+  /// No description provided for @sftpOpenTerminalMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Open terminal here'**
+  String get sftpOpenTerminalMenu;
+
+  /// No description provided for @sftpAnalyzeDiskUsageMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Analyze disk usage…'**
+  String get sftpAnalyzeDiskUsageMenu;
+
+  /// No description provided for @sftpRenameMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename…'**
+  String get sftpRenameMenu;
+
+  /// No description provided for @sftpNewFolderMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder…'**
+  String get sftpNewFolderMenu;
+
+  /// No description provided for @sftpNewFolderTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder'**
+  String get sftpNewFolderTooltip;
+
+  /// No description provided for @sftpNewFileMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'New file…'**
+  String get sftpNewFileMenu;
+
+  /// No description provided for @sftpNewFileTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'New file'**
+  String get sftpNewFileTooltip;
+
+  /// No description provided for @sftpUploadFilesMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload files…'**
+  String get sftpUploadFilesMenu;
+
+  /// No description provided for @sftpUploadFolderMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload folder…'**
+  String get sftpUploadFolderMenu;
+
+  /// No description provided for @sftpNewFolderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder'**
+  String get sftpNewFolderTitle;
+
+  /// No description provided for @sftpNewFolderHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder name'**
+  String get sftpNewFolderHint;
+
+  /// No description provided for @sftpNewFileTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New file'**
+  String get sftpNewFileTitle;
+
+  /// No description provided for @sftpNewFileHint.
+  ///
+  /// In en, this message translates to:
+  /// **'File name'**
+  String get sftpNewFileHint;
+
+  /// No description provided for @sftpRenameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get sftpRenameTitle;
+
+  /// No description provided for @sftpNameFieldLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get sftpNameFieldLabel;
+
+  /// No description provided for @sftpCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get sftpCreate;
+
+  /// No description provided for @sftpRenameConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get sftpRenameConfirm;
+
+  /// No description provided for @sftpInvalidName.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid name (must be non-empty and contain no path separators)'**
+  String get sftpInvalidName;
+
+  /// No description provided for @sftpCreatedFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Created folder {name}'**
+  String sftpCreatedFolder(String name);
+
+  /// No description provided for @sftpCreatedFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Created file {name}'**
+  String sftpCreatedFile(String name);
+
+  /// No description provided for @sftpRenamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Renamed to {name}'**
+  String sftpRenamed(String name);
+
+  /// No description provided for @sftpCopyMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get sftpCopyMenu;
+
+  /// No description provided for @sftpCutMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get sftpCutMenu;
+
+  /// No description provided for @sftpPasteMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste'**
+  String get sftpPasteMenu;
+
+  /// No description provided for @sftpCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied {count} items'**
+  String sftpCopied(int count);
+
+  /// No description provided for @sftpCutToast.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut {count} items'**
+  String sftpCutToast(int count);
+
+  /// No description provided for @sftpPasted.
+  ///
+  /// In en, this message translates to:
+  /// **'Pasted {count} items'**
+  String sftpPasted(int count);
+
+  /// No description provided for @sftpClipboardEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing to paste'**
+  String get sftpClipboardEmpty;
+
+  /// No description provided for @sftpOk.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get sftpOk;
 
   /// No description provided for @sftpDeleteMenu.
   ///
@@ -1303,6 +1489,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Save failed: {error}'**
   String remoteEditorSaveFailed(String error);
+
+  /// No description provided for @remoteEditorSyntaxError.
+  ///
+  /// In en, this message translates to:
+  /// **'Syntax error: {detail}'**
+  String remoteEditorSyntaxError(String detail);
 
   /// No description provided for @statusNotConnected.
   ///

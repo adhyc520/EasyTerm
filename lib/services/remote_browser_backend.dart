@@ -1,4 +1,5 @@
 import 'browser_gateway.dart';
+import 'browser_gateway_rewrite.dart';
 import 'local_port_forwarder.dart';
 
 /// Address-bar → navigable URI for the embedded remote browser.
@@ -24,6 +25,10 @@ class GatewayBrowserBackend implements RemoteBrowserBackend {
   @override
   Future<Uri> resolveUrl(String input) async {
     final t = parseBrowserAddressBar(input);
+    // Public sites: load directly in WebView (local network), not via SSH.
+    if (!isSshTunneledBrowserHost(t.host)) {
+      return buildDirectBrowserNavigationUri(t);
+    }
     if (!gateway.isRunning) {
       await gateway.start();
     }
@@ -73,6 +78,9 @@ class LocalForwardBrowserBackend implements RemoteBrowserBackend {
   @override
   Future<Uri> resolveUrl(String input) async {
     final t = parseBrowserAddressBar(input);
+    if (!isSshTunneledBrowserHost(t.host)) {
+      return buildDirectBrowserNavigationUri(t);
+    }
 
     if (_fwd == null ||
         !_fwd!.isRunning ||
@@ -118,6 +126,34 @@ class BrowserAddressTarget {
   final int port;
   final String pathAndQuery;
   final bool https;
+}
+
+/// Public / non-tunneled URL for the WebView (real host, not 127.0.0.1).
+Uri buildDirectBrowserNavigationUri(BrowserAddressTarget t) {
+  final omitPort =
+      (!t.https && t.port == 80) || (t.https && t.port == 443);
+  final raw = t.pathAndQuery.isEmpty ? '/' : t.pathAndQuery;
+  final uri = raw.startsWith('http://') || raw.startsWith('https://')
+      ? Uri.parse(raw)
+      : Uri.parse(raw.startsWith('/') ? raw : '/$raw');
+  return Uri(
+    scheme: t.https ? 'https' : 'http',
+    host: t.host,
+    port: omitPort ? null : t.port,
+    path: uri.path.isEmpty ? '/' : uri.path,
+    queryParameters:
+        uri.queryParameters.isEmpty ? null : uri.queryParameters,
+    fragment: uri.hasFragment ? uri.fragment : null,
+  );
+}
+
+/// 供系统浏览器打开的公网 URL；内网/隧道主机返回 null（勿泄露网关 loopback+token）。
+Uri? externalBrowserNavigationUri(String input) {
+  final t = parseBrowserAddressBar(input);
+  if (isSshTunneledBrowserHost(t.host)) return null;
+  final uri = buildDirectBrowserNavigationUri(t);
+  if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+  return uri;
 }
 
 /// Parse `"localhost:3000/path"`, `"http://host:port/x"`, `"host:port"`, etc.

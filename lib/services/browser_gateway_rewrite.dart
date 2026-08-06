@@ -3,6 +3,96 @@
 /// Query flag on gateway URLs marking HTTPS upstream (stripped before forward).
 const String kGatewaySchemeQueryKey = '_et_scheme';
 
+const _kInternalDnsSuffixes = [
+  '.local',
+  '.internal',
+  '.lan',
+  '.home',
+  '.corp',
+  '.intranet',
+  '.private',
+  '.test',
+  '.localhost',
+];
+
+/// Whether [host] should be reached via SSH (gateway / local forward).
+///
+/// Public Internet hostnames are loaded **directly** by the WebView — modern
+/// sites break under HTML rewriting and HTTP/1.1 SSH proxying.
+bool isSshTunneledBrowserHost(String host) {
+  final h = host.trim().toLowerCase();
+  if (h.isEmpty) return true;
+  if (h == 'localhost' ||
+      h == '127.0.0.1' ||
+      h == '::1' ||
+      h == '[::1]' ||
+      h == '0.0.0.0') {
+    return true;
+  }
+
+  final v4 = _parseIpv4(h);
+  if (v4 != null) return _isPrivateOrLocalIpv4(v4);
+
+  final v6 = _parseIpv6Literal(h);
+  if (v6 != null) return _isPrivateOrLocalIpv6(v6);
+
+  for (final suffix in _kInternalDnsSuffixes) {
+    if (h == suffix.substring(1) || h.endsWith(suffix)) return true;
+  }
+
+  // Single-label names (docker/k8s service DNS) stay on the tunnel.
+  if (!h.contains('.')) return true;
+
+  return false;
+}
+
+List<int>? _parseIpv4(String host) {
+  final parts = host.split('.');
+  if (parts.length != 4) return null;
+  final out = <int>[];
+  for (final p in parts) {
+    final n = int.tryParse(p);
+    if (n == null || n < 0 || n > 255) return null;
+    out.add(n);
+  }
+  return out;
+}
+
+bool _isPrivateOrLocalIpv4(List<int> b) {
+  if (b[0] == 10) return true;
+  if (b[0] == 127) return true;
+  if (b[0] == 192 && b[1] == 168) return true;
+  if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
+  if (b[0] == 169 && b[1] == 254) return true;
+  if (b[0] == 100 && b[1] >= 64 && b[1] <= 127) return true; // CGNAT
+  return false;
+}
+
+/// Strip brackets from `[::1]`-style literals; return lowercased hex groups or null.
+String? _parseIpv6Literal(String host) {
+  var h = host;
+  if (h.startsWith('[') && h.endsWith(']')) {
+    h = h.substring(1, h.length - 1);
+  }
+  if (!h.contains(':')) return null;
+  // Enough to classify; full RFC 5952 parse not required.
+  return h.toLowerCase();
+}
+
+bool _isPrivateOrLocalIpv6(String h) {
+  if (h == '::1') return true;
+  // Unique local fc00::/7
+  if (h.startsWith('fc') || h.startsWith('fd')) return true;
+  // Link-local fe80::/10
+  if (h.startsWith('fe8') ||
+      h.startsWith('fe9') ||
+      h.startsWith('fea') ||
+      h.startsWith('feb')) {
+    return true;
+  }
+  return false;
+}
+
 /// Build a loopback gateway navigation URI.
 Uri buildGatewayNavigationUri({
   required int gatewayPort,
@@ -64,6 +154,12 @@ String? rewriteRemoteAbsoluteUrl(
   if ((hostLower == '127.0.0.1' || hostLower == 'localhost') &&
       uri.hasPort &&
       uri.port == gatewayPort) {
+    return null;
+  }
+
+  // Public Internet hosts: keep absolute URL so WebView fetches them locally
+  // (CDN / fonts / analytics). Tunneling them via SSH breaks most modern sites.
+  if (!isSshTunneledBrowserHost(uri.host)) {
     return null;
   }
 
@@ -191,6 +287,34 @@ String injectGatewayFetchShim(
   var TOKEN=${_jsString(token)};
   var GW_PORT=$gatewayPort;
   var SCHEME_KEY=${_jsString(kGatewaySchemeQueryKey)};
+  var INTERNAL_SUFFIX=[".local",".internal",".lan",".home",".corp",".intranet",".private",".test",".localhost"];
+  function isTunneledHost(h){
+    h=(h||"").toLowerCase();
+    if(!h) return true;
+    if(h==="localhost"||h==="127.0.0.1"||h==="::1"||h==="0.0.0.0") return true;
+    var m=/^(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)\$/.exec(h);
+    if(m){
+      var a=+m[1],b=+m[2];
+      if(a===10||a===127) return true;
+      if(a===192&&b===168) return true;
+      if(a===172&&b>=16&&b<=31) return true;
+      if(a===169&&b===254) return true;
+      if(a===100&&b>=64&&b<=127) return true;
+      return false;
+    }
+    if(h.indexOf(":")>=0){
+      if(h==="::1") return true;
+      if(h.indexOf("fc")===0||h.indexOf("fd")===0) return true;
+      if(/^fe[89ab]/.test(h)) return true;
+      return false;
+    }
+    for(var i=0;i<INTERNAL_SUFFIX.length;i++){
+      var s=INTERNAL_SUFFIX[i];
+      if(h===s.slice(1)||h.length>s.length&&h.slice(-s.length)===s) return true;
+    }
+    if(h.indexOf(".")<0) return true;
+    return false;
+  }
   function rewrite(u){
     try{
       if(!u || typeof u!=="string") return u;
@@ -200,6 +324,7 @@ String injectGatewayFetchShim(
       if(proto!=="http:" && proto!=="https:") return u;
       var h=a.hostname.toLowerCase();
       if((h==="127.0.0.1"||h==="localhost") && String(a.port)===String(GW_PORT)) return u;
+      if(!isTunneledHost(h)) return u;
       var https=proto==="https:";
       var port=a.port?a.port:(https?"443":"80");
       var path=a.pathname||"/";

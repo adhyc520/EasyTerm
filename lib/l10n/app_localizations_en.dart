@@ -519,6 +519,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sftpRefreshTooltip => 'Refresh';
 
   @override
+  String get sftpViewListTooltip => 'List view';
+
+  @override
+  String get sftpViewGridTooltip => 'Icon view';
+
+  @override
   String get sftpColumnName => 'Name';
 
   @override
@@ -535,6 +541,106 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sftpOpenInEditorMenu => 'Open in editor…';
+
+  @override
+  String get sftpOpenTerminalMenu => 'Open terminal here';
+
+  @override
+  String get sftpAnalyzeDiskUsageMenu => 'Analyze disk usage…';
+
+  @override
+  String get sftpRenameMenu => 'Rename…';
+
+  @override
+  String get sftpNewFolderMenu => 'New folder…';
+
+  @override
+  String get sftpNewFolderTooltip => 'New folder';
+
+  @override
+  String get sftpNewFileMenu => 'New file…';
+
+  @override
+  String get sftpNewFileTooltip => 'New file';
+
+  @override
+  String get sftpUploadFilesMenu => 'Upload files…';
+
+  @override
+  String get sftpUploadFolderMenu => 'Upload folder…';
+
+  @override
+  String get sftpNewFolderTitle => 'New folder';
+
+  @override
+  String get sftpNewFolderHint => 'Folder name';
+
+  @override
+  String get sftpNewFileTitle => 'New file';
+
+  @override
+  String get sftpNewFileHint => 'File name';
+
+  @override
+  String get sftpRenameTitle => 'Rename';
+
+  @override
+  String get sftpNameFieldLabel => 'Name';
+
+  @override
+  String get sftpCreate => 'Create';
+
+  @override
+  String get sftpRenameConfirm => 'Rename';
+
+  @override
+  String get sftpInvalidName =>
+      'Invalid name (must be non-empty and contain no path separators)';
+
+  @override
+  String sftpCreatedFolder(String name) {
+    return 'Created folder $name';
+  }
+
+  @override
+  String sftpCreatedFile(String name) {
+    return 'Created file $name';
+  }
+
+  @override
+  String sftpRenamed(String name) {
+    return 'Renamed to $name';
+  }
+
+  @override
+  String get sftpCopyMenu => 'Copy';
+
+  @override
+  String get sftpCutMenu => 'Cut';
+
+  @override
+  String get sftpPasteMenu => 'Paste';
+
+  @override
+  String sftpCopied(int count) {
+    return 'Copied $count items';
+  }
+
+  @override
+  String sftpCutToast(int count) {
+    return 'Cut $count items';
+  }
+
+  @override
+  String sftpPasted(int count) {
+    return 'Pasted $count items';
+  }
+
+  @override
+  String get sftpClipboardEmpty => 'Nothing to paste';
+
+  @override
+  String get sftpOk => 'OK';
 
   @override
   String get sftpDeleteMenu => 'Delete';
@@ -666,6 +772,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String remoteEditorSaveFailed(String error) {
     return 'Save failed: $error';
+  }
+
+  @override
+  String remoteEditorSyntaxError(String detail) {
+    return 'Syntax error: $detail';
   }
 
   @override

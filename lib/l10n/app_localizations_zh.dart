@@ -500,6 +500,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sftpRefreshTooltip => '刷新';
 
   @override
+  String get sftpViewListTooltip => '列表视图';
+
+  @override
+  String get sftpViewGridTooltip => '图标视图';
+
+  @override
   String get sftpColumnName => '名称';
 
   @override
@@ -516,6 +522,105 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sftpOpenInEditorMenu => '在编辑器中打开…';
+
+  @override
+  String get sftpOpenTerminalMenu => '打开终端';
+
+  @override
+  String get sftpAnalyzeDiskUsageMenu => '分析磁盘占用…';
+
+  @override
+  String get sftpRenameMenu => '重命名';
+
+  @override
+  String get sftpNewFolderMenu => '新建文件夹';
+
+  @override
+  String get sftpNewFolderTooltip => '新建文件夹';
+
+  @override
+  String get sftpNewFileMenu => '新建文件';
+
+  @override
+  String get sftpNewFileTooltip => '新建文件';
+
+  @override
+  String get sftpUploadFilesMenu => '上传文件…';
+
+  @override
+  String get sftpUploadFolderMenu => '上传文件夹…';
+
+  @override
+  String get sftpNewFolderTitle => '新建文件夹';
+
+  @override
+  String get sftpNewFolderHint => '文件夹名称';
+
+  @override
+  String get sftpNewFileTitle => '新建文件';
+
+  @override
+  String get sftpNewFileHint => '文件名称';
+
+  @override
+  String get sftpRenameTitle => '重命名';
+
+  @override
+  String get sftpNameFieldLabel => '名称';
+
+  @override
+  String get sftpCreate => '创建';
+
+  @override
+  String get sftpRenameConfirm => '重命名';
+
+  @override
+  String get sftpInvalidName => '请输入有效名称（不能包含路径分隔符）。';
+
+  @override
+  String sftpCreatedFolder(String name) {
+    return '已创建文件夹 $name';
+  }
+
+  @override
+  String sftpCreatedFile(String name) {
+    return '已创建文件 $name';
+  }
+
+  @override
+  String sftpRenamed(String name) {
+    return '已重命名为 $name';
+  }
+
+  @override
+  String get sftpCopyMenu => '复制';
+
+  @override
+  String get sftpCutMenu => '剪切';
+
+  @override
+  String get sftpPasteMenu => '粘贴';
+
+  @override
+  String sftpCopied(int count) {
+    return '已复制 $count 项';
+  }
+
+  @override
+  String sftpCutToast(int count) {
+    return '已剪切 $count 项';
+  }
+
+  @override
+  String sftpPasted(int count) {
+    return '已粘贴 $count 项';
+  }
+
+  @override
+  String get sftpClipboardEmpty => '剪贴板为空';
+
+  @override
+  String get sftpOk => '确定';
 
   @override
   String get sftpDeleteMenu => '删除';
@@ -644,6 +749,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String remoteEditorSaveFailed(String error) {
     return '保存失败: $error';
+  }
+
+  @override
+  String remoteEditorSyntaxError(String detail) {
+    return '语法错误：$detail';
   }
 
   @override

@@ -7,9 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/browser_bookmarks_store.dart';
 import '../../services/browser_history_store.dart';
+import '../../services/browser_gateway_rewrite.dart';
 import '../../services/remote_browser_backend.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../util/launch_external_url.dart';
 import '../desktop_window_manager.dart';
 
 /// 桌面浏览器：默认经 [GatewayBrowserBackend] 访问远端内网；可切「直连端口」。
@@ -49,6 +51,8 @@ class _BrowserAppState extends State<BrowserApp> {
   List<String> _historyList = const [];
   bool _dismissJsHint = false;
   bool _wasConnected = false;
+  /// Last resolved navigation used local WebView (public Internet), not SSH.
+  bool _lastNavPublicDirect = false;
 
   static const _kJsHintDismissPrefs = 'desktop_browser_js_hint_dismissed';
 
@@ -61,6 +65,7 @@ class _BrowserAppState extends State<BrowserApp> {
   void initState() {
     super.initState();
     c.addListener(_onController);
+    _addressFocus.addListener(_onAddressFocusChange);
     _wasConnected = c.connected && !c.dropped;
     _bookmarks = BrowserBookmarksStore(_hostKey);
     _history = BrowserHistoryStore(_hostKey);
@@ -75,6 +80,25 @@ class _BrowserAppState extends State<BrowserApp> {
     unawaited(_loadLists());
     unawaited(_loadJsHintDismissed());
     unawaited(_boot());
+  }
+
+  /// WebView（PlatformView）常抢走键盘焦点；编辑地址栏时主动让出。
+  void _onAddressFocusChange() {
+    if (!_addressFocus.hasFocus) return;
+    unawaited(_releaseWebViewKeyboard());
+  }
+
+  Future<void> _releaseWebViewKeyboard() async {
+    final web = _web;
+    if (web == null) return;
+    try {
+      await web.clearFocus();
+    } catch (_) {}
+    try {
+      await web.evaluateJavascript(
+        source: 'try{document.activeElement&&document.activeElement.blur()}catch(e){}',
+      );
+    } catch (_) {}
   }
 
   Future<void> _loadJsHintDismissed() async {
@@ -107,6 +131,7 @@ class _BrowserAppState extends State<BrowserApp> {
   @override
   void dispose() {
     c.removeListener(_onController);
+    _addressFocus.removeListener(_onAddressFocusChange);
     unawaited(_backend?.close());
     _backend = null;
     _addressCtrl.dispose();
@@ -134,7 +159,8 @@ class _BrowserAppState extends State<BrowserApp> {
       return;
     }
 
-    setState(() {});
+    // 已连接时 workspace 的其它通知（SFTP 等）不必重建浏览器，
+    // 否则 PlatformView 重建会再次抢走地址栏键盘焦点。
   }
 
   Future<void> _rebindAfterReconnect() async {
@@ -212,16 +238,19 @@ class _BrowserAppState extends State<BrowserApp> {
     });
     try {
       if (_backend == null) await _ensureBackend();
+      final parsed = parseBrowserAddressBar(input);
+      final publicDirect = !isSshTunneledBrowserHost(parsed.host);
       final uri = await _backend!.resolveUrl(input);
       widget.window.args['url'] = input;
       widget.window.args['mode'] = _useGateway ? 'gateway' : 'direct';
-      widget.wm.focus(widget.window.id, persist: true);
+      widget.wm.focus(widget.window.id);
       final hist = await _history.push(input);
       await _web?.loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())));
       if (mounted) {
         setState(() {
           _addressCtrl.text = input;
           _historyList = hist;
+          _lastNavPublicDirect = publicDirect;
         });
       }
     } catch (e) {
@@ -234,12 +263,41 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 
   Future<void> _toggleMode() async {
+    final switchingToDirect = _useGateway;
+    if (switchingToDirect && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          final wb = ctx.wb;
+          return AlertDialog(
+            backgroundColor: wb.panelElevated,
+            title: Text('切换到直连', style: TextStyle(color: wb.primaryText)),
+            content: Text(
+              '直连只转发当前地址栏的 host:port，站内跳到其他主机/端口可能失败。\n\n'
+              '当前目标：${_addressCtrl.text.trim().isEmpty ? '（空）' : _addressCtrl.text.trim()}',
+              style: TextStyle(color: wb.secondaryText, height: 1.4),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('直连'),
+              ),
+            ],
+          );
+        },
+      );
+      if (ok != true || !mounted) return;
+    }
     setState(() {
       _useGateway = !_useGateway;
       _error = null;
     });
     widget.window.args['mode'] = _useGateway ? 'gateway' : 'direct';
-    widget.wm.requestRebuild(persist: true);
+    widget.wm.requestRebuild();
     try {
       await _ensureBackend();
       await _navigate(_addressCtrl.text);
@@ -249,10 +307,38 @@ class _BrowserAppState extends State<BrowserApp> {
     }
   }
 
+  Future<void> _toggleBookmark() async {
+    final addr = _addressCtrl.text.trim();
+    if (addr.isEmpty) return;
+    if (_bookmarkList.contains(addr)) {
+      await _removeBookmark(addr);
+    } else {
+      await _addBookmark();
+    }
+  }
+
   Future<void> _addBookmark() async {
     final list = await _bookmarks.add(_addressCtrl.text);
     if (!mounted) return;
     setState(() => _bookmarkList = list);
+  }
+
+  Future<void> _openExternal() async {
+    final input = _addressCtrl.text.trim();
+    if (input.isEmpty) return;
+    final uri = externalBrowserNavigationUri(input);
+    if (uri == null) {
+      setState(
+        () => _error = '内网地址需经 SSH 在应用内浏览，无法用系统浏览器打开',
+      );
+      return;
+    }
+    try {
+      await launchExternalBrowserUri(uri);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '外部打开失败：$e');
+    }
   }
 
   Future<void> _removeBookmark(String url) async {
@@ -273,17 +359,35 @@ class _BrowserAppState extends State<BrowserApp> {
     final back = await w.canGoBack();
     final forward = await w.canGoForward();
     if (!mounted) return;
+    if (_canGoBack == back && _canGoForward == forward) return;
+    if (_addressFocus.hasFocus) {
+      _canGoBack = back;
+      _canGoForward = forward;
+      return;
+    }
     setState(() {
       _canGoBack = back;
       _canGoForward = forward;
     });
   }
 
-  /// 网关 URL 对用户无意义；地址栏保留用户输入的远端目标。
+  /// 网关 / 直连 loopback URL 对用户无意义；公网直连时同步真实地址。
   void _syncAddressFromLoad(WebUri? url) {
-    // Intentionally keep the address bar as the remote target the user typed.
-    // Gateway/direct loopback URLs are not shown.
     if (url == null) return;
+    final host = url.host.toLowerCase();
+    final isLoopback = host == '127.0.0.1' || host == 'localhost';
+    if (isLoopback) {
+      _lastNavPublicDirect = false;
+      return;
+    }
+    final display = url.toString();
+    if (_addressCtrl.text == display) {
+      _lastNavPublicDirect = true;
+      return;
+    }
+    if (_addressFocus.hasFocus) return;
+    _addressCtrl.text = display;
+    _lastNavPublicDirect = true;
   }
 
   @override
@@ -321,8 +425,15 @@ class _BrowserAppState extends State<BrowserApp> {
               await _web?.reload();
             },
             onSubmit: () => unawaited(_navigate(_addressCtrl.text)),
+            onAddressTap: () {
+              if (!_addressFocus.hasFocus) {
+                _addressFocus.requestFocus();
+              }
+              unawaited(_releaseWebViewKeyboard());
+            },
             onToggleMode: () => unawaited(_toggleMode()),
-            onAddBookmark: () => unawaited(_addBookmark()),
+            onToggleBookmark: () => unawaited(_toggleBookmark()),
+            onOpenExternal: () => unawaited(_openExternal()),
             onOpenBookmark: (url) => unawaited(_navigate(url)),
             onRemoveBookmark: (url) => unawaited(_removeBookmark(url)),
             onOpenHistory: (url) => unawaited(_navigate(url)),
@@ -339,7 +450,7 @@ class _BrowserAppState extends State<BrowserApp> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '网关改写 HTML/CSS 绝对链接，并拦截 fetch/XHR；仍打不开时可切「直连」。',
+                        '网关只改写内网绝对链接；公网站点由本机 WebView 直连。仍打不开内网站时可切「直连」。',
                         style: TextStyle(fontSize: 11, color: wb.secondaryText),
                       ),
                     ),
@@ -375,6 +486,7 @@ class _BrowserAppState extends State<BrowserApp> {
                 : _booting
                     ? const _Hint(text: '正在启动浏览器…', progress: true)
                     : InAppWebView(
+                        key: ValueKey('wv-${widget.window.id}'),
                         initialSettings: InAppWebViewSettings(
                           javaScriptEnabled: true,
                           transparentBackground: false,
@@ -393,6 +505,12 @@ class _BrowserAppState extends State<BrowserApp> {
                           }
                         },
                         onLoadStart: (controller, url) {
+                          if (_addressFocus.hasFocus) {
+                            // 编辑地址时避免整树重建打断输入
+                            _loading = true;
+                            _progress = 0;
+                            return;
+                          }
                           setState(() {
                             _loading = true;
                             _progress = 0;
@@ -400,13 +518,22 @@ class _BrowserAppState extends State<BrowserApp> {
                           _syncAddressFromLoad(url);
                         },
                         onProgressChanged: (controller, progress) {
+                          if (_addressFocus.hasFocus) {
+                            _progress = progress / 100.0;
+                            return;
+                          }
                           setState(() => _progress = progress / 100.0);
                         },
                         onLoadStop: (controller, url) async {
-                          setState(() {
+                          if (!_addressFocus.hasFocus) {
+                            setState(() {
+                              _loading = false;
+                              _progress = 1;
+                            });
+                          } else {
                             _loading = false;
                             _progress = 1;
-                          });
+                          }
                           await _refreshNavFlags();
                         },
                         onReceivedError: (controller, request, error) {
@@ -414,6 +541,13 @@ class _BrowserAppState extends State<BrowserApp> {
                             _loading = false;
                             _error = error.description;
                           });
+                        },
+                        onWindowFocus: (controller) {
+                          // PlatformView 抢到原生焦点时，若用户正在改地址则抢回来
+                          if (_addressFocus.hasFocus) {
+                            unawaited(_releaseWebViewKeyboard());
+                            _addressFocus.requestFocus();
+                          }
                         },
                         onReceivedServerTrustAuthRequest:
                             (controller, challenge) async {
@@ -427,9 +561,11 @@ class _BrowserAppState extends State<BrowserApp> {
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
             child: Text(
-              _useGateway
-                  ? '网关模式：站内链接经 SSH 漫游 · 内网/自签'
-                  : '直连模式：仅转发当前 host:port · 自签已放行',
+              _lastNavPublicDirect
+                  ? '公网直连：本机 WebView 访问 · 不经 SSH'
+                  : _useGateway
+                      ? '网关模式：内网站内链接经 SSH 漫游 · 公网资源本机直连'
+                      : '直连模式：仅转发当前 host:port · 自签已放行',
               style: TextStyle(fontSize: 10, color: wb.textMuted),
             ),
           ),
@@ -457,8 +593,10 @@ class _Toolbar extends StatelessWidget {
     required this.onForward,
     required this.onReload,
     required this.onSubmit,
+    required this.onAddressTap,
     required this.onToggleMode,
-    required this.onAddBookmark,
+    required this.onToggleBookmark,
+    required this.onOpenExternal,
     required this.onOpenBookmark,
     required this.onRemoveBookmark,
     required this.onOpenHistory,
@@ -481,8 +619,10 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback onForward;
   final VoidCallback onReload;
   final VoidCallback onSubmit;
+  final VoidCallback onAddressTap;
   final VoidCallback onToggleMode;
-  final VoidCallback onAddBookmark;
+  final VoidCallback onToggleBookmark;
+  final VoidCallback onOpenExternal;
   final void Function(String url) onOpenBookmark;
   final void Function(String url) onRemoveBookmark;
   final void Function(String url) onOpenHistory;
@@ -542,11 +682,15 @@ class _Toolbar extends StatelessWidget {
                         controller: addressCtrl,
                         focusNode: addressFocus,
                         enabled: !offline,
+                        keyboardType: TextInputType.url,
+                        textInputAction: TextInputAction.go,
                         style: TextStyle(
                           fontSize: 13,
                           color: wb.primaryText,
                           fontFamily: 'Menlo',
                         ),
+                        onTap: onAddressTap,
+                        onSubmitted: (_) => onSubmit(),
                         decoration: InputDecoration(
                           isDense: true,
                           hintText: 'localhost:3000 或 http://host:port/path',
@@ -570,8 +714,17 @@ class _Toolbar extends StatelessWidget {
                             borderRadius: BorderRadius.circular(6),
                             borderSide: BorderSide(color: wb.accentBlue),
                           ),
+                          suffixIconConstraints: const BoxConstraints(
+                            minWidth: 36,
+                            minHeight: 28,
+                          ),
                           suffixIcon: IconButton(
                             tooltip: '前往',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 28,
+                            ),
                             onPressed: offline ? null : onSubmit,
                             icon: Icon(
                               Icons.keyboard_return_rounded,
@@ -585,16 +738,27 @@ class _Toolbar extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: _bookmarked ? '已收藏' : '收藏当前地址',
+                  tooltip: _bookmarked ? '取消收藏' : '收藏当前地址',
                   onPressed: offline || currentAddress.isEmpty
                       ? null
-                      : onAddBookmark,
+                      : onToggleBookmark,
                   icon: Icon(
                     _bookmarked
                         ? Icons.star_rounded
                         : Icons.star_outline_rounded,
                     size: 18,
                     color: _bookmarked ? const Color(0xFFEAB308) : wb.textMuted,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '用系统浏览器打开（仅公网地址）',
+                  onPressed: offline || currentAddress.isEmpty
+                      ? null
+                      : onOpenExternal,
+                  icon: Icon(
+                    Icons.open_in_new_rounded,
+                    size: 18,
+                    color: wb.textMuted,
                   ),
                 ),
                 PopupMenuButton<String>(

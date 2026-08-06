@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/remote_network.dart';
 import '../../services/ssh_workspace_controller.dart';
@@ -31,6 +32,7 @@ class _MonitorAppState extends State<MonitorApp>
   Timer? _timer;
   RemoteHostSnapshot? _snap;
   RemoteNetworkSnapshot? _net;
+  RemoteGpuSnapshot? _gpu;
   List<RemoteNetIfaceRate> _rates = const [];
   bool _loading = false;
   String? _error;
@@ -91,18 +93,20 @@ class _MonitorAppState extends State<MonitorApp>
       return;
     }
     setState(() {
-      _loading = _snap == null && _net == null;
+      _loading = _snap == null && _net == null && _gpu == null;
       _error = null;
     });
     try {
       final results = await Future.wait([
         fetchRemoteHostSnapshot(c),
         fetchRemoteNetworkSnapshot(c),
+        fetchRemoteGpuSnapshot(c),
       ]);
       if (!mounted) return;
       final snap = results[0] as RemoteHostSnapshot?;
       final net = results[1] as RemoteNetworkSnapshot?;
-      if (snap == null && net == null) {
+      final gpu = results[2] as RemoteGpuSnapshot?;
+      if (snap == null && net == null && gpu == null) {
         setState(() {
           _error = '无法获取指标';
           _loading = false;
@@ -127,6 +131,7 @@ class _MonitorAppState extends State<MonitorApp>
           _net = net;
           _rates = rates;
         }
+        if (gpu != null) _gpu = gpu;
         _loading = false;
         _error = null;
       });
@@ -257,6 +262,38 @@ class _MonitorAppState extends State<MonitorApp>
             ),
           ],
         ),
+        if (_gpu != null && _gpu!.available && _gpu!.gpus.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text('GPU', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final g in _gpu!.gpus)
+                _GaugeCard(
+                  label: 'GPU${g.index} · ${g.name}',
+                  value: g.util01 == null
+                      ? '—'
+                      : '${(g.util01! * 100).toStringAsFixed(0)}%',
+                  tone: g.util01,
+                  subtitle: [
+                    if (g.memUsedMiB != null && g.memTotalMiB != null)
+                      '${g.memUsedMiB!.toStringAsFixed(0)}/${g.memTotalMiB!.toStringAsFixed(0)} MiB',
+                    if (g.tempC != null) '${g.tempC!.toStringAsFixed(0)}°C',
+                  ].join(' · '),
+                ),
+            ],
+          ),
+        ] else if (_gpu != null && !_gpu!.available) ...[
+          const SizedBox(height: 14),
+          Text(
+            _gpu!.error == null
+                ? '未检测到 NVIDIA GPU（需 nvidia-smi）'
+                : 'GPU：${_gpu!.error}',
+            style: TextStyle(fontSize: 11, color: wb.textMuted),
+          ),
+        ],
         if (s?.hostInfoLine != null) ...[
           const SizedBox(height: 14),
           Text('主机', style: TextStyle(fontSize: 11, color: wb.textMuted)),
@@ -433,41 +470,57 @@ class _MonitorAppState extends State<MonitorApp>
           )
         else
           for (final s in net.listeners.take(40))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 52,
-                    child: Text(
-                      s.protocol.toUpperCase(),
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                        color: wb.textMuted,
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onDoubleTap: s.browserTarget == null
+                    ? null
+                    : () {
+                        final target = s.browserTarget;
+                        if (target == null) return;
+                        widget.wm.open(
+                          DesktopAppType.browser,
+                          args: {'url': target},
+                        );
+                      },
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 52,
+                        child: Text(
+                          s.protocol.toUpperCase(),
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: wb.textMuted,
+                          ),
+                        ),
                       ),
-                    ),
+                      Expanded(
+                        child: Text(
+                          s.endpoint,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: wb.secondaryText,
+                          ),
+                        ),
+                      ),
+                      if (s.pid != null)
+                        Text(
+                          'pid ${s.pid}',
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 10,
+                            color: wb.textMuted,
+                          ),
+                        ),
+                    ],
                   ),
-                  Expanded(
-                    child: Text(
-                      s.endpoint,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                        color: wb.secondaryText,
-                      ),
-                    ),
-                  ),
-                  if (s.pid != null)
-                    Text(
-                      'pid ${s.pid}',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 10,
-                        color: wb.textMuted,
-                      ),
-                    ),
-                ],
+                ),
               ),
             ),
       ],
@@ -547,12 +600,14 @@ class _GaugeCard extends StatelessWidget {
     required this.value,
     this.tone,
     this.history,
+    this.subtitle,
   });
 
   final String label;
   final String value;
   final double? tone;
   final List<double>? history;
+  final String? subtitle;
 
   Color _toneColor(BuildContext context) {
     final t = tone;
@@ -566,8 +621,9 @@ class _GaugeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final hist = history;
+    final sub = subtitle?.trim();
     return Container(
-      width: 148,
+      width: sub == null || sub.isEmpty ? 148 : 200,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: wb.panel,
@@ -577,7 +633,12 @@ class _GaugeCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: wb.textMuted),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
@@ -590,6 +651,15 @@ class _GaugeCard extends StatelessWidget {
               fontFamily: 'monospace',
             ),
           ),
+          if (sub != null && sub.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              sub,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: wb.textMuted),
+            ),
+          ],
           if (hist != null && hist.isNotEmpty) ...[
             const SizedBox(height: 8),
             SizedBox(

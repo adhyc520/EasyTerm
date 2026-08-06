@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../l10n/app_localizations.dart';
+import '../services/workbench_desktop_shortcuts.dart';
 import '../theme/workbench_theme.dart';
 
 /// 纯终端渲染 / 输入 / 选择 / 菜单 / 断线浮层，不依赖 [SshWorkspaceController]。
@@ -26,6 +27,8 @@ class TerminalSurface extends StatefulWidget {
     this.fontFamily = 'Menlo',
     this.selectToCopy = false,
     this.showLeftBorder = true,
+    this.tapRegionGroupId,
+    this.releaseFocusOnTapOutside = true,
   });
 
   final Terminal terminal;
@@ -40,11 +43,17 @@ class TerminalSurface extends StatefulWidget {
   final bool selectToCopy;
   final bool showLeftBorder;
 
+  /// 与桌面窗口外框共用，避免点标题栏时丢掉键盘焦点。
+  final Object? tapRegionGroupId;
+
+  /// 点击终端区域外时是否释放键盘焦点（桌面窗口内通常关闭）。
+  final bool releaseFocusOnTapOutside;
+
   @override
-  State<TerminalSurface> createState() => _TerminalSurfaceState();
+  State<TerminalSurface> createState() => TerminalSurfaceState();
 }
 
-class _TerminalSurfaceState extends State<TerminalSurface> {
+class TerminalSurfaceState extends State<TerminalSurface> {
   late final TerminalController _viewController = TerminalController();
   Timer? _selectCopyDebounce;
 
@@ -92,11 +101,34 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
     super.initState();
     _termScroll.addListener(_onTermScrolled);
     widget.terminal.addListener(_onTerminalBufferChanged);
+    if (widget.autofocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) requestKeyboardFocus();
+      });
+    }
+  }
+
+  /// 请求硬件键盘焦点（桌面窗口激活时调用）。
+  void requestKeyboardFocus() {
+    if (!mounted) return;
+    // 始终 requestFocus：即便 hasFocus 为 true，也可能不是 primary focus。
+    _termFocus.requestFocus();
   }
 
   @override
   void didUpdateWidget(covariant TerminalSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.autofocus && !oldWidget.autofocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) requestKeyboardFocus();
+      });
+    }
+    // xterm 在 readOnly 时不挂 Focus；连上后需重新夺取键盘。
+    if (widget.connected && !oldWidget.connected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.connected) requestKeyboardFocus();
+      });
+    }
     if (!identical(oldWidget.terminal, widget.terminal)) {
       oldWidget.terminal.removeListener(_onTerminalBufferChanged);
       widget.terminal.addListener(_onTerminalBufferChanged);
@@ -250,11 +282,10 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
   void _onTerminalPointerDown(PointerDownEvent e) {
     if (e.kind != PointerDeviceKind.mouse) return;
     if ((e.buttons & kPrimaryButton) == 0) return;
+    // 任何点击都抢回 primary focus（窗口已聚焦但键盘被壳层/标题栏抢走时）。
+    requestKeyboardFocus();
     final rt = _renderTerminal;
     if (rt == null) return;
-    if (!_termFocus.hasFocus) {
-      _termFocus.requestFocus();
-    }
     final local = rt.globalToLocal(e.position) as Offset;
     _selStartCell = rt.getCellOffset(local) as CellOffset;
     _selLastLocal = local;
@@ -310,10 +341,50 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
   }
 
   Widget _terminalTapRegion({required Widget child}) {
+    if (!widget.releaseFocusOnTapOutside && widget.tapRegionGroupId == null) {
+      return child;
+    }
     return TapRegion(
-      onTapOutside: (_) => _releaseKeyboardFocus(),
+      groupId: widget.tapRegionGroupId,
+      onTapOutside: widget.releaseFocusOnTapOutside
+          ? (_) => _releaseKeyboardFocus()
+          : null,
       child: child,
     );
+  }
+
+  /// Windows/Linux：有选区时 Ctrl+C 复制到本地剪贴板，否则交给 PTY（SIGINT）。
+  KeyEventResult _onTerminalKeyEvent(FocusNode node, KeyEvent event) {
+    // 保持 Focus 挂载（readOnly:false）时，断线态吞掉按键，避免误发到已死 PTY。
+    if (!widget.connected) {
+      if (event is KeyDownEvent || event is KeyRepeatEvent) {
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (workbenchUsesMetaPrimaryModifier()) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.keyC) {
+      return KeyEventResult.ignored;
+    }
+    if (!HardwareKeyboard.instance.isControlPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (HardwareKeyboard.instance.isShiftPressed ||
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
+    final sel = _viewController.selection;
+    if (sel == null) return KeyEventResult.ignored;
+    final text = widget.terminal.buffer.getText(sel);
+    if (text.isEmpty) return KeyEventResult.ignored;
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
+    return KeyEventResult.handled;
   }
 
   void _showTerminalContextMenu(
@@ -435,8 +506,13 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
             textStyle: textStyle,
             autofocus: widget.autofocus,
             hardwareKeyboardOnly: !kIsWeb,
-            readOnly: !widget.connected,
+            // 始终 false：xterm 在 readOnly 时不挂 CustomKeyboardListener/Focus，
+            // 断线重连后 FocusNode 会游离，导致「点了也输不进去」。
+            // 未连接时由 [_onTerminalKeyEvent] 吞键 + 外层 AbsorbPointer 挡指针。
+            readOnly: false,
             autoResize: true,
+            shortcuts: workbenchTerminalClipboardShortcuts(),
+            onKeyEvent: _onTerminalKeyEvent,
             onSecondaryTapDown: (_, _) {},
             onSecondaryTapUp: (details, _) => _showTerminalContextMenu(
               context,
@@ -457,9 +533,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
           Positioned.fill(child: AbsorbPointer(child: base)),
           Positioned.fill(
             child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: bg.withValues(alpha: 0.72),
-              ),
+              decoration: BoxDecoration(color: bg.withValues(alpha: 0.72)),
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),

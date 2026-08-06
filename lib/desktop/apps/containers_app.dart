@@ -301,6 +301,21 @@ class _ContainersAppState extends State<ContainersApp> {
                   onPressed: () =>
                       unawaited(_act(RemoteContainerAction.restart)),
                 ),
+                const SizedBox(width: 4),
+                _ActBtn(
+                  label: '日志',
+                  enabled: selected != null,
+                  onPressed: () {
+                    final c = selected!;
+                    widget.wm.open(
+                      DesktopAppType.logs,
+                      args: {
+                        'source': 'docker',
+                        'unit': c.name.isNotEmpty ? c.name : c.id,
+                      },
+                    );
+                  },
+                ),
               ],
             ),
           ),

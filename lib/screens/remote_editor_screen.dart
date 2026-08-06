@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
 import '../services/ssh_workspace_controller.dart';
+import '../util/editor_highlight.dart';
+import '../util/editor_syntax.dart';
 
 class RemoteEditorScreen extends StatefulWidget {
   const RemoteEditorScreen({
@@ -26,19 +28,52 @@ class RemoteEditorScreen extends StatefulWidget {
 }
 
 class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
-  late final TextEditingController _text = TextEditingController(
+  late final SyntaxEditingController _text = SyntaxEditingController(
     text: widget.initialText,
+    language: editorLanguageFromPath(widget.fileName),
   );
   Timer? _poll;
+  Timer? _syntaxDebounce;
   int? _remoteMtime;
   bool _remoteChanged = false;
   bool _saving = false;
+  EditorLanguage get _language => _text.language;
+  EditorSyntaxIssue? _syntaxIssue;
 
   @override
   void initState() {
     super.initState();
     _remoteMtime = widget.initialRemoteMtime;
     _poll = Timer.periodic(const Duration(seconds: 3), (_) => _checkRemote());
+    _text.addListener(_onTextChanged);
+    _runSyntaxCheckNow();
+  }
+
+  void _onTextChanged() => _scheduleSyntaxCheck();
+
+  void _scheduleSyntaxCheck() {
+    _syntaxDebounce?.cancel();
+    if (_language == EditorLanguage.plain) {
+      if (_syntaxIssue != null) setState(() => _syntaxIssue = null);
+      return;
+    }
+    _syntaxDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      final issue = validateEditorSyntax(_language, _text.text);
+      if (issue?.message != _syntaxIssue?.message ||
+          issue?.line != _syntaxIssue?.line) {
+        setState(() => _syntaxIssue = issue);
+      }
+    });
+  }
+
+  void _runSyntaxCheckNow() {
+    _syntaxDebounce?.cancel();
+    if (_language == EditorLanguage.plain) {
+      _syntaxIssue = null;
+      return;
+    }
+    _syntaxIssue = validateEditorSyntax(_language, _text.text);
   }
 
   Future<void> _checkRemote() async {
@@ -61,6 +96,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       selection: TextSelection.collapsed(offset: text.length),
     );
     _remoteMtime = await widget.controller.remoteMtime(widget.fileName);
+    _runSyntaxCheckNow();
     setState(() => _remoteChanged = false);
   }
 
@@ -92,6 +128,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _syntaxDebounce?.cancel();
+    _text.removeListener(_onTextChanged);
     _text.dispose();
     super.dispose();
   }
@@ -111,7 +149,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         child: Scaffold(
           appBar: AppBar(
             title: Text(
-              widget.fileName,
+              _language == EditorLanguage.plain
+                  ? widget.fileName
+                  : '${widget.fileName} · ${editorLanguageLabel(_language)}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 15),
             ),
             actions: [
@@ -165,6 +205,38 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                           onPressed: () =>
                               setState(() => _remoteChanged = false),
                           child: Text(l.remoteEditorIgnore),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_syntaxIssue != null)
+                Material(
+                  color: Theme.of(context).colorScheme.tertiaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.error_outline_rounded,
+                          color:
+                              Theme.of(context).colorScheme.onTertiaryContainer,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            l.remoteEditorSyntaxError(
+                              _syntaxIssue!.displayMessage,
+                            ),
+                            style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onTertiaryContainer,
+                            ),
+                          ),
                         ),
                       ],
                     ),

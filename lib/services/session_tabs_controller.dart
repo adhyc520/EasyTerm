@@ -287,7 +287,7 @@ class SessionTabsController extends ChangeNotifier {
     return '${c.username}@${c.host}:${c.port}';
   }
 
-  /// 切换标签视图模式（终端 / 可视化桌面）。桌面管理器懒创建并按 host 还原布局。
+  /// 切换标签视图模式（终端 / 可视化桌面）。桌面管理器懒创建；进入桌面从空桌面开始。
   void setViewMode(int tabIndex, SessionViewMode mode) {
     if (tabIndex < 0 || tabIndex >= _tabs.length) return;
     final t = _tabs[tabIndex];
@@ -299,9 +299,9 @@ class SessionTabsController extends ChangeNotifier {
         hostKey: hostKeyFor(t),
         settings: settings,
       );
-      unawaited(t._desktop!.restoreLayout());
+      unawaited(t._desktop!.prepareFreshDesktop());
     } else {
-      // 退出桌面：先落盘再清窗口，保留主 shell / 终端缓冲
+      // 退出桌面：清窗口，不持久化布局；主 shell / 终端缓冲仍保留
       unawaited(t._desktop?.leaveDesktop());
     }
     notifyListeners();

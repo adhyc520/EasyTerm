@@ -185,12 +185,73 @@
   "terminalMenuClearSelection": "Clear selection",
   "sftpPanelTitle": "File browser",
   "sftpRefreshTooltip": "Refresh",
+  "sftpViewListTooltip": "List view",
+  "sftpViewGridTooltip": "Icon view",
   "sftpColumnName": "Name",
   "sftpColumnSize": "Size",
   "sftpColumnModified": "Modified",
   "sftpBreadcrumbRoot": "Root",
   "sftpDownloadMenu": "Download…",
   "sftpOpenInEditorMenu": "Open in editor…",
+  "sftpOpenTerminalMenu": "Open terminal here",
+  "sftpAnalyzeDiskUsageMenu": "Analyze disk usage…",
+  "sftpRenameMenu": "Rename…",
+  "sftpNewFolderMenu": "New folder…",
+  "sftpNewFolderTooltip": "New folder",
+  "sftpNewFileMenu": "New file…",
+  "sftpNewFileTooltip": "New file",
+  "sftpUploadFilesMenu": "Upload files…",
+  "sftpUploadFolderMenu": "Upload folder…",
+  "sftpNewFolderTitle": "New folder",
+  "sftpNewFolderHint": "Folder name",
+  "sftpNewFileTitle": "New file",
+  "sftpNewFileHint": "File name",
+  "sftpRenameTitle": "Rename",
+  "sftpNameFieldLabel": "Name",
+  "sftpCreate": "Create",
+  "sftpRenameConfirm": "Rename",
+  "sftpInvalidName": "Invalid name (must be non-empty and contain no path separators)",
+  "sftpCreatedFolder": "Created folder {name}",
+  "@sftpCreatedFolder": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpCreatedFile": "Created file {name}",
+  "@sftpCreatedFile": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpRenamed": "Renamed to {name}",
+  "@sftpRenamed": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpCopyMenu": "Copy",
+  "sftpCutMenu": "Cut",
+  "sftpPasteMenu": "Paste",
+  "sftpCopied": "Copied {count} items",
+  "@sftpCopied": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpCutToast": "Cut {count} items",
+  "@sftpCutToast": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpPasted": "Pasted {count} items",
+  "@sftpPasted": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpClipboardEmpty": "Nothing to paste",
+  "sftpOk": "OK",
   "sftpDeleteMenu": "Delete",
   "sftpPickDirTitle": "Choose where to save (a subfolder with the same name will be created)",
   "sftpSaveFileTitle": "Save remote file",
@@ -285,6 +346,12 @@
   "@remoteEditorSaveFailed": {
     "placeholders": {
       "error": {"type": "String"}
+    }
+  },
+  "remoteEditorSyntaxError": "Syntax error: {detail}",
+  "@remoteEditorSyntaxError": {
+    "placeholders": {
+      "detail": {"type": "String"}
     }
   },
   "statusNotConnected": "Not connected",

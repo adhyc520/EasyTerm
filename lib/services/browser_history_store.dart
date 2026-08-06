@@ -12,10 +12,10 @@ class BrowserHistoryStore {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getStringList(_prefsKey);
-      if (raw == null) return const [];
+      if (raw == null) return <String>[];
       return List<String>.from(raw);
     } catch (_) {
-      return const [];
+      return <String>[];
     }
   }
 
@@ -41,6 +41,6 @@ class BrowserHistoryStore {
 
   Future<List<String>> clear() async {
     await save(const []);
-    return const [];
+    return <String>[];
   }
 }

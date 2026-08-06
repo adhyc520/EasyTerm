@@ -28,6 +28,7 @@ import 'remote_shell.dart';
 import 'sftp_browser_host.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
 import 'sftp_planned_upload.dart';
+import 'sftp_remote_copy.dart' as sftp_copy;
 import 'sftp_upload_progress_hooks.dart';
 import 'sftp_upload_task_list.dart';
 import 'workbench_settings_store.dart';
@@ -752,6 +753,128 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     }
   }
 
+  @override
+  Future<void> createRemoteDirectory(String name) async {
+    final client = _sftp;
+    if (client == null) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.contains('/') || trimmed.contains('\\')) {
+      throw ArgumentError('invalid directory name');
+    }
+    final path = remoteJoin(_remoteCwd, trimmed);
+    try {
+      await client.mkdir(path);
+      await refreshDirectory();
+    } catch (e) {
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> createRemoteFile(String name) async {
+    final client = _sftp;
+    if (client == null) return;
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || trimmed.contains('/') || trimmed.contains('\\')) {
+      throw ArgumentError('invalid file name');
+    }
+    final path = remoteJoin(_remoteCwd, trimmed);
+    try {
+      final file = await client.open(
+        path,
+        mode:
+            SftpFileOpenMode.create |
+            SftpFileOpenMode.write |
+            SftpFileOpenMode.exclusive,
+      );
+      await file.close();
+      await refreshDirectory();
+    } catch (e) {
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> renameRemote(String oldName, String newName) async {
+    final client = _sftp;
+    if (client == null) return;
+    final next = newName.trim();
+    if (next.isEmpty || next.contains('/') || next.contains('\\')) {
+      throw ArgumentError('invalid name');
+    }
+    if (next == oldName) return;
+    final from = remoteJoin(_remoteCwd, oldName);
+    final to = remoteJoin(_remoteCwd, next);
+    try {
+      await client.rename(from, to);
+      await refreshDirectory();
+    } catch (e) {
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<String>> copyRemoteNamesFrom({
+    required String fromCwd,
+    required List<String> names,
+  }) async {
+    final client = _sftp;
+    if (client == null) return const [];
+    try {
+      final pasted = await sftp_copy.sftpCopyRemoteNames(
+        client: client,
+        fromCwd: fromCwd,
+        toCwd: _remoteCwd,
+        names: names,
+      );
+      await refreshDirectory();
+      return pasted;
+    } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      await refreshDirectory();
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    } catch (e) {
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<String>> moveRemoteNamesFrom({
+    required String fromCwd,
+    required List<String> names,
+  }) async {
+    final client = _sftp;
+    if (client == null) return const [];
+    try {
+      final pasted = await sftp_copy.sftpMoveRemoteNames(
+        client: client,
+        fromCwd: fromCwd,
+        toCwd: _remoteCwd,
+        names: names,
+      );
+      await refreshDirectory();
+      return pasted;
+    } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      await refreshDirectory();
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    } catch (e) {
+      _setError(e.toString());
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   /// 从本机路径上传文件或整个目录到当前远程工作目录。
   /// 追加到现有队列而不清空，以便多文件拖入不丢失已有任务进度。
   Future<void> uploadLocalFsPath(String localPath) async {
@@ -1011,8 +1134,10 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     final base = p.basename(norm);
     return base.startsWith('easyterm_drag_') ||
         base.startsWith('easyterm_dragdir_') ||
+        base.startsWith('easyterm_clip_') ||
         norm.contains('${p.separator}easyterm_drag_') ||
-        norm.contains('${p.separator}easyterm_dragdir_');
+        norm.contains('${p.separator}easyterm_dragdir_') ||
+        norm.contains('${p.separator}easyterm_clip_');
   }
 
   /// 「拖动立即开始 + 后台逐文件下载」模式的目录拖出。

@@ -175,12 +175,16 @@
   "terminalMenuClearSelection": "清除选择",
   "sftpPanelTitle": "文件浏览器",
   "sftpRefreshTooltip": "刷新",
+  "sftpViewListTooltip": "列表视图",
+  "sftpViewGridTooltip": "图标视图",
   "sftpColumnName": "名称",
   "sftpColumnSize": "大小",
   "sftpColumnModified": "修改时间",
   "sftpBreadcrumbRoot": "根",
   "sftpDownloadMenu": "下载到本地…",
   "sftpOpenInEditorMenu": "在编辑器中打开…",
+  "sftpOpenTerminalMenu": "打开终端",
+  "sftpAnalyzeDiskUsageMenu": "分析磁盘占用…",
   "sftpDeleteMenu": "删除",
   "sftpPickDirTitle": "选择保存位置（将创建同名子文件夹）",
   "sftpSaveFileTitle": "保存远程文件",
@@ -239,14 +243,72 @@
     }
   },
   "sftpPickDownloadDirTitle": "选择下载保存文件夹",
+  "sftpNewFolderMenu": "新建文件夹",
+  "sftpNewFolderTooltip": "新建文件夹",
+  "sftpNewFileMenu": "新建文件",
+  "sftpNewFileTooltip": "新建文件",
+  "sftpNewFolderTitle": "新建文件夹",
+  "sftpNewFolderHint": "文件夹名称",
+  "sftpNewFileTitle": "新建文件",
+  "sftpNewFileHint": "文件名称",
+  "sftpRenameMenu": "重命名",
+  "sftpRenameTitle": "重命名",
+  "sftpNameFieldLabel": "名称",
+  "sftpCreate": "创建",
+  "sftpRenameConfirm": "重命名",
+  "sftpUploadFilesMenu": "上传文件…",
+  "sftpUploadFolderMenu": "上传文件夹…",
+  "sftpInvalidName": "请输入有效名称（不能包含路径分隔符）。",
+  "sftpCreatedFolder": "已创建文件夹 {name}",
+  "@sftpCreatedFolder": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpCreatedFile": "已创建文件 {name}",
+  "@sftpCreatedFile": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpRenamed": "已重命名为 {name}",
+  "@sftpRenamed": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "sftpCopyMenu": "复制",
+  "sftpCutMenu": "剪切",
+  "sftpPasteMenu": "粘贴",
+  "sftpCopied": "已复制 {count} 项",
+  "@sftpCopied": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpCutToast": "已剪切 {count} 项",
+  "@sftpCutToast": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpPasted": "已粘贴 {count} 项",
+  "@sftpPasted": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpClipboardEmpty": "剪贴板为空",
   "sftpDeleteConfirm": "删除",
   "sftpCancel": "取消",
+  "sftpOk": "确定",
   "remoteEditorSave": "保存",
   "remoteEditorRemoteChanged": "服务器上的文件已被其他进程修改。",
   "remoteEditorReload": "重新载入",
   "remoteEditorIgnore": "忽略",
   "remoteEditorSaved": "已保存并同步到服务器",
   "remoteEditorSaveFailed": "保存失败: {error}",
+  "remoteEditorSyntaxError": "语法错误：{detail}",
   "statusNotConnected": "未连接",
   "statusNoRemoteInfo": "系统信息暂不可用",
   "statusPickHost": "请选择左侧主机并连接",

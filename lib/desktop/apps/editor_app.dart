@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../util/editor_highlight.dart';
+import '../../util/editor_syntax.dart';
 import '../../util/remote_paths.dart';
 import '../desktop_window_manager.dart';
 
@@ -28,8 +30,9 @@ class EditorApp extends StatefulWidget {
 }
 
 class _EditorAppState extends State<EditorApp> {
-  final TextEditingController _text = TextEditingController();
+  final SyntaxEditingController _text = SyntaxEditingController();
   Timer? _poll;
+  Timer? _syntaxDebounce;
   int? _remoteMtime;
   bool _remoteChanged = false;
   bool _saving = false;
@@ -37,31 +40,102 @@ class _EditorAppState extends State<EditorApp> {
   String? _error;
   bool _dirty = false;
   bool _suppressDirty = false;
+  EditorSyntaxIssue? _syntaxIssue;
+
+  EditorLanguage get _language => _text.language;
 
   String get _path {
     final raw = widget.window.args['path']?.toString() ?? '';
     if (raw.isEmpty) return '';
-    if (raw.startsWith('/')) return raw.replaceAll('\\', '/');
-    // 相对名：相对工作区 cwd
+    if (isRemoteAbsolutePath(raw)) return normalizeRemotePath(raw);
     return remoteJoin(widget.controller.remoteCwd, raw);
   }
 
   @override
   void initState() {
     super.initState();
-    _text.addListener(() {
-      if (_suppressDirty || _dirty) return;
-      setState(() => _dirty = true);
-    });
+    widget.window.onWillClose = _confirmCloseIfDirty;
+    _text.addListener(_onTextChanged);
     unawaited(_load());
     _poll = Timer.periodic(const Duration(seconds: 3), (_) => _checkRemote());
   }
 
+  void _onTextChanged() {
+    if (!_suppressDirty && !_dirty) {
+      setState(() => _dirty = true);
+    }
+    _scheduleSyntaxCheck();
+  }
+
+  void _scheduleSyntaxCheck() {
+    _syntaxDebounce?.cancel();
+    if (_language == EditorLanguage.plain) {
+      if (_syntaxIssue != null) setState(() => _syntaxIssue = null);
+      return;
+    }
+    _syntaxDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) return;
+      final issue = validateEditorSyntax(_language, _text.text);
+      if (issue?.message != _syntaxIssue?.message ||
+          issue?.line != _syntaxIssue?.line) {
+        setState(() => _syntaxIssue = issue);
+      }
+    });
+  }
+
+  void _runSyntaxCheckNow() {
+    _syntaxDebounce?.cancel();
+    if (_language == EditorLanguage.plain) {
+      _syntaxIssue = null;
+      return;
+    }
+    _syntaxIssue = validateEditorSyntax(_language, _text.text);
+  }
+
   @override
   void dispose() {
+    widget.window.onWillClose = null;
     _poll?.cancel();
+    _syntaxDebounce?.cancel();
+    _text.removeListener(_onTextChanged);
     _text.dispose();
     super.dispose();
+  }
+
+  Future<bool> _confirmCloseIfDirty() async {
+    if (!_dirty || !mounted) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final wb = ctx.wb;
+        return AlertDialog(
+          backgroundColor: wb.panelElevated,
+          title: Text('未保存的更改', style: TextStyle(color: wb.primaryText)),
+          content: Text(
+            '关闭「${remoteBasename(_path)}」将丢失未保存的修改。',
+            style: TextStyle(color: wb.secondaryText),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('不保存'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await _save();
+                if (ctx.mounted) Navigator.pop(ctx, !_dirty);
+              },
+              child: const Text('保存并关闭'),
+            ),
+          ],
+        );
+      },
+    );
+    return ok == true;
   }
 
   Future<Uint8List?> _readAbsolute(String path) async {
@@ -142,12 +216,14 @@ class _EditorAppState extends State<EditorApp> {
         return;
       }
       final text = utf8.decode(bytes, allowMalformed: true);
+      _text.language = editorLanguageFromPath(path);
       _suppressDirty = true;
       _text.value = TextEditingValue(
         text: text,
         selection: TextSelection.collapsed(offset: text.length),
       );
       _suppressDirty = false;
+      _runSyntaxCheckNow();
       _remoteMtime = await _mtimeAbsolute(path);
       widget.window.title = remoteBasename(path);
       widget.wm.requestRebuild();
@@ -273,6 +349,17 @@ class _EditorAppState extends State<EditorApp> {
                           ),
                         ),
                       ),
+                      if (_language != EditorLanguage.plain)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Text(
+                            editorLanguageLabel(_language),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: wb.textMuted,
+                            ),
+                          ),
+                        ),
                       if (_dirty)
                         Padding(
                           padding: const EdgeInsets.only(right: 8),
@@ -334,6 +421,35 @@ class _EditorAppState extends State<EditorApp> {
                           onPressed: () =>
                               setState(() => _remoteChanged = false),
                           child: const Text('忽略'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_syntaxIssue != null)
+                Material(
+                  color: wb.folder.withValues(alpha: 0.18),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.error_outline_rounded,
+                          size: 18,
+                          color: wb.folder,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '语法错误 · ${_syntaxIssue!.displayMessage}',
+                            style: TextStyle(
+                              color: wb.primaryText,
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
                       ],
                     ),

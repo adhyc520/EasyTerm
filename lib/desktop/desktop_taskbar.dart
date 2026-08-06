@@ -84,6 +84,10 @@ class _LauncherButton extends StatelessWidget {
             wm.open(DesktopAppType.logs);
           case _LaunchAction.containers:
             wm.open(DesktopAppType.containers);
+          case _LaunchAction.diskUsage:
+            wm.open(DesktopAppType.diskUsage);
+          case _LaunchAction.transfers:
+            wm.open(DesktopAppType.transfers);
           case _LaunchAction.editor:
             // 编辑器需从文件管理器打开具体路径
             wm.open(DesktopAppType.files);
@@ -131,6 +135,18 @@ class _LauncherButton extends StatelessWidget {
           value: _LaunchAction.containers,
           icon: Icons.view_in_ar_rounded,
           label: '容器',
+        ),
+        _item(
+          context,
+          value: _LaunchAction.diskUsage,
+          icon: Icons.pie_chart_rounded,
+          label: '磁盘占用',
+        ),
+        _item(
+          context,
+          value: _LaunchAction.transfers,
+          icon: Icons.swap_vert_rounded,
+          label: '传输',
         ),
         _item(
           context,
@@ -202,6 +218,8 @@ enum _LaunchAction {
   tasks,
   logs,
   containers,
+  diskUsage,
+  transfers,
   editor,
 }
 
@@ -227,6 +245,10 @@ class _TaskbarWindowButton extends StatelessWidget {
         return Icons.article_rounded;
       case DesktopAppType.containers:
         return Icons.view_in_ar_rounded;
+      case DesktopAppType.diskUsage:
+        return Icons.pie_chart_rounded;
+      case DesktopAppType.transfers:
+        return Icons.swap_vert_rounded;
       case DesktopAppType.editor:
         return Icons.edit_note_rounded;
     }

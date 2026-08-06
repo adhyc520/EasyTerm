@@ -95,3 +95,5 @@ Future<void> ensureLocalDirectoryExists(String localDirPath) async {
 }
 
 bool localFileExistsSync(String path) => false;
+
+bool localPathExistsSync(String path) => false;
