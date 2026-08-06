@@ -33,6 +33,10 @@ class DesktopWindowFrame extends StatelessWidget {
         return Icons.monitor_heart_rounded;
       case DesktopAppType.tasks:
         return Icons.memory_rounded;
+      case DesktopAppType.logs:
+        return Icons.article_rounded;
+      case DesktopAppType.containers:
+        return Icons.view_in_ar_rounded;
       case DesktopAppType.editor:
         return Icons.edit_note_rounded;
     }

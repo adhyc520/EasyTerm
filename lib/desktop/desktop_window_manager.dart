@@ -10,7 +10,16 @@ import '../services/workbench_settings_store.dart';
 
 enum WindowState { normal, minimized, maximized }
 
-enum DesktopAppType { terminal, files, browser, monitor, tasks, editor }
+enum DesktopAppType {
+  terminal,
+  files,
+  browser,
+  monitor,
+  tasks,
+  logs,
+  containers,
+  editor,
+}
 
 /// 贴边分屏区域（阶段 3）。
 enum TileZone {
@@ -123,6 +132,10 @@ class DesktopWindowManager extends ChangeNotifier {
         return '监控';
       case DesktopAppType.tasks:
         return '任务管理器';
+      case DesktopAppType.logs:
+        return '日志';
+      case DesktopAppType.containers:
+        return '容器';
       case DesktopAppType.editor:
         final path = args['path']?.toString();
         if (path != null && path.isNotEmpty) {

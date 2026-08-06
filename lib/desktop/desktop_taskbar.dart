@@ -80,6 +80,10 @@ class _LauncherButton extends StatelessWidget {
             wm.open(DesktopAppType.monitor);
           case _LaunchAction.tasks:
             wm.open(DesktopAppType.tasks);
+          case _LaunchAction.logs:
+            wm.open(DesktopAppType.logs);
+          case _LaunchAction.containers:
+            wm.open(DesktopAppType.containers);
           case _LaunchAction.editor:
             // 编辑器需从文件管理器打开具体路径
             wm.open(DesktopAppType.files);
@@ -115,6 +119,18 @@ class _LauncherButton extends StatelessWidget {
           value: _LaunchAction.tasks,
           icon: Icons.memory_rounded,
           label: '任务管理器',
+        ),
+        _item(
+          context,
+          value: _LaunchAction.logs,
+          icon: Icons.article_rounded,
+          label: '日志',
+        ),
+        _item(
+          context,
+          value: _LaunchAction.containers,
+          icon: Icons.view_in_ar_rounded,
+          label: '容器',
         ),
         _item(
           context,
@@ -178,7 +194,16 @@ class _LauncherButton extends StatelessWidget {
   }
 }
 
-enum _LaunchAction { terminal, files, browser, monitor, tasks, editor }
+enum _LaunchAction {
+  terminal,
+  files,
+  browser,
+  monitor,
+  tasks,
+  logs,
+  containers,
+  editor,
+}
 
 class _TaskbarWindowButton extends StatelessWidget {
   const _TaskbarWindowButton({required this.window, required this.wm});
@@ -198,6 +223,10 @@ class _TaskbarWindowButton extends StatelessWidget {
         return Icons.monitor_heart_rounded;
       case DesktopAppType.tasks:
         return Icons.memory_rounded;
+      case DesktopAppType.logs:
+        return Icons.article_rounded;
+      case DesktopAppType.containers:
+        return Icons.view_in_ar_rounded;
       case DesktopAppType.editor:
         return Icons.edit_note_rounded;
     }

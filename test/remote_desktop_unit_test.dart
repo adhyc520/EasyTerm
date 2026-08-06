@@ -1,7 +1,9 @@
 import 'package:easyterm/services/browser_gateway_rewrite.dart';
 import 'package:easyterm/services/desktop_layout_store.dart';
 import 'package:easyterm/services/remote_browser_backend.dart';
+import 'package:easyterm/services/remote_containers.dart';
 import 'package:easyterm/services/remote_host_metrics.dart';
+import 'package:easyterm/services/remote_logs.dart';
 import 'package:easyterm/services/remote_network.dart';
 import 'package:easyterm/services/remote_process_list.dart';
 import 'package:easyterm/util/remote_paths.dart';
@@ -422,6 +424,76 @@ __Z__
         const DesktopLayoutData(hostKey: 'a@b:22', windows: []),
       );
       expect(await store.load('other@b:22'), isNull);
+    });
+  });
+
+  group('remote logs', () {
+    test('isSafeLogUnit and isSafeLogPath', () {
+      expect(isSafeLogUnit('nginx.service'), isTrue);
+      expect(isSafeLogUnit('System'), isTrue);
+      expect(isSafeLogUnit('bad;rm'), isFalse);
+      expect(isSafeLogPath('/var/log/syslog'), isTrue);
+      expect(isSafeLogPath('../etc/passwd'), isFalse);
+      expect(isSafeLogPath(r'C:\Windows\Logs\x.log'), isTrue);
+    });
+
+    test('parseLinuxJournal', () {
+      const raw = '''
+2026-08-06T12:00:00+08:00 host sshd[1]: Accepted publickey
+2026-08-06T12:00:01+08:00 host nginx: error: upstream timed out
+''';
+      final snap = parseLinuxJournal(raw, unit: 'sshd');
+      expect(snap.error, isNull);
+      expect(snap.lines, hasLength(2));
+      expect(snap.lines.last.isError, isTrue);
+      expect(snap.label, 'sshd');
+    });
+
+    test('parseWindowsEventLog', () {
+      const raw = '''
+2026-08-06T12:00:00|Error|Something failed
+2026-08-06T12:00:01|Warning|Disk almost full
+''';
+      final snap = parseWindowsEventLog(raw, logName: 'System');
+      expect(snap.lines, hasLength(2));
+      expect(snap.lines.first.level, 'Error');
+      expect(snap.lines.first.isError, isTrue);
+      expect(snap.lines.last.isWarn, isTrue);
+    });
+
+    test('journal error marker', () {
+      final snap = parseLinuxJournal('__ET_LOG_ERR__ journalctl unavailable');
+      expect(snap.lines, isEmpty);
+      expect(snap.error, contains('unavailable'));
+    });
+  });
+
+  group('remote containers', () {
+    test('isSafeContainerRef', () {
+      expect(isSafeContainerRef('abc123def456'), isTrue);
+      expect(isSafeContainerRef('my_app-1'), isTrue);
+      expect(isSafeContainerRef('bad;rm'), isFalse);
+    });
+
+    test('parseDockerPs and stats merge', () {
+      const ps = '''
+CONTAINER ID|NAMES|IMAGE|STATUS|STATE|PORTS
+a1b2c3d4e5f6|web|nginx:latest|Up 2 hours|running|0.0.0.0:80->80/tcp
+deadbeefcafe|db|postgres:15|Exited (0) 1h|exited|
+''';
+      final list = parseDockerPs(ps);
+      expect(list, hasLength(2));
+      expect(list.first.name, 'web');
+      expect(list.first.isRunning, isTrue);
+      expect(list.last.isRunning, isFalse);
+
+      const stats = '''
+a1b2c3d4e5f6|12.5%|40.0%|100MiB / 1GiB|1kB / 2kB
+''';
+      final merged = mergeDockerStats(list, parseDockerStats(stats));
+      expect(merged.first.cpuPercent, closeTo(12.5, 0.01));
+      expect(merged.first.memPercent, closeTo(40.0, 0.01));
+      expect(merged.first.memUsage, contains('100MiB'));
     });
   });
 }

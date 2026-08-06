@@ -8,8 +8,10 @@ import '../services/workbench_desktop_shortcuts.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
 import 'apps/browser_app.dart';
+import 'apps/containers_app.dart';
 import 'apps/editor_app.dart';
 import 'apps/file_manager_app.dart';
+import 'apps/logs_app.dart';
 import 'apps/monitor_app.dart';
 import 'apps/task_manager_app.dart';
 import 'apps/terminal_app.dart';
@@ -129,6 +131,20 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
       case DesktopAppType.tasks:
         return TaskManagerApp(
           key: ValueKey('tasks-${window.id}'),
+          window: window,
+          wm: wm,
+          controller: controller,
+        );
+      case DesktopAppType.logs:
+        return LogsApp(
+          key: ValueKey('logs-${window.id}'),
+          window: window,
+          wm: wm,
+          controller: controller,
+        );
+      case DesktopAppType.containers:
+        return ContainersApp(
+          key: ValueKey('ct-${window.id}'),
           window: window,
           wm: wm,
           controller: controller,
@@ -325,6 +341,8 @@ class _DesktopBackground extends StatelessWidget {
     (DesktopAppType.browser, Icons.language_rounded, '浏览器'),
     (DesktopAppType.monitor, Icons.monitor_heart_rounded, '监控'),
     (DesktopAppType.tasks, Icons.memory_rounded, '任务管理器'),
+    (DesktopAppType.logs, Icons.article_rounded, '日志'),
+    (DesktopAppType.containers, Icons.view_in_ar_rounded, '容器'),
     (DesktopAppType.editor, Icons.edit_note_rounded, '编辑器'),
   ];
 

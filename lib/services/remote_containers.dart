@@ -1,0 +1,267 @@
+import 'remote_process_list.dart';
+import 'ssh_workspace_controller.dart';
+
+enum RemoteContainerAction { start, stop, restart }
+
+/// 单个容器（Docker）。
+class RemoteContainer {
+  const RemoteContainer({
+    required this.id,
+    required this.name,
+    required this.image,
+    required this.status,
+    this.state,
+    this.ports,
+    this.cpuPercent,
+    this.memPercent,
+    this.memUsage,
+    this.netIo,
+  });
+
+  final String id;
+  final String name;
+  final String image;
+  final String status;
+  final String? state;
+  final String? ports;
+  final double? cpuPercent;
+  final double? memPercent;
+  final String? memUsage;
+  final String? netIo;
+
+  bool get isRunning {
+    final s = (state ?? status).toLowerCase();
+    return s == 'running' || s.startsWith('up ');
+  }
+
+  String get shortId =>
+      id.length > 12 ? id.substring(0, 12) : id;
+}
+
+class RemoteContainerSnapshot {
+  const RemoteContainerSnapshot({
+    required this.os,
+    required this.containers,
+    this.available = true,
+    this.error,
+  });
+
+  final RemoteOsKind os;
+  final List<RemoteContainer> containers;
+  final bool available;
+  final String? error;
+}
+
+bool isSafeContainerRef(String ref) {
+  if (ref.isEmpty || ref.length > 128) return false;
+  return RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.\-]*$').hasMatch(ref);
+}
+
+/// `ID|Names|Image|Status|State|Ports`
+const String kLinuxDockerPs =
+    r'''docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}|{{.Ports}}' 2>/dev/null | head -n 400''';
+
+/// `ID|CPUPerc|MemPerc|MemUsage|NetIO`
+const String kLinuxDockerStats =
+    r'''docker stats --no-stream --format '{{.ID}}|{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}' 2>/dev/null | head -n 400''';
+
+const String kWindowsDockerPs =
+    r'''docker.exe ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}|{{.Ports}}" 2>nul || docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.State}}|{{.Ports}}"''';
+
+const String kWindowsDockerStats =
+    r'''docker.exe stats --no-stream --format "{{.ID}}|{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}" 2>nul || docker stats --no-stream --format "{{.ID}}|{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}"''';
+
+Future<bool> detectDockerAvailable(
+  SshWorkspaceController controller, {
+  RemoteOsKind? osHint,
+}) async {
+  if (!controller.connected) return false;
+  final os = osHint ?? await detectRemoteOs(controller);
+  final cmd = os == RemoteOsKind.windows
+      ? 'docker.exe version --format "{{.Server.Version}}" 2>nul || docker version --format "{{.Server.Version}}"'
+      : 'docker version --format "{{.Server.Version}}" 2>/dev/null';
+  final raw = await controller.runRemoteForStatus(cmd);
+  final t = (raw ?? '').trim();
+  return t.isNotEmpty && !t.toLowerCase().contains('error');
+}
+
+Future<RemoteContainerSnapshot?> fetchRemoteContainers(
+  SshWorkspaceController controller, {
+  RemoteOsKind? osHint,
+}) async {
+  if (!controller.connected) return null;
+  final os = osHint ?? await detectRemoteOs(controller);
+  switch (os) {
+    case RemoteOsKind.linux:
+      return _fetch(controller, os: RemoteOsKind.linux);
+    case RemoteOsKind.windows:
+      return _fetch(controller, os: RemoteOsKind.windows);
+    case RemoteOsKind.unknown:
+      final linux = await _fetch(controller, os: RemoteOsKind.linux);
+      if (linux.available || linux.containers.isNotEmpty) return linux;
+      return _fetch(controller, os: RemoteOsKind.windows);
+  }
+}
+
+Future<RemoteContainerSnapshot> _fetch(
+  SshWorkspaceController controller, {
+  required RemoteOsKind os,
+}) async {
+  final psCmd =
+      os == RemoteOsKind.windows ? kWindowsDockerPs : kLinuxDockerPs;
+  final statsCmd =
+      os == RemoteOsKind.windows ? kWindowsDockerStats : kLinuxDockerStats;
+
+  final psRaw = await controller.runRemoteForStatus(psCmd);
+  if (psRaw == null || psRaw.trim().isEmpty) {
+    // 区分「无容器」与「无 docker」
+    final probe = os == RemoteOsKind.windows
+        ? 'docker.exe version 2>nul || docker version'
+        : 'command -v docker >/dev/null 2>&1 && echo ok || echo missing';
+    final p = await controller.runRemoteForStatus(probe);
+    final available = os == RemoteOsKind.windows
+        ? (p != null &&
+            p.trim().isNotEmpty &&
+            !p.toLowerCase().contains('is not recognized'))
+        : (p ?? '').trim() == 'ok';
+    return RemoteContainerSnapshot(
+      os: os,
+      containers: const [],
+      available: available,
+      error: available ? null : '未检测到 Docker（需安装且当前用户可访问）',
+    );
+  }
+
+  var list = parseDockerPs(psRaw, os: os);
+  final statsRaw = await controller.runRemoteForStatus(statsCmd);
+  if (statsRaw != null && statsRaw.trim().isNotEmpty) {
+    list = mergeDockerStats(list, parseDockerStats(statsRaw));
+  }
+  list.sort((a, b) {
+    final ar = a.isRunning ? 0 : 1;
+    final br = b.isRunning ? 0 : 1;
+    if (ar != br) return ar - br;
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+  return RemoteContainerSnapshot(
+    os: os,
+    containers: list,
+    available: true,
+  );
+}
+
+Future<String?> controlRemoteContainer(
+  SshWorkspaceController controller, {
+  required RemoteOsKind os,
+  required String ref,
+  required RemoteContainerAction action,
+}) async {
+  if (!controller.connected) return '未连接';
+  if (!isSafeContainerRef(ref)) return '非法容器引用';
+  final verb = switch (action) {
+    RemoteContainerAction.start => 'start',
+    RemoteContainerAction.stop => 'stop',
+    RemoteContainerAction.restart => 'restart',
+  };
+  final cmd = os == RemoteOsKind.windows
+      ? 'docker.exe $verb $ref 2>nul || docker $verb $ref'
+      : 'docker $verb $ref';
+  return controller.runRemoteForStatus(cmd);
+}
+
+List<RemoteContainer> parseDockerPs(String raw, {RemoteOsKind? os}) {
+  if (raw.isEmpty) return const [];
+  final out = <RemoteContainer>[];
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trim();
+    if (t.isEmpty || t.startsWith('CONTAINER')) continue;
+    final parts = t.split('|');
+    if (parts.length < 4) continue;
+    final id = parts[0].trim();
+    final name = parts[1].trim();
+    final image = parts[2].trim();
+    final status = parts[3].trim();
+    final state = parts.length > 4 ? parts[4].trim() : null;
+    final ports = parts.length > 5 ? parts.sublist(5).join('|').trim() : null;
+    if (id.isEmpty) continue;
+    out.add(
+      RemoteContainer(
+        id: id,
+        name: name.isEmpty ? id : name,
+        image: image,
+        status: status,
+        state: (state == null || state.isEmpty) ? null : state,
+        ports: (ports == null || ports.isEmpty) ? null : ports,
+      ),
+    );
+  }
+  return out;
+}
+
+Map<String, ({double? cpu, double? mem, String? memUsage, String? netIo})>
+    parseDockerStats(String raw) {
+  final map = <String,
+      ({double? cpu, double? mem, String? memUsage, String? netIo})>{};
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trim();
+    if (t.isEmpty || t.toUpperCase().startsWith('CONTAINER')) continue;
+    final parts = t.split('|');
+    if (parts.length < 3) continue;
+    final id = parts[0].trim();
+    if (id.isEmpty) continue;
+    final cpu = _parsePercent(parts[1]);
+    final mem = _parsePercent(parts[2]);
+    final memUsage = parts.length > 3 ? parts[3].trim() : null;
+    final netIo = parts.length > 4 ? parts[4].trim() : null;
+    map[id] = (
+      cpu: cpu,
+      mem: mem,
+      memUsage: (memUsage == null || memUsage.isEmpty) ? null : memUsage,
+      netIo: (netIo == null || netIo.isEmpty) ? null : netIo,
+    );
+  }
+  return map;
+}
+
+List<RemoteContainer> mergeDockerStats(
+  List<RemoteContainer> list,
+  Map<String, ({double? cpu, double? mem, String? memUsage, String? netIo})>
+      stats,
+) {
+  if (stats.isEmpty) return list;
+  ({double? cpu, double? mem, String? memUsage, String? netIo})? match(
+    String id,
+  ) {
+    final direct = stats[id];
+    if (direct != null) return direct;
+    for (final e in stats.entries) {
+      if (id.startsWith(e.key) || e.key.startsWith(id)) return e.value;
+    }
+    return null;
+  }
+
+  return [
+    for (final c in list)
+      if (match(c.id) case final s?)
+        RemoteContainer(
+          id: c.id,
+          name: c.name,
+          image: c.image,
+          status: c.status,
+          state: c.state,
+          ports: c.ports,
+          cpuPercent: s.cpu,
+          memPercent: s.mem,
+          memUsage: s.memUsage,
+          netIo: s.netIo,
+        )
+      else
+        c,
+  ];
+}
+
+double? _parsePercent(String raw) {
+  final t = raw.trim().replaceAll('%', '');
+  if (t.isEmpty) return null;
+  return double.tryParse(t);
+}

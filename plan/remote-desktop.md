@@ -615,6 +615,8 @@ lib/
 - [x] 任务管理器三页签 + Windows 性能 CIM 采样。
 - [x] 监控窗口「网络」页：网卡吞吐、监听端口、TCP 摘要（`remote_network.dart`）。
 - [x] 任务管理器第四页「网络」+ 性能页磁盘挂载/主机信息。
+- [x] 日志查看器：journalctl / Windows 事件日志 / 文件 tail（`remote_logs.dart` + LogsApp）。
+- [x] 容器管理：Docker 列表/启停/资源（`remote_containers.dart` + ContainersApp）。
 
 ---
 
