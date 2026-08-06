@@ -1,6 +1,7 @@
+import 'remote_process_list.dart';
 import 'ssh_workspace_controller.dart';
 
-/// 远端主机一次采样的资源快照（Linux：/proc + df + vmstat）。
+/// 远端主机一次采样的资源快照（Linux：/proc；Windows：CIM/WMI）。
 class RemoteHostSnapshot {
   const RemoteHostSnapshot({
     this.memUsed01,
@@ -24,6 +25,7 @@ class RemoteHostSnapshot {
   final String? dfInodeLine;
   final String? uptimeLine;
 
+  /// Linux 多段标记输出。
   static RemoteHostSnapshot? parse(String raw) {
     if (raw.isEmpty) return null;
     const a = '__A__';
@@ -85,6 +87,51 @@ class RemoteHostSnapshot {
       uptimeLine: uptime.isEmpty ? null : uptime,
     );
   }
+
+  /// Windows 标记输出：`__WA__ mem __WB__ cpu __WC__ disk __WG__ uptime __WZ__`
+  static RemoteHostSnapshot? parseWindows(String raw) {
+    if (raw.isEmpty || !raw.contains('__WA__')) return null;
+
+    String section(String start, String end) {
+      final i0 = raw.indexOf(start);
+      if (i0 < 0) return '';
+      var from = i0 + start.length;
+      while (from < raw.length && (raw[from] == '\n' || raw[from] == '\r')) {
+        from++;
+      }
+      final i1 = raw.indexOf(end, from);
+      if (i1 < 0) return raw.substring(from).trim();
+      return raw.substring(from, i1).trim();
+    }
+
+    double? ratio(String block) {
+      final line = block.split(RegExp(r'[\r\n]+')).first.trim();
+      if (line.isEmpty) return null;
+      final v = double.tryParse(line);
+      if (v == null) return null;
+      return v.clamp(0.0, 1.0);
+    }
+
+    final mem = ratio(section('__WA__', '__WB__'));
+    final cpu = ratio(section('__WB__', '__WC__'));
+    final disk = ratio(section('__WC__', '__WG__'));
+    final uptime = section('__WG__', '__WZ__')
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .join(' ');
+
+    if (mem == null && cpu == null && disk == null && uptime.isEmpty) {
+      return null;
+    }
+
+    return RemoteHostSnapshot(
+      memUsed01: mem,
+      cpuUsed01: cpu,
+      diskUsed01: disk,
+      uptimeLine: uptime.isEmpty ? null : uptime,
+    );
+  }
 }
 
 /// 多段输出：避免远端 awk 引号问题，在客户端解析。
@@ -109,12 +156,33 @@ printf '__Z__\n'
 String get kRemoteStatusBundleOneLine =>
     kRemoteStatusBundle.replaceAll('\n', ';');
 
+/// Windows：内存 / CPU / C: 磁盘占用 + 运行时间。
+const String kWindowsStatusBundle =
+    r'''powershell -NoProfile -NonInteractive -Command "$os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $mem=1-($os.FreePhysicalMemory/[double]$os.TotalVisibleMemorySize); $disk=0; if($d -and $d.Size -gt 0){$disk=1-($d.FreeSpace/[double]$d.Size)}; $up=(Get-Date)-$os.LastBootUpTime; Write-Output '__WA__'; Write-Output ([math]::Round($mem,4)); Write-Output '__WB__'; Write-Output ([math]::Round(($cpu/100.0),4)); Write-Output '__WC__'; Write-Output ([math]::Round($disk,4)); Write-Output '__WG__'; Write-Output ($up.Days.ToString()+'d '+$up.Hours.ToString()+'h '+$up.Minutes.ToString()+'m'); Write-Output '__WZ__'"''';
+
 Future<RemoteHostSnapshot?> fetchRemoteHostSnapshot(
-  SshWorkspaceController controller,
-) async {
+  SshWorkspaceController controller, {
+  RemoteOsKind? osHint,
+}) async {
   if (!controller.connected) return null;
-  final bundle = await controller.runRemoteForStatus(kRemoteStatusBundleOneLine);
-  return RemoteHostSnapshot.parse(bundle ?? '');
+  final os = osHint ?? await detectRemoteOs(controller);
+  switch (os) {
+    case RemoteOsKind.linux:
+      final bundle =
+          await controller.runRemoteForStatus(kRemoteStatusBundleOneLine);
+      return RemoteHostSnapshot.parse(bundle ?? '');
+    case RemoteOsKind.windows:
+      final bundle =
+          await controller.runRemoteForStatus(kWindowsStatusBundle);
+      return RemoteHostSnapshot.parseWindows(bundle ?? '');
+    case RemoteOsKind.unknown:
+      final linux =
+          await controller.runRemoteForStatus(kRemoteStatusBundleOneLine);
+      final linuxSnap = RemoteHostSnapshot.parse(linux ?? '');
+      if (linuxSnap != null) return linuxSnap;
+      final win = await controller.runRemoteForStatus(kWindowsStatusBundle);
+      return RemoteHostSnapshot.parseWindows(win ?? '');
+  }
 }
 
 double? _parseMeminfo(String block) {

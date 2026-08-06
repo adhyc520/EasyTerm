@@ -62,6 +62,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get menuTabDuplicate => 'Duplicate Tab';
 
   @override
+  String get menuTabToggleDesktop => 'Toggle desktop / terminal';
+
+  @override
+  String get menuTabToggleDesktopToDesktop => 'Switch to desktop mode';
+
+  @override
+  String get menuTabToggleDesktopToTerminal => 'Switch to terminal mode';
+
+  @override
+  String get desktopSidebarOpenFiles => 'Open file manager';
+
+  @override
+  String get desktopSidebarExpandHosts => 'Expand saved hosts';
+
+  @override
   String get menuSplitRight => 'Split Right';
 
   @override
@@ -192,7 +207,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get healthBoardMetricsUnavailable =>
-      'Remote metrics unavailable (needs Linux /proc)';
+      'Remote metrics unavailable (Linux /proc or Windows CIM)';
 
   @override
   String get healthBoardNoSessions =>
@@ -607,6 +622,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String sftpDeleteConfirmBody(String name) {
     return 'Delete “$name”?';
   }
+
+  @override
+  String sftpDeleteConfirmBodyMultiple(int count) {
+    return 'Delete $count selected items?';
+  }
+
+  @override
+  String sftpDownloadedMultiple(int count) {
+    return 'Downloaded $count items';
+  }
+
+  @override
+  String sftpSelectionCount(int count) {
+    return '$count selected';
+  }
+
+  @override
+  String get sftpPickDownloadDirTitle => 'Choose folder to download into';
 
   @override
   String get sftpDeleteConfirm => 'Delete';

@@ -62,6 +62,21 @@ class AppLocalizationsZh extends AppLocalizations {
   String get menuTabDuplicate => '复制当前窗口';
 
   @override
+  String get menuTabToggleDesktop => '切换桌面/终端';
+
+  @override
+  String get menuTabToggleDesktopToDesktop => '切换到桌面模式';
+
+  @override
+  String get menuTabToggleDesktopToTerminal => '切换到终端模式';
+
+  @override
+  String get desktopSidebarOpenFiles => '打开文件管理器';
+
+  @override
+  String get desktopSidebarExpandHosts => '展开已保存主机';
+
+  @override
   String get menuSplitRight => '向右分屏';
 
   @override
@@ -187,7 +202,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get healthBoardFetching => '正在拉取远端指标…';
 
   @override
-  String get healthBoardMetricsUnavailable => '暂无法获取远端指标（需 Linux /proc）';
+  String get healthBoardMetricsUnavailable =>
+      '暂无法获取远端指标（需 Linux /proc 或 Windows CIM）';
 
   @override
   String get healthBoardNoSessions => '暂无会话。新建连接后可在此查看服务器状态。';
@@ -585,6 +601,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String sftpDeleteConfirmBody(String name) {
     return '确定删除「$name」？';
   }
+
+  @override
+  String sftpDeleteConfirmBodyMultiple(int count) {
+    return '确定删除选中的 $count 项？';
+  }
+
+  @override
+  String sftpDownloadedMultiple(int count) {
+    return '已下载 $count 项';
+  }
+
+  @override
+  String sftpSelectionCount(int count) {
+    return '已选 $count 项';
+  }
+
+  @override
+  String get sftpPickDownloadDirTitle => '选择下载保存文件夹';
 
   @override
   String get sftpDeleteConfirm => '删除';

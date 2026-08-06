@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../desktop/desktop_window_manager.dart';
 import 'assistant_chat_session.dart';
 import 'session_pane.dart';
 import 'ssh_workspace_controller.dart';
 import 'workbench_settings_store.dart';
+
+enum SessionViewMode { terminal, desktop }
 
 class SessionTab {
   SessionTab({
@@ -20,6 +23,10 @@ class SessionTab {
   SessionPaneNode root;
   int focusedPaneId;
   final AssistantChatSession assistant;
+  SessionViewMode viewMode = SessionViewMode.terminal;
+  DesktopWindowManager? _desktop;
+
+  DesktopWindowManager? get desktopWindowManager => _desktop;
 
   /// 当前焦点窗格的控制器（侧栏 SFTP / 助手 / 状态栏共用）。
   SshWorkspaceController get controller {
@@ -275,6 +282,31 @@ class SessionTabsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  static String hostKeyFor(SessionTab tab) {
+    final c = tab.controller;
+    return '${c.username}@${c.host}:${c.port}';
+  }
+
+  /// 切换标签视图模式（终端 / 可视化桌面）。桌面管理器懒创建并按 host 还原布局。
+  void setViewMode(int tabIndex, SessionViewMode mode) {
+    if (tabIndex < 0 || tabIndex >= _tabs.length) return;
+    final t = _tabs[tabIndex];
+    if (t.viewMode == mode) return;
+    t.viewMode = mode;
+    if (mode == SessionViewMode.desktop) {
+      t._desktop ??= DesktopWindowManager(
+        controller: t.controller,
+        hostKey: hostKeyFor(t),
+        settings: settings,
+      );
+      unawaited(t._desktop!.restoreLayout());
+    } else {
+      // 退出桌面：先落盘再清窗口，保留主 shell / 终端缓冲
+      unawaited(t._desktop?.leaveDesktop());
+    }
+    notifyListeners();
+  }
+
   void closeTab(int index) {
     if (index < 0 || index >= _tabs.length) return;
     final tab = _tabs[index];
@@ -327,6 +359,8 @@ class SessionTabsController extends ChangeNotifier {
   }
 
   void _disposeTabResources(SessionTab tab) {
+    tab._desktop?.dispose();
+    tab._desktop = null;
     tab.assistant.dispose();
     for (final leaf in tab.root.leaves) {
       leaf.controller.removeListener(_onTabNotify);

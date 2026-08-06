@@ -200,6 +200,36 @@ abstract class AppLocalizations {
   /// **'Duplicate Tab'**
   String get menuTabDuplicate;
 
+  /// No description provided for @menuTabToggleDesktop.
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle desktop / terminal'**
+  String get menuTabToggleDesktop;
+
+  /// No description provided for @menuTabToggleDesktopToDesktop.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to desktop mode'**
+  String get menuTabToggleDesktopToDesktop;
+
+  /// No description provided for @menuTabToggleDesktopToTerminal.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to terminal mode'**
+  String get menuTabToggleDesktopToTerminal;
+
+  /// No description provided for @desktopSidebarOpenFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Open file manager'**
+  String get desktopSidebarOpenFiles;
+
+  /// No description provided for @desktopSidebarExpandHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand saved hosts'**
+  String get desktopSidebarExpandHosts;
+
   /// No description provided for @menuSplitRight.
   ///
   /// In en, this message translates to:
@@ -449,7 +479,7 @@ abstract class AppLocalizations {
   /// No description provided for @healthBoardMetricsUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Remote metrics unavailable (needs Linux /proc)'**
+  /// **'Remote metrics unavailable (Linux /proc or Windows CIM)'**
   String get healthBoardMetricsUnavailable;
 
   /// No description provided for @healthBoardNoSessions.
@@ -1201,6 +1231,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete “{name}”?'**
   String sftpDeleteConfirmBody(String name);
+
+  /// No description provided for @sftpDeleteConfirmBodyMultiple.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count} selected items?'**
+  String sftpDeleteConfirmBodyMultiple(int count);
+
+  /// No description provided for @sftpDownloadedMultiple.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded {count} items'**
+  String sftpDownloadedMultiple(int count);
+
+  /// No description provided for @sftpSelectionCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected'**
+  String sftpSelectionCount(int count);
+
+  /// No description provided for @sftpPickDownloadDirTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose folder to download into'**
+  String get sftpPickDownloadDirTitle;
 
   /// No description provided for @sftpDeleteConfirm.
   ///

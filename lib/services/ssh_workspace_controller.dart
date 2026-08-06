@@ -21,6 +21,11 @@ import 'package:xterm/xterm.dart';
 import '../io/file_read.dart';
 import '../l10n/app_localizations.dart';
 import '../util/remote_paths.dart';
+import 'browser_gateway.dart';
+import 'local_port_forwarder.dart';
+import 'remote_session.dart';
+import 'remote_shell.dart';
+import 'sftp_browser_host.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
 import 'sftp_planned_upload.dart';
 import 'sftp_upload_progress_hooks.dart';
@@ -240,7 +245,7 @@ bool sshFailureShouldOfferCredentialSheet(
   return false;
 }
 
-class SshWorkspaceController extends ChangeNotifier {
+class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   SshWorkspaceController({
     required this.settings,
     required this.host,
@@ -249,7 +254,9 @@ class SshWorkspaceController extends ChangeNotifier {
     required String password,
     String? privateKeyPem,
   }) : _password = password,
-       _privateKeyPem = privateKeyPem;
+       _privateKeyPem = privateKeyPem {
+    _remoteSession.onTransportClosed = _onRemoteTransportClosed;
+  }
 
   final WorkbenchSettingsStore settings;
   final String host;
@@ -261,9 +268,15 @@ class SshWorkspaceController extends ChangeNotifier {
   String get password => _password;
   String? get privateKeyPem => _privateKeyPem;
 
-  SSHClient? _client;
+  final RemoteSession _remoteSession = RemoteSession();
+
+  /// 传输会话（SSHClient + SftpClient + 掉线监控）。
+  RemoteSession get remoteSession => _remoteSession;
+
+  SSHClient? get _client => _remoteSession.client;
+  SftpClient? get _sftp => _remoteSession.sftp;
+
   SSHSession? _shell;
-  SftpClient? _sftp;
 
   StreamSubscription<Uint8List>? _stdoutSub;
   StreamSubscription<Uint8List>? _stderrSub;
@@ -342,9 +355,12 @@ class SshWorkspaceController extends ChangeNotifier {
   /// 供 UI 在历史缓冲之上叠加「重新连接」入口。
   bool _dropped = false;
 
+  @override
   String get remoteCwd => _remoteCwd;
+  @override
   List<SftpName> get entries => List.unmodifiable(_entries);
   String? get error => _error;
+  @override
   bool get loadingDir => _loadingDir;
   bool get connecting => _connecting;
   bool get connected => _connected;
@@ -356,9 +372,83 @@ class SshWorkspaceController extends ChangeNotifier {
   bool get suggestCredentialSheetAfterFailure =>
       _suggestCredentialSheetAfterFailure;
 
+  @override
   SftpClient? get sftp => _sftp;
 
+  /// 相对当前 cwd，或已是绝对路径（以 `/` 开头）时原样返回。
+  String resolveRemotePath(String nameOrAbsolute) {
+    final n = nameOrAbsolute.replaceAll('\\', '/');
+    if (n.startsWith('/')) return n;
+    return remoteJoin(_remoteCwd, n);
+  }
+
+  /// 桌面层复用同一 [SSHClient]；断线时为 `null`。
+  SSHClient? get clientForDesktop => _client;
+
+  BrowserGateway? _browserGateway;
+  final List<LocalPortForwarder> _desktopForwards = [];
+
+  /// 桌面多终端：在同一 [SSHClient] 上开独立 PTY。
+  Future<RemoteShell> openShell({int? cols, int? rows}) async {
+    final client = _client;
+    if (client == null) {
+      throw StateError('SSH 未连接');
+    }
+    return RemoteShell.open(
+      client,
+      settings: settings,
+      cols: cols,
+      rows: rows,
+    );
+  }
+
+  /// 懒创建并启动进程内 HTTP 网关（方案 B）；掉线/断连时由 [_teardownConnection] 停止。
+  Future<BrowserGateway> getOrCreateGateway() async {
+    final client = _client;
+    if (client == null) {
+      throw StateError('SSH 未连接');
+    }
+    final existing = _browserGateway;
+    if (existing != null && existing.isRunning) {
+      // 客户端更换后需重建
+      if (identical(existing.client, client)) return existing;
+      await existing.stop();
+      _browserGateway = null;
+    }
+    final gw = BrowserGateway(client);
+    await gw.start();
+    _browserGateway = gw;
+    return gw;
+  }
+
+  /// 方案 A 兜底：本地监听 + 每连接一条 forwardLocal。
+  /// 断连时本控制器会统一 [stop]；调用方也可 [releaseLocalForward]。
+  Future<LocalPortForwarder> openLocalForward(
+    String remoteHost,
+    int remotePort, {
+    int? localPort,
+  }) async {
+    final client = _client;
+    if (client == null) {
+      throw StateError('SSH 未连接');
+    }
+    final fwd = LocalPortForwarder(client, remoteHost, remotePort);
+    await fwd.start(localPort: localPort);
+    _desktopForwards.add(fwd);
+    return fwd;
+  }
+
+  /// 停止并移出登记表（浏览器直连切换目标端口时用）。
+  Future<void> releaseLocalForward(LocalPortForwarder? fwd) async {
+    if (fwd == null) return;
+    _desktopForwards.remove(fwd);
+    try {
+      await fwd.stop();
+    } catch (_) {}
+  }
+
   /// 拖曳上传任务列表（仅监听本对象可避免整页文件树随字节进度重建）。
+  @override
   final SftpUploadTaskList uploadTasks = SftpUploadTaskList();
 
   void _setError(String? e, {bool notify = true}) {
@@ -377,6 +467,7 @@ class SshWorkspaceController extends ChangeNotifier {
     if (_sessionDisposed) return;
     _connecting = true;
     _dropped = false;
+    _remoteSession.clearDropped();
     _suggestCredentialSheetAfterFailure = false;
     _setError(null);
     notifyListeners();
@@ -411,7 +502,7 @@ class SshWorkspaceController extends ChangeNotifier {
 
           // 公钥失败时仍应尝试密码；部分服务端只开启 keyboard-interactive（未开启 password 方法）。
           final hasPassword = _password.isNotEmpty;
-          _client = SSHClient(
+          final client = SSHClient(
             socket,
             username: username,
             identities: identities,
@@ -425,7 +516,15 @@ class SshWorkspaceController extends ChangeNotifier {
                 : Duration(seconds: settings.sshKeepAliveSec),
           );
 
-          await _client!.authenticated;
+          await client.authenticated;
+          if (_sessionDisposed) {
+            try {
+              client.close();
+            } catch (_) {}
+            return;
+          }
+
+          await _remoteSession.attach(client);
           if (_sessionDisposed) return;
 
           _shell = await _client!.shell(
@@ -436,8 +535,6 @@ class SshWorkspaceController extends ChangeNotifier {
             ),
           );
 
-          _sftp = await _client!.sftp();
-          await _sftp!.handshake;
           if (_sessionDisposed) return;
 
           _remoteCwd = await _sftp!.absolute('.');
@@ -451,8 +548,8 @@ class SshWorkspaceController extends ChangeNotifier {
           _wireShell();
 
           _connected = true;
+          _dropped = false;
           lastError = null;
-          _startDropMonitor();
           break;
         } catch (e, st) {
           lastError = e;
@@ -558,6 +655,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }, onError: (e) => debugPrint('stderr: $e'));
   }
 
+  @override
   Future<void> refreshDirectory() async {
     final client = _sftp;
     if (client == null) return;
@@ -582,6 +680,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> navigateInto(String name) async {
     final path = remoteJoin(_remoteCwd, name);
     final client = _sftp;
@@ -611,6 +710,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 跳转到绝对目录路径（须为已存在的目录）。
+  @override
   Future<void> navigateToAbsolutePath(String absolutePath) async {
     final client = _sftp;
     if (client == null) return;
@@ -635,6 +735,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> deleteRemote(String name) async {
     final client = _sftp;
     if (client == null) return;
@@ -690,6 +791,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 批量上传多个本机路径（拖入多个文件/目录时一次性处理）。
+  @override
   Future<void> uploadMultipleLocalPaths(List<String> localPaths) async {
     final client = _sftp;
     if (client == null) return;
@@ -766,6 +868,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 检测当前远程目录下是否已有与 [localPath] 最后一级同名的项。
+  @override
   Future<SftpRemoteUploadConflict> inspectLocalUploadConflict(
     String localPath,
   ) async {
@@ -779,6 +882,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 删除当前远程目录下名为 [relativeName] 的文件或整棵子目录（用于覆盖上传前）。
+  @override
   Future<void> removeRemoteSubtreeForOverwrite(String relativeName) async {
     final client = _sftp;
     if (client == null) return;
@@ -813,18 +917,19 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 将当前目录下的远程文件流式保存到本机绝对路径（无编辑器体积上限）。
+  @override
   Future<void> downloadRemoteFileToLocalPath(
     String relativeName,
     String localFilePath,
   ) async {
     final client = _sftp;
     if (client == null) return;
-    final remotePath = remoteJoin(_remoteCwd, relativeName);
+    final remotePath = resolveRemotePath(relativeName);
     final plan = await sftp_transfer.planDownloadSingleFile(
       sftp: client,
       remotePath: remotePath,
       localPath: localFilePath,
-      displayLabel: relativeName,
+      displayLabel: remoteBasename(relativeName),
     );
     final taskIds = plan.map((e) => e.taskId).toSet();
     uploadTasks.appendTasks(
@@ -969,7 +1074,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }) async {
     final client = _sftp;
     if (client == null) return;
-    final remotePath = remoteJoin(_remoteCwd, relativeName);
+    final remotePath = resolveRemotePath(relativeName);
     final baseName = remoteBasename(relativeName);
 
     // 边规划边把发现的文件追加到 UI 队列，让用户在拖出瞬间就能看到任务一条条
@@ -1104,7 +1209,7 @@ class SshWorkspaceController extends ChangeNotifier {
     );
 
     try {
-      final remotePath = remoteJoin(_remoteCwd, relativeName);
+      final remotePath = resolveRemotePath(relativeName);
       final opened = await client.open(remotePath, mode: SftpFileOpenMode.read);
       try {
         if (fileSizeBytes <= 0) {
@@ -1145,6 +1250,7 @@ class SshWorkspaceController extends ChangeNotifier {
   }
 
   /// 将远程子目录下载到本机 [localParentPath] 下，生成 `localParentPath/relativeDirName/`。
+  @override
   Future<void> downloadRemoteDirectoryToLocal(
     String relativeDirName,
     String localParentPath,
@@ -1203,6 +1309,7 @@ class SshWorkspaceController extends ChangeNotifier {
     );
   }
 
+  @override
   Future<Uint8List?> readRemoteFile(String relativeName) async {
     final client = _sftp;
     if (client == null) return null;
@@ -1220,6 +1327,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> writeRemoteFile(String relativeName, Uint8List bytes) async {
     final client = _sftp;
     if (client == null) return;
@@ -1239,6 +1347,7 @@ class SshWorkspaceController extends ChangeNotifier {
     await refreshDirectory();
   }
 
+  @override
   Future<int?> remoteMtime(String relativeName) async {
     final client = _sftp;
     if (client == null) return null;
@@ -1260,7 +1369,7 @@ class SshWorkspaceController extends ChangeNotifier {
     }
   }
 
-  /// 取消订阅、关闭 shell/sftp/client 并置空。
+  /// 取消订阅、关闭 shell / 桌面资源 / 传输会话。
   ///
   /// [keepTerminal] 为 `true` 时保留 [_terminal] 与 [_entries]，用于「掉线后保留
   /// 历史缓冲以供重连」的场景；为 `false`（[disconnect] 的对外语义）时彻底清空。
@@ -1275,15 +1384,21 @@ class SshWorkspaceController extends ChangeNotifier {
     } catch (_) {}
     _shell = null;
 
+    final gw = _browserGateway;
+    _browserGateway = null;
     try {
-      _sftp?.close();
+      await gw?.stop();
     } catch (_) {}
-    _sftp = null;
 
-    try {
-      _client?.close();
-    } catch (_) {}
-    _client = null;
+    final forwards = List<LocalPortForwarder>.from(_desktopForwards);
+    _desktopForwards.clear();
+    for (final f in forwards) {
+      try {
+        await f.stop();
+      } catch (_) {}
+    }
+
+    await _remoteSession.detach(keepNotify: false);
 
     _connected = false;
     if (!keepTerminal) {
@@ -1325,36 +1440,41 @@ class SshWorkspaceController extends ChangeNotifier {
     await connect();
   }
 
-  /// 监听当前 [SSHClient] 的传输关闭 / 出错，触发掉线处理。
-  ///
-  /// 必须在 `_client` 赋值、`_connected` 置真之后调用；用捕获的 [client] 引用
-  /// 比对，避免重连替换后的旧 client 误触发。
-  void _startDropMonitor() {
-    final client = _client;
-    if (client == null) return;
-    client.done.then(
-      (_) => _handleTransportClosed(client, null),
-      onError: (Object e, StackTrace st) => _handleTransportClosed(client, e),
-    );
+  /// [RemoteSession] 传输关闭后回调：client/sftp 已 detach，此处收尾 shell / 桌面资源。
+  void _onRemoteTransportClosed(Object? error) {
+    unawaited(_handleRemoteTransportClosed(error));
   }
 
-  void _handleTransportClosed(SSHClient client, Object? error) {
-    unawaited(_handleTransportClosedAsync(client, error));
-  }
-
-  Future<void> _handleTransportClosedAsync(
-    SSHClient client,
-    Object? error,
-  ) async {
+  Future<void> _handleRemoteTransportClosed(Object? error) async {
     if (_sessionDisposed) return;
-    // 已被重连替换的旧 client 关闭：忽略。
-    if (!identical(_client, client)) return;
-    // 已在过渡态（主动 disconnect / 正在重连）：忽略，避免重复处理。
-    if (!_connected) return;
-
     debugPrint('SSH transport closed unexpectedly: $error');
-    await _teardownConnection(keepTerminal: true);
+
+    await _stdoutSub?.cancel();
+    await _stderrSub?.cancel();
+    _stdoutSub = null;
+    _stderrSub = null;
+
+    try {
+      _shell?.close();
+    } catch (_) {}
+    _shell = null;
+
+    final gw = _browserGateway;
+    _browserGateway = null;
+    try {
+      await gw?.stop();
+    } catch (_) {}
+
+    final forwards = List<LocalPortForwarder>.from(_desktopForwards);
+    _desktopForwards.clear();
+    for (final f in forwards) {
+      try {
+        await f.stop();
+      } catch (_) {}
+    }
+
     if (_sessionDisposed) return;
+    _connected = false;
     _dropped = true;
 
     String message;
@@ -1379,8 +1499,12 @@ class SshWorkspaceController extends ChangeNotifier {
   void dispose() {
     if (_sessionDisposed) return;
     _sessionDisposed = true;
+    _remoteSession.onTransportClosed = null;
     uploadTasks.dispose();
-    unawaited(disconnect());
+    unawaited(() async {
+      await disconnect();
+      _remoteSession.dispose();
+    }());
     super.dispose();
   }
 }

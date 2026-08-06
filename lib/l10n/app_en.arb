@@ -22,6 +22,11 @@
   "menuTabCloseOthers": "Close other tabs",
   "menuTabCloseAll": "Close all tabs",
   "menuTabDuplicate": "Duplicate Tab",
+  "menuTabToggleDesktop": "Toggle desktop / terminal",
+  "menuTabToggleDesktopToDesktop": "Switch to desktop mode",
+  "menuTabToggleDesktopToTerminal": "Switch to terminal mode",
+  "desktopSidebarOpenFiles": "Open file manager",
+  "desktopSidebarExpandHosts": "Expand saved hosts",
   "menuSplitRight": "Split Right",
   "menuSplitLeft": "Split Left",
   "menuSplitDown": "Split Down",
@@ -68,7 +73,7 @@
   "healthBoardDisk": "Disk",
   "healthBoardLoad": "Load",
   "healthBoardFetching": "Fetching remote metrics…",
-  "healthBoardMetricsUnavailable": "Remote metrics unavailable (needs Linux /proc)",
+  "healthBoardMetricsUnavailable": "Remote metrics unavailable (Linux /proc or Windows CIM)",
   "healthBoardNoSessions": "No sessions yet. Connect a host to see remote status here.",
   "healthBoardNoConnected": "No connected hosts. Connect to view remote CPU, memory, disk, and load.",
   "healthBoardSessionStatus": "Connection status",
@@ -250,6 +255,25 @@
       "name": {"type": "String"}
     }
   },
+  "sftpDeleteConfirmBodyMultiple": "Delete {count} selected items?",
+  "@sftpDeleteConfirmBodyMultiple": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpDownloadedMultiple": "Downloaded {count} items",
+  "@sftpDownloadedMultiple": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpSelectionCount": "{count} selected",
+  "@sftpSelectionCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpPickDownloadDirTitle": "Choose folder to download into",
   "sftpDeleteConfirm": "Delete",
   "sftpCancel": "Cancel",
   "remoteEditorSave": "Save",

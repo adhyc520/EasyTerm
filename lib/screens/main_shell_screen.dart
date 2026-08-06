@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../desktop/desktop_window_manager.dart';
+import '../desktop/remote_desktop_view.dart';
 import '../l10n/app_localizations.dart';
 import '../models/saved_host_profile.dart';
 import '../services/code_snippets_store.dart';
@@ -60,6 +62,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   /// 侧栏在「已保存连接」与「文件浏览器」之间切换，避免与终端并排占两列宽度。
   _SidebarView _sidebarView = _SidebarView.savedHosts;
+
+  /// 桌面模式下侧栏默认收成图标条；为 true 时临时展开已保存主机列表。
+  bool _desktopSidebarExpanded = false;
 
   /// 与 [_syncSidebarToFileOnConnect] 配合：仅在当前选中标签「刚连上」时自动切到文件页。
   int? _sidebarSyncTabId;
@@ -788,45 +793,99 @@ class _MainShellScreenState extends State<MainShellScreen> {
                   onHealthBoard: _openHealthBoard,
                 ),
                 Expanded(
-                  child: _ResizableSidebarAndTerminal(
-                    sidebar: _WorkbenchSidebarPane(
-                      view: _sidebarView,
-                      onViewChanged: (v) => setState(() => _sidebarView = v),
-                      savedHosts: _ConnectionsRail(
-                        profiles: _profiles,
-                        tabs: _tabs,
-                        onTapProfile: _connectFromSaved,
-                        onEditProfile: _editSavedProfile,
-                        onDeleteProfile: _deleteSavedProfileWithConfirm,
-                      ),
-                      fileBrowser: _middlePane(),
-                    ),
-                    terminal: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_tabs.tabs.isNotEmpty)
-                          _WorkspaceSessionTabBar(
-                            tabs: _tabs,
-                            onSelect: (i) => _tabs.selectTab(i),
-                            onClose: (i) => _tabs.closeTab(i),
-                            onDuplicate: (i) => _tabs.duplicateTab(i),
-                            onSplitRight: _splitRight,
-                            onSplitDown: _splitDown,
-                          ),
-                        if (_pendingSnippetBody != null)
-                          _SnippetPickBanner(onCancel: _cancelSnippetPick),
-                        Expanded(
-                          child: TerminalWithAssistantSplit(
-                            settings: widget.settings,
-                            sessionTab: _tabs.selectedTab,
-                            terminalChild: _rightPane(),
-                          ),
+                  child: Builder(
+                    builder: (context) {
+                      final selected = _tabs.selectedTab;
+                      final isDesktop =
+                          selected?.viewMode == SessionViewMode.desktop;
+                      final sidebarCollapsed =
+                          isDesktop && !_desktopSidebarExpanded;
+                      return _ResizableSidebarAndTerminal(
+                        compactSidebar: sidebarCollapsed,
+                        sidebar: isDesktop
+                            ? _DesktopModeSidebar(
+                                expanded: _desktopSidebarExpanded,
+                                onExpandHosts: () => setState(
+                                  () => _desktopSidebarExpanded = true,
+                                ),
+                                onCollapse: () => setState(
+                                  () => _desktopSidebarExpanded = false,
+                                ),
+                                onOpenFiles: () {
+                                  final tab = _tabs.selectedTab;
+                                  final wm = tab?.desktopWindowManager;
+                                  if (wm == null) return;
+                                  wm.open(DesktopAppType.files);
+                                },
+                                savedHosts: _ConnectionsRail(
+                                  profiles: _profiles,
+                                  tabs: _tabs,
+                                  onTapProfile: _connectFromSaved,
+                                  onEditProfile: _editSavedProfile,
+                                  onDeleteProfile:
+                                      _deleteSavedProfileWithConfirm,
+                                ),
+                              )
+                            : _WorkbenchSidebarPane(
+                                view: _sidebarView,
+                                onViewChanged: (v) =>
+                                    setState(() => _sidebarView = v),
+                                savedHosts: _ConnectionsRail(
+                                  profiles: _profiles,
+                                  tabs: _tabs,
+                                  onTapProfile: _connectFromSaved,
+                                  onEditProfile: _editSavedProfile,
+                                  onDeleteProfile:
+                                      _deleteSavedProfileWithConfirm,
+                                ),
+                                fileBrowser: _middlePane(),
+                              ),
+                        terminal: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_tabs.tabs.isNotEmpty)
+                              _WorkspaceSessionTabBar(
+                                tabs: _tabs,
+                                onSelect: (i) {
+                                  _desktopSidebarExpanded = false;
+                                  _tabs.selectTab(i);
+                                },
+                                onClose: (i) => _tabs.closeTab(i),
+                                onDuplicate: (i) => _tabs.duplicateTab(i),
+                                onToggleViewMode: (i) {
+                                  final t = _tabs.tabs[i];
+                                  _tabs.setViewMode(
+                                    i,
+                                    t.viewMode == SessionViewMode.desktop
+                                        ? SessionViewMode.terminal
+                                        : SessionViewMode.desktop,
+                                  );
+                                  if (_tabs.selectedTab?.viewMode !=
+                                      SessionViewMode.desktop) {
+                                    _desktopSidebarExpanded = false;
+                                  }
+                                },
+                                onSplitRight: _splitRight,
+                                onSplitDown: _splitDown,
+                              ),
+                            if (_pendingSnippetBody != null)
+                              _SnippetPickBanner(onCancel: _cancelSnippetPick),
+                            Expanded(
+                              child: isDesktop
+                                  ? _rightPane()
+                                  : TerminalWithAssistantSplit(
+                                      settings: widget.settings,
+                                      sessionTab: _tabs.selectedTab,
+                                      terminalChild: _rightPane(),
+                                    ),
+                            ),
+                            WorkbenchStatusBar(
+                              controller: _tabs.selectedTab?.controller,
+                            ),
+                          ],
                         ),
-                        WorkbenchStatusBar(
-                          controller: _tabs.selectedTab?.controller,
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -863,6 +922,18 @@ class _MainShellScreenState extends State<MainShellScreen> {
         subtitle: l10n.placeholderTerminalSubtitle,
         actionLabel: l10n.newConnection,
         onAction: _openNewHostShortcut,
+      );
+    }
+    if (tab.viewMode == SessionViewMode.desktop) {
+      final wm = tab.desktopWindowManager;
+      if (wm == null) {
+        return const SizedBox.shrink();
+      }
+      return RemoteDesktopView(
+        key: ValueKey<Object>('desktop-${tab.id}'),
+        wm: wm,
+        controller: tab.controller,
+        settings: widget.settings,
       );
     }
     return SessionPaneLayout(
@@ -923,10 +994,12 @@ class _ResizableSidebarAndTerminal extends StatefulWidget {
   const _ResizableSidebarAndTerminal({
     required this.sidebar,
     required this.terminal,
+    this.compactSidebar = false,
   });
 
   final Widget sidebar;
   final Widget terminal;
+  final bool compactSidebar;
 
   @override
   State<_ResizableSidebarAndTerminal> createState() =>
@@ -939,6 +1012,7 @@ class _ResizableSidebarAndTerminalState
   static const double _minSidebar = 200;
   static const double _minTerminal = 280;
   static const double _maxSidebar = 520;
+  static const double _compactSidebarW = 48;
 
   /// 合并原左栏与中栏后，默认略宽以便文件列表可读；终端仍占剩余空间。
   double _sidebarW = 300;
@@ -946,6 +1020,7 @@ class _ResizableSidebarAndTerminalState
   double? _lastTotalWidth;
 
   void _syncToLayout(double total) {
+    if (widget.compactSidebar) return;
     final maxSidebar = (total - _splitterW - _minTerminal).clamp(
       _minSidebar,
       _maxSidebar,
@@ -960,6 +1035,7 @@ class _ResizableSidebarAndTerminalState
   }
 
   void _dragSplit(double dx) {
+    if (widget.compactSidebar) return;
     final total = _lastTotalWidth;
     if (total == null) return;
     setState(() {
@@ -979,15 +1055,119 @@ class _ResizableSidebarAndTerminalState
         _lastTotalWidth = total;
         _syncToLayout(total);
 
+        final sidebarW =
+            widget.compactSidebar ? _compactSidebarW : _sidebarW;
+
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(width: _sidebarW, child: widget.sidebar),
-            _WorkbenchColumnSplitter(width: _splitterW, onDrag: _dragSplit),
+            SizedBox(width: sidebarW, child: widget.sidebar),
+            if (!widget.compactSidebar)
+              _WorkbenchColumnSplitter(width: _splitterW, onDrag: _dragSplit),
             Expanded(child: widget.terminal),
           ],
         );
       },
+    );
+  }
+}
+
+/// 桌面模式侧栏：默认图标条；可临时展开已保存主机。
+class _DesktopModeSidebar extends StatelessWidget {
+  const _DesktopModeSidebar({
+    required this.expanded,
+    required this.onExpandHosts,
+    required this.onCollapse,
+    required this.onOpenFiles,
+    required this.savedHosts,
+  });
+
+  final bool expanded;
+  final VoidCallback onExpandHosts;
+  final VoidCallback onCollapse;
+  final VoidCallback onOpenFiles;
+  final Widget savedHosts;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (expanded) {
+      return Material(
+        color: context.wb.panel,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: context.wb.border)),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: MaterialLocalizations.of(context).closeButtonLabel,
+                    onPressed: onCollapse,
+                    icon: Icon(
+                      Icons.chevron_left_rounded,
+                      color: context.wb.accentBlue,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      l10n.sidebarSavedHostsTooltip,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: context.wb.primaryText,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: l10n.desktopSidebarOpenFiles,
+                    onPressed: onOpenFiles,
+                    icon: Icon(
+                      Icons.folder_open_outlined,
+                      size: 18,
+                      color: context.wb.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: savedHosts),
+          ],
+        ),
+      );
+    }
+
+    return Material(
+      color: context.wb.panel,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(right: BorderSide(color: context.wb.border)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            IconButton(
+              tooltip: l10n.desktopSidebarExpandHosts,
+              onPressed: onExpandHosts,
+              icon: Icon(Icons.dns_outlined, color: context.wb.textMuted),
+            ),
+            IconButton(
+              tooltip: l10n.desktopSidebarOpenFiles,
+              onPressed: onOpenFiles,
+              icon: Icon(
+                Icons.folder_open_outlined,
+                color: context.wb.accentBlue,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1368,6 +1548,7 @@ class _WorkspaceSessionTabBar extends StatefulWidget {
     required this.onSelect,
     required this.onClose,
     required this.onDuplicate,
+    required this.onToggleViewMode,
     required this.onSplitRight,
     required this.onSplitDown,
   });
@@ -1376,6 +1557,7 @@ class _WorkspaceSessionTabBar extends StatefulWidget {
   final void Function(int index) onSelect;
   final void Function(int index) onClose;
   final void Function(int index) onDuplicate;
+  final void Function(int index) onToggleViewMode;
   final VoidCallback onSplitRight;
   final VoidCallback onSplitDown;
 
@@ -1583,6 +1765,33 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 26,
+                        minHeight: 26,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      tooltip: t.viewMode == SessionViewMode.desktop
+                          ? l10n.menuTabToggleDesktopToTerminal
+                          : l10n.menuTabToggleDesktopToDesktop,
+                      style: IconButton.styleFrom(
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () {
+                        widget.onSelect(i);
+                        widget.onToggleViewMode(i);
+                      },
+                      icon: Icon(
+                        t.viewMode == SessionViewMode.desktop
+                            ? Icons.desktop_windows_rounded
+                            : Icons.terminal_rounded,
+                        size: 14,
+                        color: t.viewMode == SessionViewMode.desktop
+                            ? context.wb.accentBlue
+                            : context.wb.textMuted,
                       ),
                     ),
                     IconButton(

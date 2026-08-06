@@ -22,6 +22,11 @@
   "menuTabCloseOthers": "关闭其他标签",
   "menuTabCloseAll": "关闭全部标签",
   "menuTabDuplicate": "复制当前窗口",
+  "menuTabToggleDesktop": "切换桌面/终端",
+  "menuTabToggleDesktopToDesktop": "切换到桌面模式",
+  "menuTabToggleDesktopToTerminal": "切换到终端模式",
+  "desktopSidebarOpenFiles": "打开文件管理器",
+  "desktopSidebarExpandHosts": "展开已保存主机",
   "menuSplitRight": "向右分屏",
   "menuSplitLeft": "向左分屏",
   "menuSplitDown": "向下分屏",
@@ -68,7 +73,7 @@
   "healthBoardDisk": "磁盘",
   "healthBoardLoad": "负载",
   "healthBoardFetching": "正在拉取远端指标…",
-  "healthBoardMetricsUnavailable": "暂无法获取远端指标（需 Linux /proc）",
+  "healthBoardMetricsUnavailable": "暂无法获取远端指标（需 Linux /proc 或 Windows CIM）",
   "healthBoardNoSessions": "暂无会话。新建连接后可在此查看服务器状态。",
   "healthBoardNoConnected": "没有已连接的主机。连接后可查看远端 CPU、内存、磁盘与负载。",
   "healthBoardSessionStatus": "连接状态",
@@ -215,6 +220,25 @@
   "sftpBinaryNotOpened": "该文件为二进制，已取消在编辑器中打开",
   "sftpDeleteConfirmTitle": "删除确认",
   "sftpDeleteConfirmBody": "确定删除「{name}」？",
+  "sftpDeleteConfirmBodyMultiple": "确定删除选中的 {count} 项？",
+  "@sftpDeleteConfirmBodyMultiple": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpDownloadedMultiple": "已下载 {count} 项",
+  "@sftpDownloadedMultiple": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpSelectionCount": "已选 {count} 项",
+  "@sftpSelectionCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sftpPickDownloadDirTitle": "选择下载保存文件夹",
   "sftpDeleteConfirm": "删除",
   "sftpCancel": "取消",
   "remoteEditorSave": "保存",
