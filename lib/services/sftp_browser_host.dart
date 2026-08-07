@@ -26,16 +26,18 @@ abstract class SftpBrowserHost extends ChangeNotifier {
   Future<void> createRemoteFile(String name);
   Future<void> renameRemote(String oldName, String newName);
 
-  /// 将 [fromCwd] 下的 [names] 复制到当前 [remoteCwd]，返回粘贴后的新文件名。
+  /// 将 [fromCwd] 下的 [names] 复制到 [toCwd]（默认当前 [remoteCwd]），返回粘贴后的新文件名。
   Future<List<String>> copyRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   });
 
-  /// 将 [fromCwd] 下的 [names] 移动到当前 [remoteCwd]，返回粘贴后的新文件名。
+  /// 将 [fromCwd] 下的 [names] 移动到 [toCwd]（默认当前 [remoteCwd]），返回粘贴后的新文件名。
   Future<List<String>> moveRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   });
 
   Future<void> downloadRemoteFileToLocalPath(String name, String localPath);

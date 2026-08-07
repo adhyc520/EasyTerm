@@ -85,6 +85,11 @@ class _FileManagerAppState extends State<FileManagerApp> {
 
   void _openInEditor(String name) {
     final path = remoteJoin(_host.remoteCwd, name);
+    for (final w in widget.wm.allWindows) {
+      if (w.type != DesktopAppType.editor) continue;
+      final hook = w.tryOpenEditorPath;
+      if (hook != null && hook(path)) return;
+    }
     widget.wm.open(
       DesktopAppType.editor,
       args: {

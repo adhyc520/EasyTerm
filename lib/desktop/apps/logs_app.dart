@@ -5,11 +5,12 @@ import 'package:flutter/services.dart';
 
 import '../../services/remote_logs.dart';
 import '../../services/remote_process_list.dart';
+import '../../services/remote_stream.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
 
-/// 远端日志查看器：journal / 事件日志 / 文件 tail。
+/// 远端日志查看器：journal / 事件日志 / 文件 tail；支持实时跟随。
 class LogsApp extends StatefulWidget {
   const LogsApp({
     super.key,
@@ -33,6 +34,7 @@ class _LogsAppState extends State<LogsApp> {
   RemoteLogSnapshot? _snap;
   bool _loading = false;
   bool _autoRefresh = true;
+  bool _liveFollow = true;
   String? _error;
   String _filter = '';
   final _filterCtrl = TextEditingController();
@@ -40,6 +42,10 @@ class _LogsAppState extends State<LogsApp> {
   final _pathCtrl = TextEditingController(text: '/var/log/syslog');
   final _scroll = ScrollController();
   bool _stickBottom = true;
+
+  RemoteStream? _stream;
+  List<RemoteLogLine> _liveLines = const [];
+  bool _wantLive = true;
 
   @override
   void initState() {
@@ -55,33 +61,72 @@ class _LogsAppState extends State<LogsApp> {
     if (unit != null && unit.isNotEmpty) _unitCtrl.text = unit;
     final path = args['path']?.toString();
     if (path != null && path.isNotEmpty) _pathCtrl.text = path;
+    _liveFollow = widget.wm.desktopSettings.liveLogsDefault;
+    _wantLive = _liveFollow;
     widget.wm.addListener(_onWm);
     widget.controller.addListener(_onController);
+    widget.window.onConnectionRestored = _onConnectionRestored;
     _scroll.addListener(_onScroll);
-    unawaited(_tick());
-    _armTimer();
+    unawaited(_bootstrap());
+  }
+
+  void _onConnectionRestored() {
+    if (!mounted) return;
+    setState(() => _error = null);
+    unawaited(_restartMode());
+  }
+
+  Future<void> _bootstrap() async {
+    await _detectOs();
+    if (!mounted) return;
+    await _restartMode();
+  }
+
+  Future<void> _detectOs() async {
+    if (!_connected) return;
+    try {
+      _os = await detectRemoteOs(widget.controller);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    unawaited(_stopStream());
     _filterCtrl.dispose();
     _unitCtrl.dispose();
     _pathCtrl.dispose();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
+    widget.window.onConnectionRestored = null;
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
   }
 
   void _onWm() {
-    _armTimer();
+    if (widget.window.state == WindowState.minimized) {
+      unawaited(_stopStream());
+      _timer?.cancel();
+      _timer = null;
+    } else {
+      unawaited(_restartMode());
+    }
     if (mounted) setState(() {});
   }
 
   void _onController() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (!_connected) {
+      unawaited(_stopStream());
+      setState(() => _error = '连接已断开，重连后刷新');
+      return;
+    }
+    // 重连后若仍想跟随，自动重开。
+    if (_wantLive && _liveFollow && _stream == null) {
+      unawaited(_restartMode());
+    }
+    setState(() {});
   }
 
   void _onScroll() {
@@ -97,14 +142,107 @@ class _LogsAppState extends State<LogsApp> {
   bool get _connected =>
       widget.controller.connected && !widget.controller.dropped;
 
-  void _armTimer() {
+  bool get _canLive {
+    if (_os == RemoteOsKind.windows) return false;
+    return buildLinuxLogFollowCommand(
+          source: _source,
+          unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
+          path: _pathCtrl.text.trim(),
+          lines: 300,
+        ) !=
+        null;
+  }
+
+  Future<void> _restartMode() async {
+    if (!mounted || widget.window.state == WindowState.minimized) return;
+    await _stopStream();
     _timer?.cancel();
-    if (_paused) {
+    _timer = null;
+    if (!_connected || !_autoRefresh) return;
+    if (_liveFollow && _canLive) {
+      await _startLive();
+    } else {
+      await _tick();
+      _armSnapshotTimer();
+    }
+  }
+
+  void _armSnapshotTimer() {
+    _timer?.cancel();
+    if (_paused || (_liveFollow && _canLive)) {
       _timer = null;
       return;
     }
     _timer = Timer.periodic(const Duration(seconds: 4), (_) {
       unawaited(_tick());
+    });
+  }
+
+  Future<void> _stopStream() async {
+    final s = _stream;
+    _stream = null;
+    if (s == null) return;
+    s.removeListener(_onStream);
+    widget.controller.unregisterRemoteStream(s);
+    await s.stop();
+  }
+
+  Future<void> _startLive() async {
+    if (!_connected) return;
+    final cmd = buildLinuxLogFollowCommand(
+      source: _source,
+      unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
+      path: _pathCtrl.text.trim(),
+      lines: 300,
+    );
+    if (cmd == null) {
+      setState(() {
+        _liveFollow = false;
+        _error = '当前来源不支持实时跟随，已切回快照';
+      });
+      await _tick();
+      _armSnapshotTimer();
+      return;
+    }
+    setState(() {
+      _loading = _liveLines.isEmpty;
+      _error = null;
+    });
+    try {
+      final stream = await widget.controller.startRemoteStream(cmd);
+      if (!mounted) {
+        await stream.stop();
+        return;
+      }
+      _stream = stream;
+      stream.addListener(_onStream);
+      _onStream();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = '实时跟随启动失败：$e';
+        _loading = false;
+        _liveFollow = false;
+      });
+      await _tick();
+      _armSnapshotTimer();
+    }
+  }
+
+  void _onStream() {
+    final s = _stream;
+    if (s == null || !mounted) return;
+    setState(() {
+      _liveLines = remoteLogLinesFromRaw(s.lines);
+      _loading = false;
+      if (s.error != null) _error = s.error;
+      if (s.closed && s.error == null && _wantLive) {
+        _error = '日志流已结束';
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_stickBottom || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
   }
 
@@ -118,7 +256,7 @@ class _LogsAppState extends State<LogsApp> {
       return;
     }
     setState(() {
-      _loading = _snap == null;
+      _loading = _snap == null && _liveLines.isEmpty;
       _error = null;
     });
     try {
@@ -158,10 +296,18 @@ class _LogsAppState extends State<LogsApp> {
   }
 
   List<RemoteLogLine> get _filtered {
-    final all = _snap?.lines ?? const [];
+    final all = (_liveFollow && _canLive && _stream != null)
+        ? _liveLines
+        : (_snap?.lines ?? const []);
     final q = _filter.trim().toLowerCase();
     if (q.isEmpty) return all;
     return [for (final l in all) if (l.text.toLowerCase().contains(q)) l];
+  }
+
+  String get _modeLabel {
+    if (_liveFollow && _canLive && _stream != null) return '实时跟随';
+    if (_autoRefresh) return '快照 4s';
+    return '已暂停';
   }
 
   @override
@@ -190,7 +336,7 @@ class _LogsAppState extends State<LogsApp> {
                 ),
                 const SizedBox(width: 12),
                 SegmentedButton<RemoteLogSource>(
-                  style: ButtonStyle(
+                  style: const ButtonStyle(
                     visualDensity: VisualDensity.compact,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
@@ -214,17 +360,37 @@ class _LogsAppState extends State<LogsApp> {
                   selected: {_source},
                   onSelectionChanged: (s) {
                     setState(() => _source = s.first);
-                    unawaited(_tick());
+                    unawaited(_restartMode());
                   },
                 ),
                 const Spacer(),
+                if (!isWin)
+                  Tooltip(
+                    message: _liveFollow ? '切换为快照轮询' : '切换为实时跟随',
+                    child: IconButton(
+                      iconSize: 18,
+                      onPressed: () {
+                        setState(() {
+                          _liveFollow = !_liveFollow;
+                          _wantLive = _liveFollow;
+                        });
+                        unawaited(_restartMode());
+                      },
+                      icon: Icon(
+                        _liveFollow
+                            ? Icons.stream_rounded
+                            : Icons.photo_camera_outlined,
+                        color: _liveFollow ? wb.accentBlue : wb.textMuted,
+                      ),
+                    ),
+                  ),
                 Tooltip(
-                  message: _autoRefresh ? '暂停自动刷新' : '开启自动刷新',
+                  message: _autoRefresh ? '暂停' : '继续',
                   child: IconButton(
                     iconSize: 18,
                     onPressed: () {
                       setState(() => _autoRefresh = !_autoRefresh);
-                      _armTimer();
+                      unawaited(_restartMode());
                     },
                     icon: Icon(
                       _autoRefresh
@@ -244,7 +410,15 @@ class _LogsAppState extends State<LogsApp> {
                   IconButton(
                     tooltip: '刷新',
                     iconSize: 18,
-                    onPressed: _connected ? () => unawaited(_tick()) : null,
+                    onPressed: !_connected
+                        ? null
+                        : () {
+                            if (_liveFollow && _canLive) {
+                              unawaited(_restartMode());
+                            } else {
+                              unawaited(_tick());
+                            }
+                          },
                     icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
                   ),
               ],
@@ -279,7 +453,7 @@ class _LogsAppState extends State<LogsApp> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                       ),
-                      onSubmitted: (_) => unawaited(_tick()),
+                      onSubmitted: (_) => unawaited(_restartMode()),
                     ),
                   ),
                 ] else ...[
@@ -303,7 +477,7 @@ class _LogsAppState extends State<LogsApp> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                       ),
-                      onSubmitted: (_) => unawaited(_tick()),
+                      onSubmitted: (_) => unawaited(_restartMode()),
                     ),
                   ),
                 ],
@@ -340,7 +514,8 @@ class _LogsAppState extends State<LogsApp> {
                 if (_source == RemoteLogSource.journal) ...[
                   const SizedBox(width: 8),
                   TextButton(
-                    onPressed: _connected ? () => unawaited(_tick()) : null,
+                    onPressed:
+                        _connected ? () => unawaited(_restartMode()) : null,
                     child: const Text('应用'),
                   ),
                 ],
@@ -357,10 +532,27 @@ class _LogsAppState extends State<LogsApp> {
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-            child: Text(
-              '${_snap?.label ?? '—'} · ${lines.length} 行'
-              '${_filter.trim().isEmpty ? '' : '（已筛选）'}',
-              style: TextStyle(fontSize: 11, color: wb.textMuted),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${_snap?.label ?? (_source == RemoteLogSource.file ? _pathCtrl.text : (_unitCtrl.text.isEmpty ? '—' : _unitCtrl.text))} · ${lines.length} 行'
+                    '${_filter.trim().isEmpty ? '' : '（已筛选）'}',
+                    style: TextStyle(fontSize: 11, color: wb.textMuted),
+                  ),
+                ),
+                if (!_stickBottom)
+                  TextButton(
+                    onPressed: () {
+                      _stickBottom = true;
+                      if (_scroll.hasClients) {
+                        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+                      }
+                      setState(() {});
+                    },
+                    child: const Text('回到底部'),
+                  ),
+              ],
             ),
           ),
           Expanded(
@@ -426,7 +618,7 @@ class _LogsAppState extends State<LogsApp> {
                 ),
                 const Spacer(),
                 Text(
-                  _autoRefresh ? '自动刷新 4s' : '已暂停',
+                  _modeLabel,
                   style: TextStyle(fontSize: 11, color: wb.textMuted),
                 ),
               ],

@@ -20,11 +20,13 @@ import '../services/desktop_sftp_controller.dart';
 import '../services/sftp_browser_host.dart';
 import '../services/sftp_fs_transfer.dart' as sftp_transfer;
 import '../services/sftp_planned_upload.dart';
+import '../services/sftp_remote_clipboard.dart';
 import '../services/sftp_remote_copy.dart' as sftp_copy;
 import '../services/sftp_upload_task_list.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../theme/workbench_theme.dart';
+import '../util/desktop_drop_paths.dart';
 import '../util/remote_paths.dart';
 import 'sftp_folder_delayed_draggable.dart';
 
@@ -137,6 +139,9 @@ void _showEntryContextMenu(
   Future<void> Function()? onPaste,
   VoidCallback? onAnalyzeDiskUsage,
   VoidCallback? onOpenTerminal,
+  Future<void> Function()? onProperties,
+  Future<void> Function()? onCompress,
+  Future<void> Function()? onExtract,
 }) {
   final l = AppLocalizations.of(context)!;
   final overlay =
@@ -167,6 +172,12 @@ void _showEntryContextMenu(
         PopupMenuItem(value: 'rename', child: Text(l.sftpRenameMenu)),
       if (onAnalyzeDiskUsage != null)
         PopupMenuItem(value: 'du', child: Text(l.sftpAnalyzeDiskUsageMenu)),
+      if (onProperties != null)
+        const PopupMenuItem(value: 'props', child: Text('属性')),
+      if (onCompress != null)
+        const PopupMenuItem(value: 'compress', child: Text('压缩为 .tar.gz')),
+      if (onExtract != null)
+        const PopupMenuItem(value: 'extract', child: Text('解压到当前目录')),
       PopupMenuItem(
         value: 'del',
         child: Text(
@@ -184,6 +195,9 @@ void _showEntryContextMenu(
     if (v == 'paste' && onPaste != null) await onPaste();
     if (v == 'rename' && onRename != null) await onRename();
     if (v == 'du' && onAnalyzeDiskUsage != null) onAnalyzeDiskUsage();
+    if (v == 'props' && onProperties != null) await onProperties();
+    if (v == 'compress' && onCompress != null) await onCompress();
+    if (v == 'extract' && onExtract != null) await onExtract();
     if (v == 'del') await onDelete();
   });
 }
@@ -275,18 +289,6 @@ class _PasteClipboardIntent extends Intent {
   const _PasteClipboardIntent();
 }
 
-class _SftpRemoteClipboard {
-  const _SftpRemoteClipboard({
-    required this.sourceCwd,
-    required this.names,
-    required this.isCut,
-  });
-
-  final String sourceCwd;
-  final List<String> names;
-  final bool isCut;
-}
-
 /// 将系统剪贴板中的 `file://` URI 转成本地路径；非 file scheme 返回 null。
 String? sftpLocalPathFromClipboardFileUri(Uri uri) {
   if (!uri.isScheme('file')) return null;
@@ -342,16 +344,36 @@ bool _sftpShiftPressed() => HardwareKeyboard.instance.isShiftPressed;
 void _trackSftpInternalDragItem(
   DragItem item, {
   String? tempPath,
+  String? remotePath,
+  List<String>? remotePaths,
   VoidCallback? onDisposed,
 }) {
+  final paths = <String>[
+    if (remotePaths != null)
+      for (final p in remotePaths)
+        if (p.isNotEmpty) p
+    else if (remotePath != null && remotePath.isNotEmpty)
+      remotePath,
+  ];
+  if (paths.isNotEmpty) {
+    SshWorkspaceController.lastDragRemotePath = paths.first;
+    item.add(Formats.plainText(paths.join('\n')));
+  }
   item.onRegistered.addListener(() {
     SftpBrowser.isDraggingInternalItem = true;
+    if (paths.isNotEmpty) {
+      SshWorkspaceController.activeDragRemotePaths = List<String>.from(paths);
+    }
     if (tempPath != null && tempPath.isNotEmpty) {
-      SshWorkspaceController.registerDragTempPath(tempPath);
+      SshWorkspaceController.registerDragTempPath(
+        tempPath,
+        remotePath: paths.isEmpty ? remotePath : paths.first,
+      );
     }
   });
   item.onDisposed.addListener(() {
     SftpBrowser.isDraggingInternalItem = false;
+    SshWorkspaceController.activeDragRemotePaths = const [];
     if (tempPath != null && tempPath.isNotEmpty) {
       SshWorkspaceController.unregisterDragTempPath(tempPath);
     }
@@ -366,6 +388,7 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
   const _SftpRemoteEntryDragWrap({
     required this.controller,
     required this.relativeName,
+    required this.dragRelativeNames,
     required this.isDirectory,
     required this.pickerContext,
     required this.child,
@@ -373,11 +396,19 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
 
   final SftpBrowserHost controller;
   final String relativeName;
+
+  /// 本次拖出的相对名列表（多选时含全部选中项）。
+  final List<String> dragRelativeNames;
   final bool isDirectory;
 
   /// 用于目录拖出时的文件夹选择对话框与 SnackBar（须为 [Navigator] 子树）。
   final BuildContext pickerContext;
   final Widget child;
+
+  List<String> get _remoteAbsPaths => [
+    for (final n in dragRelativeNames)
+      remoteJoin(controller.remoteCwd, n),
+  ];
 
   Future<DragItem?> _dragItemProvider(DragItemRequest request) async {
     final workspace = _workspaceForDrag(controller);
@@ -424,7 +455,12 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
       if (sftpFolderDragShouldAbort(request.session)) return null;
 
       final item = DragItem(suggestedName: nameOnly);
-      _trackSftpInternalDragItem(item, tempPath: tempPath);
+      _trackSftpInternalDragItem(
+        item,
+        tempPath: tempPath,
+        remotePath: dragName,
+        remotePaths: _remoteAbsPaths,
+      );
 
       item.add(
         Formats.fileUri(
@@ -458,6 +494,8 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
         _trackSftpInternalDragItem(
           item,
           tempPath: path,
+          remotePath: dragName,
+          remotePaths: _remoteAbsPaths,
           onDisposed: () => sftp_transfer.deleteLocalFileQuiet(path),
         );
         item.add(Formats.fileUri(Uri.file(path)));
@@ -467,7 +505,11 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
       }
     }
     final item = DragItem(suggestedName: nameOnly);
-    _trackSftpInternalDragItem(item);
+    _trackSftpInternalDragItem(
+      item,
+      remotePath: dragName,
+      remotePaths: _remoteAbsPaths,
+    );
 
     final format = _sftpDragFileFormatForName(relativeName);
     item.addVirtualFile(
@@ -491,13 +533,13 @@ class _SftpRemoteEntryDragWrap extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isDirectory) {
       return PreSnapshotDragItemWidget(
-        allowedOperations: () => [DropOperation.copy],
+        allowedOperations: () => [DropOperation.copy, DropOperation.move],
         dragItemProvider: _dragItemProvider,
         child: child,
       );
     }
     return DragItemWidget(
-      allowedOperations: () => [DropOperation.copy],
+      allowedOperations: () => [DropOperation.copy, DropOperation.move],
       dragItemProvider: _dragItemProvider,
       child: DraggableWidget(child: child),
     );
@@ -564,10 +606,17 @@ class SftpBrowserState extends State<SftpBrowser> {
   bool _marqueeAdditive = false;
   Set<String> _marqueeBaseSelection = {};
   bool _suppressClearFromTap = false;
-  _SftpRemoteClipboard? _clipboard;
+
+  /// 拖放到某个文件夹条目上时高亮该目录名。
+  String? _dropTargetDirName;
 
   /// 递增以取消过期的「物化到本机剪贴板」任务（连续 Ctrl+C）。
   int _clipboardWriteGeneration = 0;
+
+  final _searchCtrl = TextEditingController();
+  bool _searching = false;
+  List<String> _searchHits = const [];
+  String? _searchError;
 
   SftpBrowserHost get _c => widget.controller;
 
@@ -616,6 +665,7 @@ class SftpBrowserState extends State<SftpBrowser> {
     _c.removeListener(_onHostChanged);
     _focusNode.dispose();
     _scrollController.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -1030,6 +1080,114 @@ class SftpBrowserState extends State<SftpBrowser> {
     }
   }
 
+  /// 远端路径拖放到当前目录（或 [destCwd] 指定目录）：默认移动，Alt/Ctrl 为复制。
+  Future<void> _onRemotePathsDropped(
+    BuildContext context,
+    List<String> remoteAbsPaths, {
+    required String destCwd,
+  }) async {
+    if (remoteAbsPaths.isEmpty) return;
+    final l = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    // 按源目录分组：{ fromCwd -> [basename, ...] }
+    final bySource = <String, List<String>>{};
+    for (final abs in remoteAbsPaths) {
+      if (abs.isEmpty) continue;
+      final fromCwd = remoteDirname(abs);
+      final name = remoteBasename(abs);
+      if (name.isEmpty || name == '.' || name == '..') continue;
+      // 拖到自身目录且无换名需求：跳过。
+      if (normalizeRemotePathForCompare(fromCwd) ==
+          normalizeRemotePathForCompare(destCwd)) {
+        continue;
+      }
+      bySource.putIfAbsent(fromCwd, () => []).add(name);
+    }
+    if (bySource.isEmpty) return;
+
+    final asCopy =
+        HardwareKeyboard.instance.isAltPressed ||
+        HardwareKeyboard.instance.isControlPressed;
+
+    var pastedTotal = 0;
+    try {
+      for (final entry in bySource.entries) {
+        final pasted = asCopy
+            ? await _c.copyRemoteNamesFrom(
+                fromCwd: entry.key,
+                names: entry.value,
+                toCwd: destCwd,
+              )
+            : await _c.moveRemoteNamesFrom(
+                fromCwd: entry.key,
+                names: entry.value,
+                toCwd: destCwd,
+              );
+        pastedTotal += pasted.length;
+        if (pasted.isNotEmpty &&
+            normalizeRemotePathForCompare(destCwd) ==
+                normalizeRemotePathForCompare(_c.remoteCwd)) {
+          setState(() {
+            _selectedNames
+              ..clear()
+              ..addAll(pasted);
+            _anchorName = pasted.first;
+          });
+        }
+      }
+      if (!context.mounted) return;
+      if (pastedTotal > 0) {
+        messenger?.showSnackBar(
+          SnackBar(content: Text(l.sftpPasted(pastedTotal))),
+        );
+      }
+    } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      if (!context.mounted) return;
+      messenger?.showSnackBar(SnackBar(content: Text('$e')));
+    } catch (e) {
+      if (context.mounted) {
+        messenger?.showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  String? _dropDestDirNameAt(Offset globalPosition) {
+    final name = _hitTestRowName(globalPosition);
+    if (name == null) return null;
+    final entry = _entryByName(name);
+    if (entry == null || !entry.attr.isDirectory) return null;
+    // 不能把文件拖进正在拖的目录自身。
+    final abs = remoteJoin(_c.remoteCwd, name);
+    final dragging = SshWorkspaceController.activeDragRemotePaths;
+    for (final d in dragging) {
+      if (normalizeRemotePathForCompare(d) ==
+          normalizeRemotePathForCompare(abs)) {
+        return null;
+      }
+      if (isRemotePathUnderOrEqual(d, abs)) return null;
+    }
+    return name;
+  }
+
+  void _updateDropTargetHighlight(Offset globalPosition, {required bool show}) {
+    if (!show) {
+      if (_dropHighlight || _dropTargetDirName != null) {
+        setState(() {
+          _dropHighlight = false;
+          _dropTargetDirName = null;
+        });
+      }
+      return;
+    }
+    final dir = _dropDestDirNameAt(globalPosition);
+    if (_dropHighlight && _dropTargetDirName == dir) return;
+    setState(() {
+      _dropHighlight = true;
+      _dropTargetDirName = dir;
+    });
+  }
+
   /// 检查覆盖冲突并弹出确认对话框。
   /// 返回 true 表示可以上传，false 表示用户取消。
   Future<bool> _checkOverwriteConflict(
@@ -1082,6 +1240,253 @@ class SftpBrowserState extends State<SftpBrowser> {
       case SftpRemoteUploadConflict.none:
         return true;
     }
+  }
+
+  SshWorkspaceController? get _workspace {
+    final h = _c;
+    if (h is SshWorkspaceController) return h;
+    if (h is DesktopSftpController) return h.workspace;
+    return null;
+  }
+
+  SftpRemoteClipboard? get _clipboard => _workspace?.remoteFileClipboard;
+
+  void _setClipboard(SftpRemoteClipboard? value) {
+    final ws = _workspace;
+    if (ws != null) {
+      ws.setRemoteFileClipboard(value);
+      return;
+    }
+    // 无会话时（理论上不会）本地无法跨窗共享；忽略。
+  }
+
+  Future<void> _runSearch() async {
+    final q = _searchCtrl.text.trim();
+    final ws = _workspace;
+    if (q.isEmpty || ws == null || !ws.connected) {
+      setState(() {
+        _searchHits = const [];
+        _searchError = null;
+      });
+      return;
+    }
+    // 禁止 shell 元字符
+    if (!RegExp(r'^[A-Za-z0-9_./@+\- *?]+$').hasMatch(q) || q.contains('..')) {
+      setState(() => _searchError = '非法搜索模式');
+      return;
+    }
+    setState(() {
+      _searching = true;
+      _searchError = null;
+    });
+    try {
+      final cwd = _c.remoteCwd;
+      final quoted = q.replaceAll("'", "'\\''");
+      final cmd =
+          "cd '${cwd.replaceAll("'", "'\\''")}' && "
+          "find . -maxdepth 4 -iname '*$quoted*' 2>/dev/null | head -n 80";
+      final raw = await ws.runQueued(cmd);
+      if (!mounted) return;
+      if (raw == null) {
+        setState(() {
+          _searching = false;
+          _searchError = '搜索失败';
+          _searchHits = const [];
+        });
+        return;
+      }
+      final hits = raw
+          .split(RegExp(r'[\r\n]+'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty && e != '.')
+          .map((e) => e.startsWith('./') ? e.substring(2) : e)
+          .toList();
+      setState(() {
+        _searching = false;
+        _searchHits = hits;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _searching = false;
+        _searchError = '$e';
+      });
+    }
+  }
+
+  Future<void> _openSearchHit(String relative) async {
+    final parts = relative.replaceAll('\\', '/').split('/');
+    if (parts.isEmpty) return;
+    final fileName = parts.last;
+    final dirParts = parts.length > 1 ? parts.sublist(0, parts.length - 1) : [];
+    var targetDir = _c.remoteCwd;
+    for (final p in dirParts) {
+      if (p.isEmpty || p == '.') continue;
+      targetDir = remoteJoin(targetDir, p);
+    }
+    await _c.navigateToAbsolutePath(targetDir);
+    if (!mounted) return;
+    setState(() {
+      _searchHits = const [];
+      _searchCtrl.clear();
+    });
+    final entry = _entryByName(fileName);
+    if (entry != null && entry.attr.isFile && widget.onOpenInEditor != null) {
+      widget.onOpenInEditor!(fileName);
+    }
+  }
+
+  Future<void> _showProperties(BuildContext context, String name) async {
+    final ws = _workspace;
+    final path = remoteJoin(_c.remoteCwd, name);
+    if (ws == null || !ws.connected) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未连接')),
+        );
+      }
+      return;
+    }
+    final q = path.replaceAll("'", "'\\''");
+    final raw = await ws.runQueued(
+      "stat -c '%s|%U|%G|%a|%Y|%F' '$q' 2>/dev/null || "
+      "stat -f '%z|%Su|%Sg|%Mp%Lp|%m|%HT%SY' '$q' 2>/dev/null",
+    );
+    if (!context.mounted) return;
+    if (raw == null || raw.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法读取属性')),
+      );
+      return;
+    }
+    final parts = raw.split('|');
+    String at(int i) => i < parts.length ? parts[i].trim() : '';
+    final size = int.tryParse(at(0));
+    final owner = at(1).isEmpty ? '—' : at(1);
+    final group = at(2).isEmpty ? '—' : at(2);
+    final mode = at(3);
+    final mtimeSec = int.tryParse(at(4));
+    final kind = at(5);
+    var modeBits = int.tryParse(mode, radix: 8) ?? int.tryParse(mode) ?? 0;
+    if (mode.length == 3 || mode.length == 4) {
+      modeBits = int.tryParse(mode, radix: 8) ?? modeBits;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return _SftpPropertiesDialog(
+          path: path,
+          size: size,
+          owner: owner,
+          group: group,
+          kind: kind,
+          mtimeSec: mtimeSec,
+          initialMode: modeBits & 0x1FF,
+          onChmod: (octal) async {
+            final out = await ws.runQueued("chmod $octal '$q'");
+            return out != null;
+          },
+        );
+      },
+    );
+    if (mounted) unawaited(_c.refreshDirectory());
+  }
+
+  bool _isArchiveName(String name) {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.tar.gz') ||
+        lower.endsWith('.tgz') ||
+        lower.endsWith('.tar') ||
+        lower.endsWith('.zip') ||
+        lower.endsWith('.gz');
+  }
+
+  String _shellSingleQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
+
+  Future<void> _compressSelected(BuildContext context) async {
+    final ws = _workspace;
+    if (ws == null || !ws.connected) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未连接')),
+        );
+      }
+      return;
+    }
+    final names = _selectedInListOrder();
+    if (names.isEmpty) return;
+    final cwdQ = _shellSingleQuote(_c.remoteCwd);
+    final quotedNames = names.map(_shellSingleQuote).join(' ');
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final outName = names.length == 1
+        ? '${names.first}.tar.gz'
+        : 'archive_$stamp.tar.gz';
+    final outQ = _shellSingleQuote(outName);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('正在压缩 → $outName')),
+      );
+    }
+    final raw = await ws.runQueued(
+      'cd $cwdQ && tar czf $outQ $quotedNames 2>&1; echo __EC:\$?',
+    );
+    if (!mounted) return;
+    final ok = raw != null && RegExp(r'__EC:0\s*$').hasMatch(raw.trim());
+    if (context.mounted) {
+      final detail = raw == null
+          ? ''
+          : '：${raw.replaceAll(RegExp(r'__EC:\d+\s*$'), '').trim()}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? '已创建 $outName' : '压缩失败$detail'),
+        ),
+      );
+    }
+    await _c.refreshDirectory();
+  }
+
+  Future<void> _extractArchive(BuildContext context, String name) async {
+    final ws = _workspace;
+    if (ws == null || !ws.connected) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未连接')),
+        );
+      }
+      return;
+    }
+    final cwdQ = _shellSingleQuote(_c.remoteCwd);
+    final nameQ = _shellSingleQuote(name);
+    final lower = name.toLowerCase();
+    final String cmd;
+    if (lower.endsWith('.zip')) {
+      cmd = 'cd $cwdQ && unzip -o $nameQ 2>&1; echo __EC:\$?';
+    } else if (lower.endsWith('.tar.gz') ||
+        lower.endsWith('.tgz') ||
+        lower.endsWith('.tar')) {
+      cmd = 'cd $cwdQ && tar xf $nameQ 2>&1; echo __EC:\$?';
+    } else if (lower.endsWith('.gz') && !lower.endsWith('.tar.gz')) {
+      cmd = 'cd $cwdQ && gunzip -k $nameQ 2>&1; echo __EC:\$?';
+    } else {
+      return;
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('正在解压 $name')),
+      );
+    }
+    final raw = await ws.runQueued(cmd);
+    if (!mounted) return;
+    final ok = raw != null && RegExp(r'__EC:0\s*$').hasMatch(raw.trim());
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? '解压完成' : '解压失败（可能缺少 unzip/tar 或权限不足）'),
+        ),
+      );
+    }
+    await _c.refreshDirectory();
   }
 
   Future<void> _openOrEdit(
@@ -1418,13 +1823,14 @@ class SftpBrowserState extends State<SftpBrowser> {
   Future<void> _copySelected(BuildContext context) async {
     final names = _selectedInListOrder();
     if (names.isEmpty) return;
-    setState(() {
-      _clipboard = _SftpRemoteClipboard(
+    _setClipboard(
+      SftpRemoteClipboard(
         sourceCwd: _c.remoteCwd,
         names: List<String>.from(names),
         isCut: false,
-      );
-    });
+      ),
+    );
+    setState(() {});
     final l = AppLocalizations.of(context)!;
     // 应用内远程粘贴立即可用；物化完成后再提示，方便立刻粘贴到本机。
     await _writeRemoteSelectionToSystemClipboard(names);
@@ -1437,13 +1843,14 @@ class SftpBrowserState extends State<SftpBrowser> {
   Future<void> _cutSelected(BuildContext context) async {
     final names = _selectedInListOrder();
     if (names.isEmpty) return;
-    setState(() {
-      _clipboard = _SftpRemoteClipboard(
+    _setClipboard(
+      SftpRemoteClipboard(
         sourceCwd: _c.remoteCwd,
         names: List<String>.from(names),
         isCut: true,
-      );
-    });
+      ),
+    );
+    setState(() {});
     final l = AppLocalizations.of(context)!;
     await _writeRemoteSelectionToSystemClipboard(names);
     if (!context.mounted) return;
@@ -1521,11 +1928,11 @@ class SftpBrowserState extends State<SftpBrowser> {
   }
 
   void _applyRemotePasteResult({
-    required _SftpRemoteClipboard clip,
+    required SftpRemoteClipboard clip,
     required List<String> pasted,
   }) {
     setState(() {
-      if (clip.isCut) _clipboard = null;
+      if (clip.isCut) _setClipboard(null);
       if (pasted.isNotEmpty) {
         _selectedNames
           ..clear()
@@ -1596,11 +2003,17 @@ class SftpBrowserState extends State<SftpBrowser> {
   }) {
     final isDir = entry.attr.isDirectory;
     final selected = _selectedNames.contains(entry.filename);
+    final clip = _clipboard;
     final cutDimmed =
-        _clipboard != null &&
-        _clipboard!.isCut &&
-        _clipboard!.sourceCwd == _c.remoteCwd &&
-        _clipboard!.names.contains(entry.filename);
+        clip != null &&
+        clip.isCut &&
+        normalizeRemotePathForCompare(clip.sourceCwd) ==
+            normalizeRemotePathForCompare(_c.remoteCwd) &&
+        clip.names.contains(entry.filename);
+    final dropOnto =
+        isDir &&
+        _dropTargetDirName != null &&
+        _dropTargetDirName == entry.filename;
     final core = Builder(
       builder: (ctx2) {
         void openMenuAt(Offset g) {
@@ -1628,13 +2041,24 @@ class SftpBrowserState extends State<SftpBrowser> {
             onOpenTerminal: widget.onOpenTerminal == null
                 ? null
                 : () => widget.onOpenTerminal!(isDir ? entry.filename : null),
+            onProperties: onlyOne
+                ? () => _showProperties(ctx2, entry.filename)
+                : null,
+            onCompress: selectedNow.isNotEmpty
+                ? () => _compressSelected(ctx2)
+                : null,
+            onExtract: onlyOne && _isArchiveName(entry.filename)
+                ? () => _extractArchive(ctx2, entry.filename)
+                : null,
           );
         }
 
         return GestureDetector(
           onSecondaryTapUp: (d) => openMenuAt(d.globalPosition),
           child: Material(
-            color: selected
+            color: dropOnto
+                ? context.wb.accentBlue.withValues(alpha: 0.28)
+                : selected
                 ? context.wb.accentBlue.withValues(alpha: 0.18)
                 : Colors.transparent,
             borderRadius: _layoutMode == _SftpLayoutMode.grid
@@ -1668,9 +2092,13 @@ class SftpBrowserState extends State<SftpBrowser> {
     // 进而触发 InheritedElement `_dependents.isEmpty` 断言。
     final Widget body;
     if (_sftpDesktopDragOutSupported()) {
+      final dragNames = selected && _selectedNames.length > 1
+          ? _selectedInListOrder()
+          : [entry.filename];
       body = _SftpRemoteEntryDragWrap(
         controller: _c,
         relativeName: entry.filename,
+        dragRelativeNames: dragNames,
         isDirectory: isDir,
         pickerContext: context,
         child: core,
@@ -2200,34 +2628,165 @@ class SftpBrowserState extends State<SftpBrowser> {
                           ),
                         ),
                         Divider(height: 1, color: context.wb.border),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _searchCtrl,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: context.wb.primaryText,
+                                    fontFamily: 'monospace',
+                                  ),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    hintText: '搜索文件名（find）',
+                                    hintStyle: TextStyle(
+                                      color: context.wb.textMuted,
+                                      fontSize: 12,
+                                    ),
+                                    prefixIcon: Icon(
+                                      Icons.search_rounded,
+                                      size: 16,
+                                      color: context.wb.textMuted,
+                                    ),
+                                    prefixIconConstraints: const BoxConstraints(
+                                      minWidth: 32,
+                                      minHeight: 0,
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 8,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                  ),
+                                  onSubmitted: (_) => unawaited(_runSearch()),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              if (_searching)
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              else
+                                TextButton(
+                                  onPressed: () => unawaited(_runSearch()),
+                                  child: const Text('搜索'),
+                                ),
+                              if (_searchHits.isNotEmpty ||
+                                  _searchError != null)
+                                TextButton(
+                                  onPressed: () => setState(() {
+                                    _searchHits = const [];
+                                    _searchError = null;
+                                    _searchCtrl.clear();
+                                  }),
+                                  child: const Text('清除'),
+                                ),
+                            ],
+                          ),
+                        ),
+                        if (_searchError != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                            child: Text(
+                              _searchError!,
+                              style: TextStyle(
+                                color: context.wb.offline,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        if (_searchHits.isNotEmpty)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 140),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: _searchHits.length,
+                              itemBuilder: (context, i) {
+                                final hit = _searchHits[i];
+                                return ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    Icons.insert_drive_file_outlined,
+                                    size: 16,
+                                    color: context.wb.textMuted,
+                                  ),
+                                  title: Text(
+                                    hit,
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                      color: context.wb.primaryText,
+                                    ),
+                                  ),
+                                  onTap: () => unawaited(_openSearchHit(hit)),
+                                );
+                              },
+                            ),
+                          ),
                         Expanded(
                           child: DropTarget(
-                            onDragEntered: (_) {
+                            onDragEntered: (details) {
                               widget.onActivate?.call();
-                              setState(
-                                () => _dropHighlight =
-                                    !SftpBrowser.isDraggingInternalItem,
+                              _updateDropTargetHighlight(
+                                details.globalPosition,
+                                show: true,
+                              );
+                            },
+                            onDragUpdated: (details) {
+                              _updateDropTargetHighlight(
+                                details.globalPosition,
+                                show: true,
                               );
                             },
                             onDragExited: (_) =>
-                                setState(() => _dropHighlight = false),
+                                _updateDropTargetHighlight(
+                                  Offset.zero,
+                                  show: false,
+                                ),
                             onDragDone: (detail) async {
-                              setState(() => _dropHighlight = false);
+                              final destDirName = _dropTargetDirName;
+                              setState(() {
+                                _dropHighlight = false;
+                                _dropTargetDirName = null;
+                              });
                               final wasInternalDrag =
                                   SftpBrowser.isDraggingInternalItem;
-                              SftpBrowser.isDraggingInternalItem = false;
                               if (kIsWeb) return;
-                              // 内部组件拖出又松手回到面板：直接取消，避免把临时副本再次上传回去。
-                              if (wasInternalDrag) return;
 
+                              final destCwd = destDirName != null
+                                  ? remoteJoin(_c.remoteCwd, destDirName)
+                                  : _c.remoteCwd;
+
+                              final remotePaths = resolveDesktopDropRemotePaths(
+                                detail,
+                                isInternalDrag: wasInternalDrag,
+                              );
+                              if (remotePaths.isNotEmpty) {
+                                await _onRemotePathsDropped(
+                                  context,
+                                  remotePaths,
+                                  destCwd: destCwd,
+                                );
+                                return;
+                              }
+
+                              // 本机文件拖入上传；忽略未映射到远端的拖出临时副本。
                               final paths = <String>[];
                               for (final f in detail.files) {
                                 final path = f.path;
                                 if (path.isEmpty) continue;
-                                // 来自任何会话的拖出临时副本一律忽略，不区分当前控制器。
-                                if (SshWorkspaceController.isPathFromRecentDragOut(
-                                  path,
-                                )) {
+                                if (SshWorkspaceController
+                                    .isPathFromRecentDragOut(path)) {
                                   continue;
                                 }
                                 paths.add(path);
@@ -2678,6 +3237,164 @@ class _RemoteNamePromptDialogState extends State<_RemoteNamePromptDialog> {
           onPressed: _submit,
           child: Text(widget.confirmLabel),
         ),
+      ],
+    );
+  }
+}
+
+class _SftpPropertiesDialog extends StatefulWidget {
+  const _SftpPropertiesDialog({
+    required this.path,
+    required this.size,
+    required this.owner,
+    required this.group,
+    required this.kind,
+    required this.mtimeSec,
+    required this.initialMode,
+    required this.onChmod,
+  });
+
+  final String path;
+  final int? size;
+  final String owner;
+  final String group;
+  final String kind;
+  final int? mtimeSec;
+  final int initialMode;
+  final Future<bool> Function(String octal) onChmod;
+
+  @override
+  State<_SftpPropertiesDialog> createState() => _SftpPropertiesDialogState();
+}
+
+class _SftpPropertiesDialogState extends State<_SftpPropertiesDialog> {
+  late int _mode;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = widget.initialMode;
+  }
+
+  bool _bit(int mask) => (_mode & mask) != 0;
+
+  void _toggle(int mask, bool on) {
+    setState(() {
+      _mode = on ? (_mode | mask) : (_mode & ~mask);
+    });
+  }
+
+  String get _octal => (_mode & 0x1FF).toRadixString(8).padLeft(3, '0');
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final mtime = widget.mtimeSec == null
+        ? '—'
+        : DateTime.fromMillisecondsSinceEpoch(widget.mtimeSec! * 1000)
+            .toLocal()
+            .toString();
+    return AlertDialog(
+      backgroundColor: wb.panelElevated,
+      title: Text('属性', style: TextStyle(color: wb.primaryText)),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(widget.path,
+                style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: wb.secondaryText)),
+            const SizedBox(height: 10),
+            Text('类型：${widget.kind.isEmpty ? "—" : widget.kind}',
+                style: TextStyle(color: wb.primaryText, fontSize: 13)),
+            Text('大小：${_formatRemoteBytes(widget.size)}',
+                style: TextStyle(color: wb.primaryText, fontSize: 13)),
+            Text('所有者：${widget.owner}  组：${widget.group}',
+                style: TextStyle(color: wb.primaryText, fontSize: 13)),
+            Text('修改时间：$mtime',
+                style: TextStyle(color: wb.primaryText, fontSize: 13)),
+            const SizedBox(height: 12),
+            Text('权限 ($_octal)',
+                style: TextStyle(color: wb.secondaryText, fontSize: 12)),
+            const SizedBox(height: 4),
+            _permRow('所有者', 0x100, 0x080, 0x040),
+            _permRow('组', 0x020, 0x010, 0x008),
+            _permRow('其他', 0x004, 0x002, 0x001),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_error!,
+                    style: TextStyle(color: wb.offline, fontSize: 12)),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+        FilledButton(
+          onPressed: _saving
+              ? null
+              : () async {
+                  setState(() {
+                    _saving = true;
+                    _error = null;
+                  });
+                  final ok = await widget.onChmod(_octal);
+                  if (!context.mounted) return;
+                  setState(() => _saving = false);
+                  if (ok) {
+                    Navigator.pop(context);
+                  } else {
+                    setState(() => _error = 'chmod 失败（可能需要权限）');
+                  }
+                },
+          child: _saving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('应用权限'),
+        ),
+      ],
+    );
+  }
+
+  Widget _permRow(String label, int r, int w, int x) {
+    final wb = context.wb;
+    return Row(
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(label, style: TextStyle(color: wb.primaryText, fontSize: 12)),
+        ),
+        Checkbox(
+          value: _bit(r),
+          onChanged: (v) => _toggle(r, v ?? false),
+          visualDensity: VisualDensity.compact,
+        ),
+        Text('读', style: TextStyle(color: wb.textMuted, fontSize: 11)),
+        Checkbox(
+          value: _bit(w),
+          onChanged: (v) => _toggle(w, v ?? false),
+          visualDensity: VisualDensity.compact,
+        ),
+        Text('写', style: TextStyle(color: wb.textMuted, fontSize: 11)),
+        Checkbox(
+          value: _bit(x),
+          onChanged: (v) => _toggle(x, v ?? false),
+          visualDensity: VisualDensity.compact,
+        ),
+        Text('执行', style: TextStyle(color: wb.textMuted, fontSize: 11)),
       ],
     );
   }

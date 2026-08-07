@@ -31,72 +31,118 @@ class BrowserApp extends StatefulWidget {
   State<BrowserApp> createState() => _BrowserAppState();
 }
 
-class _BrowserAppState extends State<BrowserApp> {
-  final TextEditingController _addressCtrl = TextEditingController();
-  final FocusNode _addressFocus = FocusNode();
+class _BrowserTab {
+  _BrowserTab({required this.id, String initialAddress = ''})
+      : addressCtrl = TextEditingController(text: initialAddress),
+        addressFocus = FocusNode();
 
-  InAppWebViewController? _web;
+  final String id;
+  final TextEditingController addressCtrl;
+  final FocusNode addressFocus;
+  InAppWebViewController? web;
+  String? currentUrl;
+  String? pageTitle;
+  bool loading = false;
+  double progress = 0;
+  bool canGoBack = false;
+  bool canGoForward = false;
+  bool lastNavPublicDirect = false;
+  String? pendingNavigate;
+  DateTime lastAccessed = DateTime.now();
+
+  void touch() => lastAccessed = DateTime.now();
+
+  void dispose() {
+    addressCtrl.dispose();
+    addressFocus.dispose();
+  }
+}
+
+class _BrowserAppState extends State<BrowserApp> {
+  static const _maxTabs = 8;
+  static const _kJsHintDismissPrefs = 'desktop_browser_js_hint_dismissed';
+
+  final List<_BrowserTab> _tabs = [];
+  int _active = 0;
+  int _tabIdSeq = 0;
+
   RemoteBrowserBackend? _backend;
   bool _useGateway = true;
-  bool _loading = false;
-  double _progress = 0;
   String? _error;
-  bool _canGoBack = false;
-  bool _canGoForward = false;
   bool _booting = true;
-  String? _pendingNavigate;
   late final BrowserBookmarksStore _bookmarks;
   late final BrowserHistoryStore _history;
   List<String> _bookmarkList = const [];
   List<String> _historyList = const [];
   bool _dismissJsHint = false;
   bool _wasConnected = false;
-  /// Last resolved navigation used local WebView (public Internet), not SSH.
-  bool _lastNavPublicDirect = false;
+  bool _addressFocused = false;
 
-  static const _kJsHintDismissPrefs = 'desktop_browser_js_hint_dismissed';
+  FocusNode? _boundAddressFocus;
 
   SshWorkspaceController get c => widget.controller;
 
-  String get _hostKey =>
-      '${c.username}@${c.host}:${c.port}';
+  String get _hostKey => '${c.username}@${c.host}:${c.port}';
+
+  _BrowserTab? get _tab => _tabs.isEmpty
+      ? null
+      : _tabs[_active.clamp(0, _tabs.length - 1)];
+
+  bool get _lastNavPublicDirect => _tab?.lastNavPublicDirect ?? false;
 
   @override
   void initState() {
     super.initState();
     c.addListener(_onController);
-    _addressFocus.addListener(_onAddressFocusChange);
     _wasConnected = c.connected && !c.dropped;
     _bookmarks = BrowserBookmarksStore(_hostKey);
     _history = BrowserHistoryStore(_hostKey);
     final mode = widget.window.args['mode']?.toString();
     _useGateway = mode != 'direct';
     final initial = widget.window.args['url']?.toString();
-    if (initial != null && initial.isNotEmpty) {
-      _addressCtrl.text = initial;
-    } else {
-      _addressCtrl.text = 'localhost:3000';
-    }
+    final addr = (initial != null && initial.isNotEmpty)
+        ? initial
+        : 'localhost:3000';
+    _tabs.add(_BrowserTab(id: _nextTabId(), initialAddress: addr));
+    _bindActiveTabFocus();
     unawaited(_loadLists());
     unawaited(_loadJsHintDismissed());
     unawaited(_boot());
   }
 
-  /// WebView（PlatformView）常抢走键盘焦点；编辑地址栏时主动让出。
-  void _onAddressFocusChange() {
-    if (!_addressFocus.hasFocus) return;
-    unawaited(_releaseWebViewKeyboard());
+  String _nextTabId() => '${++_tabIdSeq}';
+
+  void _bindActiveTabFocus() {
+    final tab = _tab;
+    if (tab == null) return;
+    if (identical(_boundAddressFocus, tab.addressFocus)) return;
+    _boundAddressFocus?.removeListener(_onAddressFocusChange);
+    _boundAddressFocus = tab.addressFocus;
+    tab.addressFocus.addListener(_onAddressFocusChange);
   }
 
-  Future<void> _releaseWebViewKeyboard() async {
-    final web = _web;
+  /// WebView（PlatformView）常抢走键盘焦点；编辑地址栏时主动让出。
+  void _onAddressFocusChange() {
+    final tab = _tab;
+    if (tab == null) return;
+    final focused = tab.addressFocus.hasFocus;
+    if (_addressFocused != focused) {
+      setState(() => _addressFocused = focused);
+    }
+    if (!focused) return;
+    unawaited(_releaseWebViewKeyboard(tab));
+  }
+
+  Future<void> _releaseWebViewKeyboard(_BrowserTab tab) async {
+    final web = tab.web;
     if (web == null) return;
     try {
       await web.clearFocus();
     } catch (_) {}
     try {
       await web.evaluateJavascript(
-        source: 'try{document.activeElement&&document.activeElement.blur()}catch(e){}',
+        source:
+            'try{document.activeElement&&document.activeElement.blur()}catch(e){}',
       );
     } catch (_) {}
   }
@@ -128,14 +174,26 @@ class _BrowserAppState extends State<BrowserApp> {
     });
   }
 
+  List<String> get _filteredHistorySuggestions {
+    final tab = _tab;
+    if (tab == null || !_addressFocused) return const [];
+    final q = tab.addressCtrl.text.trim().toLowerCase();
+    if (q.isEmpty) return _historyList.take(8).toList();
+    return _historyList
+        .where((h) => h.toLowerCase().contains(q))
+        .take(8)
+        .toList();
+  }
+
   @override
   void dispose() {
     c.removeListener(_onController);
-    _addressFocus.removeListener(_onAddressFocusChange);
+    _boundAddressFocus?.removeListener(_onAddressFocusChange);
     unawaited(_backend?.close());
     _backend = null;
-    _addressCtrl.dispose();
-    _addressFocus.dispose();
+    for (final t in _tabs) {
+      t.dispose();
+    }
     super.dispose();
   }
 
@@ -144,7 +202,6 @@ class _BrowserAppState extends State<BrowserApp> {
     final nowConnected = c.connected && !c.dropped;
 
     if (!nowConnected) {
-      // 掉线：释放直连转发；网关由 workspace teardown 停掉
       unawaited(_backend?.close());
       _backend = null;
       _wasConnected = false;
@@ -152,15 +209,11 @@ class _BrowserAppState extends State<BrowserApp> {
       return;
     }
 
-    // 重连成功：重建 backend 并重新导航当前地址
     if (!_wasConnected) {
       _wasConnected = true;
       unawaited(_rebindAfterReconnect());
       return;
     }
-
-    // 已连接时 workspace 的其它通知（SFTP 等）不必重建浏览器，
-    // 否则 PlatformView 重建会再次抢走地址栏键盘焦点。
   }
 
   Future<void> _rebindAfterReconnect() async {
@@ -172,9 +225,10 @@ class _BrowserAppState extends State<BrowserApp> {
       await _ensureBackend();
       if (!mounted) return;
       setState(() => _booting = false);
-      final url = _addressCtrl.text.trim();
+      final tab = _tab;
+      final url = tab?.addressCtrl.text.trim() ?? '';
       if (url.isNotEmpty) {
-        await _navigate(url);
+        await _navigate(url, tab: tab);
       }
     } catch (e) {
       if (!mounted) return;
@@ -194,10 +248,12 @@ class _BrowserAppState extends State<BrowserApp> {
       await _ensureBackend();
       if (!mounted) return;
       setState(() => _booting = false);
-      _pendingNavigate = _addressCtrl.text;
-      if (_web != null) {
-        await _navigate(_pendingNavigate!);
-        _pendingNavigate = null;
+      final tab = _tab;
+      if (tab == null) return;
+      tab.pendingNavigate = tab.addressCtrl.text;
+      if (tab.web != null) {
+        await _navigate(tab.pendingNavigate!, tab: tab);
+        tab.pendingNavigate = null;
       }
     } catch (e) {
       if (!mounted) return;
@@ -225,16 +281,18 @@ class _BrowserAppState extends State<BrowserApp> {
     }
   }
 
-  Future<void> _navigate(String raw) async {
+  Future<void> _navigate(String raw, {_BrowserTab? tab}) async {
+    final t = tab ?? _tab;
+    if (t == null) return;
     final input = raw.trim();
     if (input.isEmpty) return;
     if (!c.connected || c.clientForDesktop == null) {
       setState(() => _error = '未连接');
       return;
     }
-    setState(() {
+    _patchTab(t, () {
+      t.loading = true;
       _error = null;
-      _loading = true;
     });
     try {
       if (_backend == null) await _ensureBackend();
@@ -245,25 +303,169 @@ class _BrowserAppState extends State<BrowserApp> {
       widget.window.args['mode'] = _useGateway ? 'gateway' : 'direct';
       widget.wm.focus(widget.window.id);
       final hist = await _history.push(input);
-      await _web?.loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())));
+      await t.web?.loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())));
       if (mounted) {
         setState(() {
-          _addressCtrl.text = input;
+          t.addressCtrl.text = input;
+          t.lastNavPublicDirect = publicDirect;
           _historyList = hist;
-          _lastNavPublicDirect = publicDirect;
         });
+        _syncWindowTitle();
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = '$e';
-        _loading = false;
+        t.loading = false;
       });
     }
   }
 
+  /// 地址栏聚焦时避免整树 setState 打断输入；否则正常刷新 UI。
+  void _patchTab(_BrowserTab tab, VoidCallback fn) {
+    if (identical(tab, _tab) && tab.addressFocus.hasFocus) {
+      fn();
+      return;
+    }
+    setState(fn);
+  }
+
+  void _selectTab(int index) {
+    if (index < 0 || index >= _tabs.length) return;
+    setState(() {
+      _active = index;
+      _tabs[index].touch();
+    });
+    _bindActiveTabFocus();
+    _syncWindowTitle();
+  }
+
+  void _addBlankTab({String address = ''}) {
+    if (_tabs.length >= _maxTabs) return;
+    setState(() {
+      _tabs.add(_BrowserTab(id: _nextTabId(), initialAddress: address));
+      _active = _tabs.length - 1;
+      _tabs[_active].touch();
+    });
+    _bindActiveTabFocus();
+    _syncWindowTitle();
+  }
+
+  /// 达上限时复用最久未访问的非当前标签，否则在当前标签打开。
+  _BrowserTab _tabForNewWindow() {
+    if (_tabs.length < _maxTabs) {
+      _addBlankTab();
+      return _tabs[_active];
+    }
+    _BrowserTab? lru;
+    for (var i = 0; i < _tabs.length; i++) {
+      if (i == _active) continue;
+      final candidate = _tabs[i];
+      if (lru == null ||
+          candidate.lastAccessed.isBefore(lru.lastAccessed)) {
+        lru = candidate;
+      }
+    }
+    if (lru != null) {
+      setState(() {
+        _active = _tabs.indexOf(lru!);
+        lru.touch();
+      });
+      _bindActiveTabFocus();
+      return lru;
+    }
+    _tab?.touch();
+    return _tab!;
+  }
+
+  Future<bool> _handleCreateWindow(
+    InAppWebViewController controller,
+    CreateWindowAction action,
+  ) async {
+    final req = action.request;
+    final url = req.url?.toString();
+    if (url == null || url.isEmpty) return false;
+    final tab = _tabForNewWindow();
+    tab.addressCtrl.text = url;
+    tab.pendingNavigate = url;
+    if (tab.web != null) {
+      await _navigate(url, tab: tab);
+      tab.pendingNavigate = null;
+    }
+    return true;
+  }
+
+  Future<void> _closeTab(int index) async {
+    if (index < 0 || index >= _tabs.length) return;
+    if (_tabs.length == 1) {
+      final tab = _tabs[0];
+      setState(() {
+        tab.addressCtrl.clear();
+        tab.pageTitle = null;
+        tab.currentUrl = null;
+        tab.loading = false;
+        tab.progress = 0;
+        tab.canGoBack = false;
+        tab.canGoForward = false;
+        tab.lastNavPublicDirect = false;
+        tab.pendingNavigate = null;
+      });
+      _syncWindowTitle();
+      return;
+    }
+    final tab = _tabs[index];
+    tab.dispose();
+    setState(() {
+      _tabs.removeAt(index);
+      if (_active >= _tabs.length) {
+        _active = _tabs.length - 1;
+      } else if (_active > index) {
+        _active--;
+      }
+      _tabs[_active].touch();
+    });
+    _bindActiveTabFocus();
+    _syncWindowTitle();
+  }
+
+  String _tabLabel(_BrowserTab tab) {
+    if (tab.pageTitle != null && tab.pageTitle!.trim().isNotEmpty) {
+      return tab.pageTitle!.trim();
+    }
+    final addr = tab.addressCtrl.text.trim();
+    if (addr.isEmpty) return '新标签';
+    return _shortHost(addr);
+  }
+
+  String _shortHost(String input) {
+    try {
+      final parsed = parseBrowserAddressBar(input);
+      final host = parsed.host;
+      if (parsed.port != 80 && parsed.port != 443) {
+        return '$host:${parsed.port}';
+      }
+      return host;
+    } catch (_) {
+      return input.length > 24 ? '${input.substring(0, 24)}…' : input;
+    }
+  }
+
+  void _syncWindowTitle() {
+    final tab = _tab;
+    if (tab == null) {
+      widget.window.title = '浏览器';
+    } else if (tab.pageTitle != null && tab.pageTitle!.trim().isNotEmpty) {
+      widget.window.title = tab.pageTitle!.trim();
+    } else {
+      final addr = tab.addressCtrl.text.trim();
+      widget.window.title = addr.isEmpty ? '浏览器' : _shortHost(addr);
+    }
+    widget.wm.requestRebuild();
+  }
+
   Future<void> _toggleMode() async {
     final switchingToDirect = _useGateway;
+    final tab = _tab;
     if (switchingToDirect && mounted) {
       final ok = await showDialog<bool>(
         context: context,
@@ -274,7 +476,7 @@ class _BrowserAppState extends State<BrowserApp> {
             title: Text('切换到直连', style: TextStyle(color: wb.primaryText)),
             content: Text(
               '直连只转发当前地址栏的 host:port，站内跳到其他主机/端口可能失败。\n\n'
-              '当前目标：${_addressCtrl.text.trim().isEmpty ? '（空）' : _addressCtrl.text.trim()}',
+              '当前目标：${tab == null || tab.addressCtrl.text.trim().isEmpty ? '（空）' : tab.addressCtrl.text.trim()}',
               style: TextStyle(color: wb.secondaryText, height: 1.4),
             ),
             actions: [
@@ -300,7 +502,10 @@ class _BrowserAppState extends State<BrowserApp> {
     widget.wm.requestRebuild();
     try {
       await _ensureBackend();
-      await _navigate(_addressCtrl.text);
+      final addr = _tab?.addressCtrl.text ?? '';
+      if (addr.trim().isNotEmpty) {
+        await _navigate(addr);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
@@ -308,7 +513,9 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 
   Future<void> _toggleBookmark() async {
-    final addr = _addressCtrl.text.trim();
+    final tab = _tab;
+    if (tab == null) return;
+    final addr = tab.addressCtrl.text.trim();
     if (addr.isEmpty) return;
     if (_bookmarkList.contains(addr)) {
       await _removeBookmark(addr);
@@ -318,13 +525,17 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 
   Future<void> _addBookmark() async {
-    final list = await _bookmarks.add(_addressCtrl.text);
+    final tab = _tab;
+    if (tab == null) return;
+    final list = await _bookmarks.add(tab.addressCtrl.text);
     if (!mounted) return;
     setState(() => _bookmarkList = list);
   }
 
   Future<void> _openExternal() async {
-    final input = _addressCtrl.text.trim();
+    final tab = _tab;
+    if (tab == null) return;
+    final input = tab.addressCtrl.text.trim();
     if (input.isEmpty) return;
     final uri = externalBrowserNavigationUri(input);
     if (uri == null) {
@@ -353,92 +564,203 @@ class _BrowserAppState extends State<BrowserApp> {
     setState(() => _historyList = list);
   }
 
-  Future<void> _refreshNavFlags() async {
-    final w = _web;
+  Future<void> _refreshNavFlags(_BrowserTab tab) async {
+    final w = tab.web;
     if (w == null) return;
     final back = await w.canGoBack();
     final forward = await w.canGoForward();
     if (!mounted) return;
-    if (_canGoBack == back && _canGoForward == forward) return;
-    if (_addressFocus.hasFocus) {
-      _canGoBack = back;
-      _canGoForward = forward;
+    if (tab.canGoBack == back && tab.canGoForward == forward) return;
+    if (identical(tab, _tab) && tab.addressFocus.hasFocus) {
+      tab.canGoBack = back;
+      tab.canGoForward = forward;
       return;
     }
     setState(() {
-      _canGoBack = back;
-      _canGoForward = forward;
+      tab.canGoBack = back;
+      tab.canGoForward = forward;
     });
   }
 
-  /// 网关 / 直连 loopback URL 对用户无意义；公网直连时同步真实地址。
-  void _syncAddressFromLoad(WebUri? url) {
+  void _syncAddressFromLoad(_BrowserTab tab, WebUri? url) {
     if (url == null) return;
+    tab.currentUrl = url.toString();
     final host = url.host.toLowerCase();
     final isLoopback = host == '127.0.0.1' || host == 'localhost';
     if (isLoopback) {
-      _lastNavPublicDirect = false;
+      tab.lastNavPublicDirect = false;
       return;
     }
     final display = url.toString();
-    if (_addressCtrl.text == display) {
-      _lastNavPublicDirect = true;
+    if (tab.addressCtrl.text == display) {
+      tab.lastNavPublicDirect = true;
       return;
     }
-    if (_addressFocus.hasFocus) return;
-    _addressCtrl.text = display;
-    _lastNavPublicDirect = true;
+    if (tab.addressFocus.hasFocus) return;
+    tab.addressCtrl.text = display;
+    tab.lastNavPublicDirect = true;
+  }
+
+  Widget _buildWebView(_BrowserTab tab) {
+    return InAppWebView(
+      key: ValueKey('wv-${widget.window.id}-${tab.id}'),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        javaScriptCanOpenWindowsAutomatically: true,
+        supportMultipleWindows: true,
+        transparentBackground: false,
+        isFraudulentWebsiteWarningEnabled: false,
+        allowsInlineMediaPlayback: true,
+        mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+        useShouldOverrideUrlLoading: false,
+      ),
+      onWebViewCreated: (controller) {
+        tab.web = controller;
+        final pending = tab.pendingNavigate;
+        if (pending != null && pending.isNotEmpty) {
+          tab.pendingNavigate = null;
+          unawaited(_navigate(pending, tab: tab));
+        }
+      },
+      onCreateWindow: (controller, action) =>
+          _handleCreateWindow(controller, action),
+      onTitleChanged: (controller, title) {
+        if (title == null || title.trim().isEmpty) return;
+        tab.pageTitle = title.trim();
+        if (identical(tab, _tab)) {
+          if (tab.addressFocus.hasFocus) {
+            _syncWindowTitle();
+            return;
+          }
+          setState(() {});
+          _syncWindowTitle();
+        }
+      },
+      onLoadStart: (controller, url) {
+        if (identical(tab, _tab) && tab.addressFocus.hasFocus) {
+          tab.loading = true;
+          tab.progress = 0;
+          return;
+        }
+        setState(() {
+          tab.loading = true;
+          tab.progress = 0;
+        });
+        _syncAddressFromLoad(tab, url);
+      },
+      onProgressChanged: (controller, progress) {
+        final p = progress / 100.0;
+        if (identical(tab, _tab) && tab.addressFocus.hasFocus) {
+          tab.progress = p;
+          return;
+        }
+        setState(() => tab.progress = p);
+      },
+      onLoadStop: (controller, url) async {
+        if (!(identical(tab, _tab) && tab.addressFocus.hasFocus)) {
+          setState(() {
+            tab.loading = false;
+            tab.progress = 1;
+          });
+        } else {
+          tab.loading = false;
+          tab.progress = 1;
+        }
+        _syncAddressFromLoad(tab, url);
+        await _refreshNavFlags(tab);
+        if (identical(tab, _tab)) _syncWindowTitle();
+      },
+      onReceivedError: (controller, request, error) {
+        setState(() {
+          tab.loading = false;
+          _error = error.description;
+        });
+      },
+      onWindowFocus: (controller) {
+        if (identical(tab, _tab) && tab.addressFocus.hasFocus) {
+          unawaited(_releaseWebViewKeyboard(tab));
+          tab.addressFocus.requestFocus();
+        }
+      },
+      onReceivedServerTrustAuthRequest: (controller, challenge) async {
+        return ServerTrustAuthResponse(
+          action: ServerTrustAuthResponseAction.PROCEED,
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
     final offline = !c.connected || c.dropped;
+    final tab = _tab;
+    final suggestions = _filteredHistorySuggestions;
 
     return ColoredBox(
       color: wb.panel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _Toolbar(
-            addressCtrl: _addressCtrl,
-            addressFocus: _addressFocus,
-            loading: _loading,
-            progress: _progress,
-            canGoBack: _canGoBack,
-            canGoForward: _canGoForward,
-            modeLabel: _backend?.modeLabel ?? (_useGateway ? '网关' : '直连'),
-            useGateway: _useGateway,
-            offline: offline,
-            bookmarks: _bookmarkList,
-            history: _historyList,
-            currentAddress: _addressCtrl.text.trim(),
-            onBack: () async {
-              await _web?.goBack();
-              await _refreshNavFlags();
-            },
-            onForward: () async {
-              await _web?.goForward();
-              await _refreshNavFlags();
-            },
-            onReload: () async {
-              await _web?.reload();
-            },
-            onSubmit: () => unawaited(_navigate(_addressCtrl.text)),
-            onAddressTap: () {
-              if (!_addressFocus.hasFocus) {
-                _addressFocus.requestFocus();
-              }
-              unawaited(_releaseWebViewKeyboard());
-            },
-            onToggleMode: () => unawaited(_toggleMode()),
-            onToggleBookmark: () => unawaited(_toggleBookmark()),
-            onOpenExternal: () => unawaited(_openExternal()),
-            onOpenBookmark: (url) => unawaited(_navigate(url)),
-            onRemoveBookmark: (url) => unawaited(_removeBookmark(url)),
-            onOpenHistory: (url) => unawaited(_navigate(url)),
-            onClearHistory: () => unawaited(_clearHistory()),
+          _TabStrip(
+            tabs: _tabs,
+            active: _active,
+            maxTabs: _maxTabs,
+            labelFor: _tabLabel,
+            onSelect: _selectTab,
+            onClose: (i) => unawaited(_closeTab(i)),
+            onAdd: () => _addBlankTab(),
           ),
+          if (tab != null)
+            _Toolbar(
+              addressCtrl: tab.addressCtrl,
+              addressFocus: tab.addressFocus,
+              loading: tab.loading,
+              progress: tab.progress,
+              canGoBack: tab.canGoBack,
+              canGoForward: tab.canGoForward,
+              modeLabel: _backend?.modeLabel ?? (_useGateway ? '网关' : '直连'),
+              useGateway: _useGateway,
+              offline: offline,
+              bookmarks: _bookmarkList,
+              history: _historyList,
+              currentAddress: tab.addressCtrl.text.trim(),
+              historySuggestions: suggestions,
+              showHistorySuggestions:
+                  _addressFocused && suggestions.isNotEmpty,
+              onBack: () async {
+                await tab.web?.goBack();
+                await _refreshNavFlags(tab);
+              },
+              onForward: () async {
+                await tab.web?.goForward();
+                await _refreshNavFlags(tab);
+              },
+              onReload: () async {
+                await tab.web?.reload();
+              },
+              onSubmit: () => unawaited(_navigate(tab.addressCtrl.text)),
+              onAddressTap: () {
+                if (!tab.addressFocus.hasFocus) {
+                  tab.addressFocus.requestFocus();
+                }
+                unawaited(_releaseWebViewKeyboard(tab));
+              },
+              onAddressChanged: () {
+                if (_addressFocused) setState(() {});
+              },
+              onPickHistorySuggestion: (url) {
+                tab.addressFocus.unfocus();
+                unawaited(_navigate(url));
+              },
+              onToggleMode: () => unawaited(_toggleMode()),
+              onToggleBookmark: () => unawaited(_toggleBookmark()),
+              onOpenExternal: () => unawaited(_openExternal()),
+              onOpenBookmark: (url) => unawaited(_navigate(url)),
+              onRemoveBookmark: (url) => unawaited(_removeBookmark(url)),
+              onOpenHistory: (url) => unawaited(_navigate(url)),
+              onClearHistory: () => unawaited(_clearHistory()),
+            ),
           if (_useGateway && !_dismissJsHint)
             Material(
               color: wb.accentBlue.withValues(alpha: 0.12),
@@ -485,77 +807,12 @@ class _BrowserAppState extends State<BrowserApp> {
                   )
                 : _booting
                     ? const _Hint(text: '正在启动浏览器…', progress: true)
-                    : InAppWebView(
-                        key: ValueKey('wv-${widget.window.id}'),
-                        initialSettings: InAppWebViewSettings(
-                          javaScriptEnabled: true,
-                          transparentBackground: false,
-                          isFraudulentWebsiteWarningEnabled: false,
-                          allowsInlineMediaPlayback: true,
-                          mixedContentMode:
-                              MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-                          useShouldOverrideUrlLoading: false,
-                        ),
-                        onWebViewCreated: (controller) {
-                          _web = controller;
-                          final pending = _pendingNavigate;
-                          if (pending != null && pending.isNotEmpty) {
-                            _pendingNavigate = null;
-                            unawaited(_navigate(pending));
-                          }
-                        },
-                        onLoadStart: (controller, url) {
-                          if (_addressFocus.hasFocus) {
-                            // 编辑地址时避免整树重建打断输入
-                            _loading = true;
-                            _progress = 0;
-                            return;
-                          }
-                          setState(() {
-                            _loading = true;
-                            _progress = 0;
-                          });
-                          _syncAddressFromLoad(url);
-                        },
-                        onProgressChanged: (controller, progress) {
-                          if (_addressFocus.hasFocus) {
-                            _progress = progress / 100.0;
-                            return;
-                          }
-                          setState(() => _progress = progress / 100.0);
-                        },
-                        onLoadStop: (controller, url) async {
-                          if (!_addressFocus.hasFocus) {
-                            setState(() {
-                              _loading = false;
-                              _progress = 1;
-                            });
-                          } else {
-                            _loading = false;
-                            _progress = 1;
-                          }
-                          await _refreshNavFlags();
-                        },
-                        onReceivedError: (controller, request, error) {
-                          setState(() {
-                            _loading = false;
-                            _error = error.description;
-                          });
-                        },
-                        onWindowFocus: (controller) {
-                          // PlatformView 抢到原生焦点时，若用户正在改地址则抢回来
-                          if (_addressFocus.hasFocus) {
-                            unawaited(_releaseWebViewKeyboard());
-                            _addressFocus.requestFocus();
-                          }
-                        },
-                        onReceivedServerTrustAuthRequest:
-                            (controller, challenge) async {
-                          // 直连 HTTPS 自签：放行
-                          return ServerTrustAuthResponse(
-                            action: ServerTrustAuthResponseAction.PROCEED,
-                          );
-                        },
+                    : IndexedStack(
+                        index: _active.clamp(0, _tabs.length - 1),
+                        sizing: StackFit.expand,
+                        children: [
+                          for (final t in _tabs) _buildWebView(t),
+                        ],
                       ),
           ),
           Padding(
@@ -575,6 +832,115 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 }
 
+class _TabStrip extends StatelessWidget {
+  const _TabStrip({
+    required this.tabs,
+    required this.active,
+    required this.maxTabs,
+    required this.labelFor,
+    required this.onSelect,
+    required this.onClose,
+    required this.onAdd,
+  });
+
+  final List<_BrowserTab> tabs;
+  final int active;
+  final int maxTabs;
+  final String Function(_BrowserTab tab) labelFor;
+  final void Function(int index) onSelect;
+  final void Function(int index) onClose;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Material(
+      color: wb.panelElevated,
+      child: SizedBox(
+        height: 32,
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: tabs.length,
+                itemBuilder: (context, i) {
+                  final t = tabs[i];
+                  final sel = i == active;
+                  return InkWell(
+                    onTap: () => onSelect(i),
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 180),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: sel ? wb.accentBlue : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (t.loading)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 4),
+                              child: SizedBox(
+                                width: 10,
+                                height: 10,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                  color: wb.accentBlue,
+                                ),
+                              ),
+                            ),
+                          Flexible(
+                            child: Text(
+                              labelFor(t),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color:
+                                    sel ? wb.primaryText : wb.secondaryText,
+                              ),
+                            ),
+                          ),
+                          InkWell(
+                            onTap: () => onClose(i),
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 4),
+                              child: Icon(
+                                Icons.close,
+                                size: 14,
+                                color: wb.textMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            IconButton(
+              tooltip: tabs.length >= maxTabs ? '已达 $maxTabs 个标签上限' : '新标签',
+              onPressed: tabs.length >= maxTabs ? null : onAdd,
+              icon: Icon(
+                Icons.add,
+                size: 18,
+                color: tabs.length >= maxTabs ? wb.textMuted : wb.primaryText,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.addressCtrl,
@@ -589,11 +955,15 @@ class _Toolbar extends StatelessWidget {
     required this.bookmarks,
     required this.history,
     required this.currentAddress,
+    required this.historySuggestions,
+    required this.showHistorySuggestions,
     required this.onBack,
     required this.onForward,
     required this.onReload,
     required this.onSubmit,
     required this.onAddressTap,
+    required this.onAddressChanged,
+    required this.onPickHistorySuggestion,
     required this.onToggleMode,
     required this.onToggleBookmark,
     required this.onOpenExternal,
@@ -615,11 +985,15 @@ class _Toolbar extends StatelessWidget {
   final List<String> bookmarks;
   final List<String> history;
   final String currentAddress;
+  final List<String> historySuggestions;
+  final bool showHistorySuggestions;
   final VoidCallback onBack;
   final VoidCallback onForward;
   final VoidCallback onReload;
   final VoidCallback onSubmit;
   final VoidCallback onAddressTap;
+  final VoidCallback onAddressChanged;
+  final void Function(String url) onPickHistorySuggestion;
   final VoidCallback onToggleMode;
   final VoidCallback onToggleBookmark;
   final VoidCallback onOpenExternal;
@@ -684,6 +1058,7 @@ class _Toolbar extends StatelessWidget {
                         enabled: !offline,
                         keyboardType: TextInputType.url,
                         textInputAction: TextInputAction.go,
+                        onChanged: (_) => onAddressChanged(),
                         style: TextStyle(
                           fontSize: 13,
                           color: wb.primaryText,
@@ -888,6 +1263,52 @@ class _Toolbar extends StatelessWidget {
               ],
             ),
           ),
+          if (showHistorySuggestions)
+            Material(
+              color: wb.panel,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: historySuggestions.length,
+                  itemBuilder: (context, i) {
+                    final h = historySuggestions[i];
+                    return InkWell(
+                      onTap: () => onPickHistorySuggestion(h),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.history_rounded,
+                              size: 14,
+                              color: wb.textMuted,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                h,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: wb.primaryText,
+                                  fontFamily: 'Menlo',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
           if (loading)
             LinearProgressIndicator(
               value: progress > 0 && progress < 1 ? progress : null,

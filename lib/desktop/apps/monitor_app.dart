@@ -47,6 +47,7 @@ class _MonitorAppState extends State<MonitorApp>
     _tabs = TabController(length: 2, vsync: this);
     widget.wm.addListener(_onWm);
     widget.controller.addListener(_onController);
+    widget.window.onConnectionRestored = _onConnectionRestored;
     unawaited(_tick());
     _armTimer();
   }
@@ -55,9 +56,16 @@ class _MonitorAppState extends State<MonitorApp>
   void dispose() {
     _timer?.cancel();
     _tabs.dispose();
+    widget.window.onConnectionRestored = null;
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
+  }
+
+  void _onConnectionRestored() {
+    if (!mounted) return;
+    setState(() => _error = null);
+    unawaited(_tick());
   }
 
   void _onWm() {
@@ -98,7 +106,7 @@ class _MonitorAppState extends State<MonitorApp>
     });
     try {
       final results = await Future.wait([
-        fetchRemoteHostSnapshot(c),
+        widget.controller.snapshot(),
         fetchRemoteNetworkSnapshot(c),
         fetchRemoteGpuSnapshot(c),
       ]);
@@ -108,7 +116,8 @@ class _MonitorAppState extends State<MonitorApp>
       final gpu = results[2] as RemoteGpuSnapshot?;
       if (snap == null && net == null && gpu == null) {
         setState(() {
-          _error = '无法获取指标';
+          final detail = widget.controller.lastRemoteCommandError;
+          _error = detail == null ? '无法获取指标' : '刷新失败：$detail';
           _loading = false;
         });
         return;

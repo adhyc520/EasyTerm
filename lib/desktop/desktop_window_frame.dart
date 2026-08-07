@@ -48,6 +48,18 @@ class DesktopWindowFrame extends StatelessWidget {
         return Icons.swap_vert_rounded;
       case DesktopAppType.editor:
         return Icons.edit_note_rounded;
+      case DesktopAppType.forwards:
+        return Icons.alt_route_rounded;
+      case DesktopAppType.runCommand:
+        return Icons.play_circle_outline_rounded;
+      case DesktopAppType.cron:
+        return Icons.schedule_rounded;
+      case DesktopAppType.users:
+        return Icons.groups_rounded;
+      case DesktopAppType.packages:
+        return Icons.inventory_2_rounded;
+      case DesktopAppType.firewall:
+        return Icons.security_rounded;
     }
   }
 
@@ -113,6 +125,8 @@ class DesktopWindowFrame extends StatelessWidget {
                       title: window.title,
                       focused: focused,
                       maximized: isMax,
+                      alwaysOnTop: window.alwaysOnTop,
+                      workspaceCount: wm.workspaces.length,
                       onPanStart: () {
                         // 勿在指针回调里同步抬 z：Stack 重排会销毁/重建 MouseRegion。
                         wm.beginDrag(window.id);
@@ -127,6 +141,11 @@ class DesktopWindowFrame extends StatelessWidget {
                       onClose: () => unawaited(wm.requestClose(window.id)),
                       onFocus: () => wm.focus(window.id),
                       onTile: (zone) => wm.tile(window.id, zone),
+                      onToggleAlwaysOnTop: () =>
+                          wm.toggleAlwaysOnTop(window.id),
+                      onMoveToWorkspace: (i) =>
+                          wm.moveWindowToWorkspace(window.id, i),
+                      onSnapLayout: (zone) => wm.tile(window.id, zone),
                     ),
                     Expanded(
                       child: ColoredBox(
@@ -327,6 +346,8 @@ class _TitleBar extends StatelessWidget {
     required this.title,
     required this.focused,
     required this.maximized,
+    required this.alwaysOnTop,
+    required this.workspaceCount,
     required this.onPanStart,
     required this.onPanUpdate,
     required this.onPanEnd,
@@ -336,6 +357,9 @@ class _TitleBar extends StatelessWidget {
     required this.onClose,
     required this.onFocus,
     required this.onTile,
+    required this.onToggleAlwaysOnTop,
+    required this.onMoveToWorkspace,
+    required this.onSnapLayout,
   });
 
   final double height;
@@ -343,6 +367,8 @@ class _TitleBar extends StatelessWidget {
   final String title;
   final bool focused;
   final bool maximized;
+  final bool alwaysOnTop;
+  final int workspaceCount;
   final VoidCallback onPanStart;
   final void Function(Offset delta) onPanUpdate;
   final VoidCallback onPanEnd;
@@ -352,6 +378,9 @@ class _TitleBar extends StatelessWidget {
   final VoidCallback onClose;
   final VoidCallback onFocus;
   final void Function(TileZone zone) onTile;
+  final VoidCallback onToggleAlwaysOnTop;
+  final void Function(int index) onMoveToWorkspace;
+  final void Function(TileZone zone) onSnapLayout;
 
   Future<void> _showTileMenu(BuildContext context, Offset global) async {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -363,7 +392,13 @@ class _TitleBar extends StatelessWidget {
         Offset.zero & overlay.size,
       ),
       items: [
+        PopupMenuItem(
+          value: 'pin',
+          child: Text(alwaysOnTop ? '取消置顶' : '置顶'),
+        ),
         const PopupMenuItem(value: 'maximize', child: Text('最大化')),
+        const PopupMenuItem(value: 'minimize', child: Text('最小化')),
+        const PopupMenuItem(value: 'restore', child: Text('还原')),
         const PopupMenuDivider(),
         const PopupMenuItem(value: TileZone.left, child: Text('左半屏')),
         const PopupMenuItem(value: TileZone.right, child: Text('右半屏')),
@@ -374,14 +409,69 @@ class _TitleBar extends StatelessWidget {
         const PopupMenuItem(value: TileZone.topRight, child: Text('右上')),
         const PopupMenuItem(value: TileZone.bottomLeft, child: Text('左下')),
         const PopupMenuItem(value: TileZone.bottomRight, child: Text('右下')),
+        if (workspaceCount > 1) ...[
+          const PopupMenuDivider(),
+          for (var i = 0; i < workspaceCount; i++)
+            PopupMenuItem(value: 'ws:$i', child: Text('移到桌面 ${i + 1}')),
+        ],
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'close', child: Text('关闭')),
       ],
     );
     if (selected == null) return;
+    if (selected == 'pin') {
+      onToggleAlwaysOnTop();
+      return;
+    }
     if (selected == 'maximize') {
       onMaximize();
       return;
     }
+    if (selected == 'minimize') {
+      onMinimize();
+      return;
+    }
+    if (selected == 'restore') {
+      if (maximized) onMaximize();
+      return;
+    }
+    if (selected == 'close') {
+      onClose();
+      return;
+    }
+    if (selected is String && selected.startsWith('ws:')) {
+      final i = int.tryParse(selected.substring(3));
+      if (i != null) onMoveToWorkspace(i);
+      return;
+    }
     if (selected is TileZone) onTile(selected);
+  }
+
+  Future<void> _showSnapPicker(BuildContext context) async {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final origin = box.localToGlobal(Offset(box.size.width - 90, box.size.height));
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<Object>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(origin.dx, origin.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(value: TileZone.left, child: Text('左半 · 1×2')),
+        PopupMenuItem(value: TileZone.right, child: Text('右半 · 1×2')),
+        PopupMenuItem(value: TileZone.top, child: Text('上半 · 2×1')),
+        PopupMenuItem(value: TileZone.bottom, child: Text('下半 · 2×1')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: TileZone.topLeft, child: Text('左上 · 2×2')),
+        PopupMenuItem(value: TileZone.topRight, child: Text('右上 · 2×2')),
+        PopupMenuItem(value: TileZone.bottomLeft, child: Text('左下 · 2×2')),
+        PopupMenuItem(value: TileZone.bottomRight, child: Text('右下 · 2×2')),
+      ],
+    );
+    if (selected is TileZone) onSnapLayout(selected);
   }
 
   @override
@@ -406,6 +496,10 @@ class _TitleBar extends StatelessWidget {
         child: Row(
           children: [
             Icon(icon, size: 16, color: focused ? wb.accentBlue : wb.textMuted),
+            if (alwaysOnTop) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.push_pin, size: 12, color: wb.accentBlue),
+            ],
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -424,12 +518,10 @@ class _TitleBar extends StatelessWidget {
               tooltip: '最小化',
               onPressed: onMinimize,
             ),
-            _TitleBtn(
-              icon: maximized
-                  ? Icons.filter_none_rounded
-                  : Icons.crop_square_rounded,
-              tooltip: maximized ? '还原' : '最大化',
-              onPressed: onMaximize,
+            _SnapMaximizeBtn(
+              maximized: maximized,
+              onMaximize: onMaximize,
+              onShowLayouts: () => unawaited(_showSnapPicker(context)),
             ),
             _TitleBtn(
               icon: Icons.close_rounded,
@@ -438,6 +530,50 @@ class _TitleBar extends StatelessWidget {
               onPressed: onClose,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SnapMaximizeBtn extends StatelessWidget {
+  const _SnapMaximizeBtn({
+    required this.maximized,
+    required this.onMaximize,
+    required this.onShowLayouts,
+  });
+
+  final bool maximized;
+  final VoidCallback onMaximize;
+  final VoidCallback onShowLayouts;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Tooltip(
+      message: maximized ? '还原' : '最大化 · 悬停选布局',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        onEnter: (_) {
+          if (!maximized) {
+            // 短延迟后由用户点击右侧小三角或长按打开；此处用 secondary 入口
+          }
+        },
+        child: InkWell(
+          onTap: onMaximize,
+          onSecondaryTap: onShowLayouts,
+          onLongPress: onShowLayouts,
+          canRequestFocus: false,
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            width: 28,
+            height: 24,
+            child: Icon(
+              maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
+              size: 15,
+              color: wb.textMuted,
+            ),
+          ),
         ),
       ),
     );

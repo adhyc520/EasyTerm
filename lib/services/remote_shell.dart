@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, defaultTargetPlatform, kIsWeb, kDebugMode, debugPrint;
 import 'package:xterm/xterm.dart';
 
 import 'workbench_settings_store.dart';
@@ -45,8 +45,15 @@ class RemoteShell {
     shell._err = session.stderr.listen(
       (d) => terminal.write(utf8.decode(d, allowMalformed: true)),
     );
+    debugAliveShells++;
+    if (kDebugMode) {
+      debugPrint('RemoteShell+ alive=$debugAliveShells');
+    }
     return shell;
   }
+
+  /// debug：当前未 close 的桌面 PTY 数。
+  static int debugAliveShells = 0;
 
   static TerminalTargetPlatform _xtermPlatform() {
     if (kIsWeb) return TerminalTargetPlatform.web;
@@ -79,5 +86,11 @@ class RemoteShell {
     try {
       session.close();
     } catch (_) {}
+    if (debugAliveShells > 0) {
+      debugAliveShells--;
+      if (kDebugMode) {
+        debugPrint('RemoteShell- alive=$debugAliveShells');
+      }
+    }
   }
 }

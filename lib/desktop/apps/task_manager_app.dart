@@ -86,6 +86,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     _tabs.addListener(_onTab);
     widget.wm.addListener(_onWm);
     widget.controller.addListener(_onController);
+    widget.window.onConnectionRestored = _onConnectionRestored;
     unawaited(_tick());
     _armTimer();
   }
@@ -98,9 +99,16 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     _procFilterCtrl.dispose();
     _svcFilterCtrl.dispose();
     _netFilterCtrl.dispose();
+    widget.window.onConnectionRestored = null;
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
+  }
+
+  void _onConnectionRestored() {
+    if (!mounted) return;
+    setState(() => _error = null);
+    unawaited(_tick());
   }
 
   void _onTab() {
@@ -208,7 +216,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   Future<void> _loadPerf() async {
     final results = await Future.wait([
-      fetchRemoteHostSnapshot(widget.controller, osHint: _os),
+      widget.controller.snapshot(),
       fetchRemoteGpuSnapshot(widget.controller, osHint: _os),
     ]);
     if (!mounted) return;
@@ -216,7 +224,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     final gpu = results[1] as RemoteGpuSnapshot?;
     if (snap == null && gpu == null) {
       setState(() {
-        _error = '无法获取性能指标';
+        final detail = widget.controller.lastRemoteCommandError;
+        _error = detail == null ? '无法获取性能指标' : '刷新失败：$detail';
         _loading = false;
       });
       return;

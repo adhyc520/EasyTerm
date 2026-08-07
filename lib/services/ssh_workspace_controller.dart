@@ -23,11 +23,15 @@ import '../l10n/app_localizations.dart';
 import '../util/remote_paths.dart';
 import 'browser_gateway.dart';
 import 'local_port_forwarder.dart';
+import 'remote_command_queue.dart';
+import 'remote_host_metrics.dart';
 import 'remote_session.dart';
 import 'remote_shell.dart';
+import 'remote_stream.dart';
 import 'sftp_browser_host.dart';
 import 'sftp_fs_transfer.dart' as sftp_transfer;
 import 'sftp_planned_upload.dart';
+import 'sftp_remote_clipboard.dart';
 import 'sftp_remote_copy.dart' as sftp_copy;
 import 'sftp_upload_progress_hooks.dart';
 import 'sftp_upload_task_list.dart';
@@ -823,19 +827,23 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   Future<List<String>> copyRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   }) async {
     final client = _sftp;
     if (client == null) return const [];
+    final dest = toCwd ?? _remoteCwd;
     try {
       final pasted = await sftp_copy.sftpCopyRemoteNames(
         client: client,
         fromCwd: fromCwd,
-        toCwd: _remoteCwd,
+        toCwd: dest,
         names: names,
       );
+      notifyRemoteFsChanged();
       await refreshDirectory();
       return pasted;
     } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      notifyRemoteFsChanged();
       await refreshDirectory();
       _setError(e.toString());
       notifyListeners();
@@ -851,19 +859,27 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   Future<List<String>> moveRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   }) async {
     final client = _sftp;
     if (client == null) return const [];
+    final dest = toCwd ?? _remoteCwd;
     try {
       final pasted = await sftp_copy.sftpMoveRemoteNames(
         client: client,
         fromCwd: fromCwd,
-        toCwd: _remoteCwd,
+        toCwd: dest,
         names: names,
       );
+      clearRemoteClipboardAfterMove(fromCwd: fromCwd, names: names);
+      notifyRemoteFsChanged();
       await refreshDirectory();
       return pasted;
     } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      if (e.pasted.isNotEmpty) {
+        clearRemoteClipboardAfterMove(fromCwd: fromCwd, names: e.pasted);
+      }
+      notifyRemoteFsChanged();
       await refreshDirectory();
       _setError(e.toString());
       notifyListeners();
@@ -1113,14 +1129,85 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   /// 避免在 A 标签页拖出后到 B 标签页 SFTP 面板再次上传同一份临时文件。
   static final Set<String> _activeDragTempPaths = <String>{};
 
-  static void registerDragTempPath(String path) {
+  /// 临时本地路径 → 远端绝对路径（跨窗口拖到终端/编辑器时还原远端路径）。
+  static final Map<String, String> _dragTempToRemote = <String, String>{};
+
+  /// 最近一次内部拖出的远端路径（虚拟文件流无 temp 时的兜底）。
+  static String? lastDragRemotePath;
+
+  /// 当前内部拖出的远端绝对路径列表（支持多选拖到另一文件管理器窗口）。
+  static List<String> activeDragRemotePaths = const [];
+
+  /// 远端树变更世代：桌面多文件管理器窗口据此刷新源目录。
+  int _remoteFsEpoch = 0;
+  int get remoteFsEpoch => _remoteFsEpoch;
+
+  void notifyRemoteFsChanged() {
+    _remoteFsEpoch++;
+    notifyListeners();
+  }
+
+  /// 会话级远程复制/剪切剪贴板（跨文件管理器窗口共享）。
+  SftpRemoteClipboard? _remoteFileClipboard;
+  SftpRemoteClipboard? get remoteFileClipboard => _remoteFileClipboard;
+
+  void setRemoteFileClipboard(SftpRemoteClipboard? value) {
+    _remoteFileClipboard = value;
+    notifyListeners();
+  }
+
+  void clearRemoteClipboardAfterMove({
+    required String fromCwd,
+    required List<String> names,
+  }) {
+    final clip = _remoteFileClipboard;
+    if (clip == null || !clip.isCut) return;
+    if (normalizeRemotePathForCompare(clip.sourceCwd) !=
+        normalizeRemotePathForCompare(fromCwd)) {
+      return;
+    }
+    final moved = names.toSet();
+    final left = clip.names.where((n) => !moved.contains(n)).toList();
+    setRemoteFileClipboard(
+      left.isEmpty
+          ? null
+          : SftpRemoteClipboard(
+              sourceCwd: clip.sourceCwd,
+              names: left,
+              isCut: true,
+            ),
+    );
+  }
+
+  static void registerDragTempPath(String path, {String? remotePath}) {
     if (path.isEmpty) return;
-    _activeDragTempPaths.add(p.normalize(path));
+    final norm = p.normalize(path);
+    _activeDragTempPaths.add(norm);
+    if (remotePath != null && remotePath.isNotEmpty) {
+      _dragTempToRemote[norm] = remotePath;
+      lastDragRemotePath = remotePath;
+    }
   }
 
   static void unregisterDragTempPath(String path) {
     if (path.isEmpty) return;
-    _activeDragTempPaths.remove(p.normalize(path));
+    final norm = p.normalize(path);
+    _activeDragTempPaths.remove(norm);
+    _dragTempToRemote.remove(norm);
+  }
+
+  /// 若 [absolutePath] 是近期拖出的临时副本，返回对应远端绝对路径。
+  static String? remotePathForDragTemp(String absolutePath) {
+    if (absolutePath.isEmpty) return null;
+    final norm = p.normalize(absolutePath);
+    final direct = _dragTempToRemote[norm];
+    if (direct != null) return direct;
+    for (final e in _dragTempToRemote.entries) {
+      if (p.isWithin(e.key, norm) || p.equals(e.key, norm)) {
+        return e.value;
+      }
+    }
+    return null;
   }
 
   /// 判断 [absolutePath] 是否为本应用近期拖出的临时副本（精确匹配或位于其下）。
@@ -1481,17 +1568,81 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     return attrs.modifyTime;
   }
 
+  RemoteCommandQueue? _commandQueue;
+  final Set<RemoteStream> _activeStreams = {};
+  RemoteHostSnapshot? _lastSnapshot;
+  DateTime? _lastSnapshotAt;
+
+  RemoteCommandQueue get _cmdQueue {
+    return _commandQueue ??= RemoteCommandQueue(
+      () => (_connected && !dropped) ? _client : null,
+      maxConcurrent: 2,
+    );
+  }
+
+  /// 排队执行一次性命令（多窗口轮询共享，限制并发）。
+  Future<String?> runQueued(
+    String command, {
+    Duration timeout = const Duration(seconds: 15),
+  }) {
+    if (!_connected || dropped) return Future.value(null);
+    return _cmdQueue.run(command, timeout: timeout);
+  }
+
+  /// 最近一次排队命令失败原因（供托盘 / UI 展示）。
+  String? get lastRemoteCommandError => _cmdQueue.lastError;
+  DateTime? get lastRemoteCommandErrorAt => _cmdQueue.lastErrorAt;
+
+  /// 当前登记的本地端口转发（桌面转发管理器）。
+  List<LocalPortForwarder> get desktopForwards =>
+      List.unmodifiable(_desktopForwards);
+
+  int get debugActiveStreamCount => _activeStreams.length;
+
   /// 与交互 shell 并行执行的非交互命令（用于底部状态栏等）。
-  Future<String?> runRemoteForStatus(String command) async {
-    final c = _client;
-    if (c == null || !_connected) return null;
-    try {
-      final out = await c.run(command, stderr: false);
-      return utf8.decode(out, allowMalformed: true).trim();
-    } catch (e) {
-      debugPrint('runRemoteForStatus: $e');
-      return null;
+  /// 内部走 [runQueued]，保留旧签名零回归。
+  Future<String?> runRemoteForStatus(String command) => runQueued(command);
+
+  /// 共享主机采样：短时间内复用缓存，降低监控/任务/托盘重复 exec。
+  Future<RemoteHostSnapshot?> snapshot({
+    Duration maxAge = const Duration(seconds: 3),
+  }) async {
+    final now = DateTime.now();
+    final cached = _lastSnapshot;
+    final at = _lastSnapshotAt;
+    if (cached != null &&
+        at != null &&
+        now.difference(at) <= maxAge) {
+      return cached;
     }
+    final snap = await fetchRemoteHostSnapshot(this);
+    if (snap != null) {
+      _lastSnapshot = snap;
+      _lastSnapshotAt = DateTime.now();
+    }
+    return snap;
+  }
+
+  /// 注册流式通道；掉线 teardown 时统一 [RemoteStream.stop]。
+  void registerRemoteStream(RemoteStream stream) {
+    _activeStreams.add(stream);
+  }
+
+  void unregisterRemoteStream(RemoteStream stream) {
+    _activeStreams.remove(stream);
+  }
+
+  Future<RemoteStream> startRemoteStream(
+    String command, {
+    int maxLines = 5000,
+  }) async {
+    final stream = await RemoteStream.start(
+      clientForDesktop,
+      command: command,
+      maxLines: maxLines,
+    );
+    registerRemoteStream(stream);
+    return stream;
   }
 
   /// 取消订阅、关闭 shell / 桌面资源 / 传输会话。
@@ -1508,6 +1659,11 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
       _shell?.close();
     } catch (_) {}
     _shell = null;
+
+    await _stopActiveStreams();
+    _commandQueue?.clearPending();
+    _lastSnapshot = null;
+    _lastSnapshotAt = null;
 
     final gw = _browserGateway;
     _browserGateway = null;
@@ -1529,6 +1685,16 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     if (!keepTerminal) {
       _terminal = null;
       _entries = [];
+    }
+  }
+
+  Future<void> _stopActiveStreams() async {
+    final streams = List<RemoteStream>.from(_activeStreams);
+    _activeStreams.clear();
+    for (final s in streams) {
+      try {
+        await s.stop();
+      } catch (_) {}
     }
   }
 
@@ -1584,6 +1750,11 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     } catch (_) {}
     _shell = null;
 
+    await _stopActiveStreams();
+    _commandQueue?.clearPending();
+    _lastSnapshot = null;
+    _lastSnapshotAt = null;
+
     final gw = _browserGateway;
     _browserGateway = null;
     try {
@@ -1625,6 +1796,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     if (_sessionDisposed) return;
     _sessionDisposed = true;
     _remoteSession.onTransportClosed = null;
+    _commandQueue?.dispose();
+    _commandQueue = null;
     uploadTasks.dispose();
     unawaited(() async {
       await disconnect();

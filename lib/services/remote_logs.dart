@@ -72,6 +72,53 @@ bool isSafeLogPath(String path) {
 
 String? _shellSingleQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 
+/// 构建 Linux 实时跟随命令；不支持时返回 `null`（保留快照）。
+String? buildLinuxLogFollowCommand({
+  required RemoteLogSource source,
+  String? unit,
+  String? path,
+  int lines = 300,
+  String? priority,
+}) {
+  final n = lines.clamp(20, 2000);
+  switch (source) {
+    case RemoteLogSource.docker:
+      final ref = (unit ?? '').trim();
+      if (!isSafeContainerRef(ref)) return null;
+      return 'docker logs -f --tail $n $ref 2>&1';
+    case RemoteLogSource.file:
+      final p = (path ?? '').trim();
+      if (!isSafeLogPath(p)) return null;
+      final q = _shellSingleQuote(p)!;
+      return 'tail -F -n $n $q 2>&1';
+    case RemoteLogSource.journal:
+      final u = (unit ?? '').trim();
+      if (u.isNotEmpty && !isSafeLogUnit(u)) return null;
+      final pri = (priority ?? '').trim().toLowerCase();
+      final priOk =
+          RegExp(r'^(emerg|alert|crit|err|warning|notice|info|debug)$')
+              .hasMatch(pri);
+      final buf = StringBuffer(
+        'journalctl -f --no-pager -n $n -o short-iso',
+      );
+      if (u.isNotEmpty) buf.write(' -u $u');
+      if (priOk) buf.write(' -p $pri');
+      return buf.toString();
+  }
+}
+
+/// 将原始文本行转为 [RemoteLogLine]（流式模式复用解析启发式）。
+List<RemoteLogLine> remoteLogLinesFromRaw(List<String> rawLines) {
+  return [
+    for (final line in rawLines)
+      if (line.trimRight().isNotEmpty)
+        RemoteLogLine(
+          text: line.trimRight(),
+          level: _inferLevel(line),
+        ),
+  ];
+}
+
 Future<RemoteLogSnapshot?> fetchRemoteLogs(
   SshWorkspaceController controller, {
   RemoteOsKind? osHint,

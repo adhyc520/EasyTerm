@@ -19,11 +19,13 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   DesktopSftpController(this._workspace, {String? initialCwd}) {
     _remoteCwd = initialCwd ?? _workspace.remoteCwd;
     _wasConnected = _workspace.connected && !_workspace.dropped;
+    _seenRemoteFsEpoch = _workspace.remoteFsEpoch;
     _workspace.addListener(_onWorkspace);
   }
 
   final SshWorkspaceController _workspace;
   bool _wasConnected = false;
+  int _seenRemoteFsEpoch = 0;
 
   /// 底层会话（拖出/临时文件登记等仍走工作区静态与实例方法）。
   SshWorkspaceController get workspace => _workspace;
@@ -52,6 +54,7 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     final nowConnected = _workspace.connected && !_workspace.dropped;
     if (!nowConnected) {
       _wasConnected = false;
+      _seenRemoteFsEpoch = _workspace.remoteFsEpoch;
       if (_entries.isNotEmpty) {
         _entries = [];
         notifyListeners();
@@ -63,9 +66,15 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     // 重连成功：强制刷新当前目录（SFTP 客户端已重建）。
     if (!_wasConnected) {
       _wasConnected = true;
+      _seenRemoteFsEpoch = _workspace.remoteFsEpoch;
       unawaited(refreshDirectory());
       notifyListeners();
       return;
+    }
+    final epoch = _workspace.remoteFsEpoch;
+    if (epoch != _seenRemoteFsEpoch) {
+      _seenRemoteFsEpoch = epoch;
+      unawaited(refreshDirectory());
     }
     if (sftp != null && _entries.isEmpty && !_loadingDir) {
       unawaited(refreshDirectory());
@@ -289,19 +298,23 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   Future<List<String>> copyRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   }) async {
     final client = sftp;
     if (client == null) return const [];
+    final dest = toCwd ?? _remoteCwd;
     try {
       final pasted = await sftp_copy.sftpCopyRemoteNames(
         client: client,
         fromCwd: fromCwd,
-        toCwd: _remoteCwd,
+        toCwd: dest,
         names: names,
       );
+      _workspace.notifyRemoteFsChanged();
       await refreshDirectory();
       return pasted;
     } on sftp_copy.SftpRemotePastePartialFailure {
+      _workspace.notifyRemoteFsChanged();
       await refreshDirectory();
       rethrow;
     }
@@ -311,19 +324,33 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   Future<List<String>> moveRemoteNamesFrom({
     required String fromCwd,
     required List<String> names,
+    String? toCwd,
   }) async {
     final client = sftp;
     if (client == null) return const [];
+    final dest = toCwd ?? _remoteCwd;
     try {
       final pasted = await sftp_copy.sftpMoveRemoteNames(
         client: client,
         fromCwd: fromCwd,
-        toCwd: _remoteCwd,
+        toCwd: dest,
         names: names,
       );
+      _workspace.clearRemoteClipboardAfterMove(
+        fromCwd: fromCwd,
+        names: names,
+      );
+      _workspace.notifyRemoteFsChanged();
       await refreshDirectory();
       return pasted;
-    } on sftp_copy.SftpRemotePastePartialFailure {
+    } on sftp_copy.SftpRemotePastePartialFailure catch (e) {
+      if (e.pasted.isNotEmpty) {
+        _workspace.clearRemoteClipboardAfterMove(
+          fromCwd: fromCwd,
+          names: e.pasted,
+        );
+      }
+      _workspace.notifyRemoteFsChanged();
       await refreshDirectory();
       rethrow;
     }

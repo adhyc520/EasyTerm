@@ -41,13 +41,21 @@ class _DiskUsageAppState extends State<DiskUsageApp> {
   void initState() {
     super.initState();
     widget.controller.addListener(_onController);
+    widget.window.onConnectionRestored = _onRestored;
     unawaited(_load());
   }
 
   @override
   void dispose() {
+    widget.window.onConnectionRestored = null;
     widget.controller.removeListener(_onController);
     super.dispose();
+  }
+
+  void _onRestored() {
+    if (!mounted) return;
+    setState(() => _error = null);
+    unawaited(_load());
   }
 
   void _onController() {

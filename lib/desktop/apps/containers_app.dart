@@ -46,6 +46,7 @@ class _ContainersAppState extends State<ContainersApp> {
     super.initState();
     widget.wm.addListener(_onWm);
     widget.controller.addListener(_onController);
+    widget.window.onConnectionRestored = _onConnectionRestored;
     unawaited(_tick());
     _armTimer();
   }
@@ -54,9 +55,16 @@ class _ContainersAppState extends State<ContainersApp> {
   void dispose() {
     _timer?.cancel();
     _filterCtrl.dispose();
+    widget.window.onConnectionRestored = null;
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
+  }
+
+  void _onConnectionRestored() {
+    if (!mounted) return;
+    setState(() => _error = null);
+    unawaited(_tick());
   }
 
   void _onWm() {

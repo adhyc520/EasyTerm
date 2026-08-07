@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
@@ -8,6 +9,7 @@ import '../../services/remote_shell.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../services/workbench_settings_store.dart';
 import '../../theme/workbench_theme.dart';
+import '../../util/desktop_drop_paths.dart';
 import '../../util/remote_shell_cd.dart';
 import '../../widgets/terminal_surface.dart';
 import '../desktop_window_manager.dart';
@@ -161,6 +163,7 @@ class _TerminalAppState extends State<TerminalApp> {
         _opening = false;
       });
       unawaited(_cdToInitialCwd(shell));
+      unawaited(_injectInitialCommand(shell));
       if (widget.window.focused) {
         _claimKeyboard();
       }
@@ -193,24 +196,45 @@ class _TerminalAppState extends State<TerminalApp> {
     shell.terminal.textInput('$cmd\r');
   }
 
+  /// 包管理器 / 防火墙等：打开终端后注入待执行命令（不自动回车，避免误跑 sudo）。
+  Future<void> _injectInitialCommand(RemoteShell shell) async {
+    final raw = widget.window.args['inject']?.toString();
+    if (raw == null || raw.isEmpty) return;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted || !identical(_shell, shell)) return;
+    shell.paste(raw);
+  }
+
   Widget _buildSurface(Terminal term, {required bool connected}) {
     final c = widget.controller;
     final settings = widget.settings;
-    return TerminalSurface(
-      key: _surfaceKey,
-      terminal: term,
-      connected: connected,
-      connecting: c.connecting,
-      autofocus: widget.window.focused,
-      onReconnect: c.dropped ? () => unawaited(c.reconnect()) : null,
-      errorText: c.error,
-      themeBg: context.wb.terminalBg,
-      fontSize: settings.terminalFontSize,
-      fontFamily: settings.terminalFontFamily,
-      selectToCopy: settings.selectToCopy,
-      showLeftBorder: false,
-      tapRegionGroupId: widget.window.id,
-      releaseFocusOnTapOutside: false,
+    return DropTarget(
+      onDragDone: (detail) {
+        final paths = resolveDesktopDropPaths(detail);
+        if (paths.isEmpty) return;
+        final text = paths.join(' ');
+        if (_usePrimary) {
+          c.pasteRemoteInput(text);
+        } else {
+          _shell?.paste(text);
+        }
+      },
+      child: TerminalSurface(
+        key: _surfaceKey,
+        terminal: term,
+        connected: connected,
+        connecting: c.connecting,
+        autofocus: widget.window.focused,
+        onReconnect: c.dropped ? () => unawaited(c.reconnect()) : null,
+        errorText: c.error,
+        themeBg: context.wb.terminalBg,
+        fontSize: settings.terminalFontSize,
+        fontFamily: settings.terminalFontFamily,
+        selectToCopy: settings.selectToCopy,
+        showLeftBorder: false,
+        tapRegionGroupId: widget.window.id,
+        releaseFocusOnTapOutside: false,
+      ),
     );
   }
 

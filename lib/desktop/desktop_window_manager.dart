@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/desktop_settings_store.dart';
 import '../services/desktop_window_size_store.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
@@ -34,6 +35,12 @@ enum DesktopAppType {
   diskUsage,
   transfers,
   editor,
+  forwards,
+  runCommand,
+  cron,
+  users,
+  packages,
+  firewall,
 }
 
 /// 窗口缩放手柄（4 边 + 4 角）。
@@ -48,6 +55,15 @@ enum ResizeEdge {
   bottomRight,
 }
 
+/// 虚拟工作区（运行期组织；不持久化窗口清单）。
+class DesktopWorkspace {
+  DesktopWorkspace(this.id, this.name);
+
+  final String id;
+  String name;
+  final List<DesktopWindow> windows = [];
+}
+
 class DesktopWindow {
   DesktopWindow({
     required this.id,
@@ -57,6 +73,7 @@ class DesktopWindow {
     this.state = WindowState.normal,
     this.z = 0,
     this.focused = false,
+    this.alwaysOnTop = false,
     Map<String, dynamic>? args,
     this.preMaxRect,
   }) : args = args ?? <String, dynamic>{};
@@ -67,14 +84,21 @@ class DesktopWindow {
   WindowState state;
   double z;
   bool focused;
+  bool alwaysOnTop;
   final Map<String, dynamic> args;
 
   /// normal 态逻辑坐标（最大化时仍保留，或由 [preMaxRect] 还原）。
   Rect rect;
   Rect? preMaxRect;
 
+  /// 编辑器多标签：尝试在本窗口打开 [path]；已存在则聚焦。返回是否已处理。
+  bool Function(String path)? tryOpenEditorPath;
+
   /// 关闭前确认；返回 false 则取消关闭（如编辑器未保存）。
   Future<bool> Function()? onWillClose;
+
+  /// SSH 重连成功后由桌面外壳调用，各 App 自行恢复。
+  VoidCallback? onConnectionRestored;
 
   /// 当前应绘制的几何（minimized 时仍返回 normal，由视图过滤）。
   Rect displayRect(Size desktopSize, double taskbarH) {
@@ -95,26 +119,33 @@ class DesktopWindowManager extends ChangeNotifier {
     required this.controller,
     required this.hostKey,
     required this.settings,
-  }) : _sizeStore = DesktopWindowSizeStore(hostKey);
+    DesktopSettingsStore? desktopSettings,
+  })  : desktopSettings = desktopSettings ?? DesktopSettingsStore(),
+        _sizeStore = DesktopWindowSizeStore(hostKey) {
+    _initWorkspaces(this.desktopSettings.workspaceCount);
+  }
 
   final SshWorkspaceController controller;
   final String hostKey;
   final WorkbenchSettingsStore settings;
+  final DesktopSettingsStore desktopSettings;
   final DesktopWindowSizeStore _sizeStore;
 
   static const double taskbarH = 44;
   static const double titleBarH = 30;
   static const double minWidth = 240;
   static const double minHeight = 160;
-  static const double _defaultWFrac = 0.52;
-  static const double _defaultHFrac = 0.58;
+  static const int kDefaultWorkspaceCount = 2;
 
-  final List<DesktopWindow> _windows = [];
+  final List<DesktopWorkspace> _workspaces = [];
+  int _activeWs = 0;
+
   /// type.name → 相对工作区宽高（0..1）
   final Map<String, ({double w, double h})> _preferredSizes = {};
   Size desktopSize = Size.zero;
   double _zSeq = 0;
   int _idSeq = 0;
+  int _wsIdSeq = 0;
   int _focusGeneration = 0;
   bool _layoutRestored = false;
   bool _disposed = false;
@@ -126,16 +157,38 @@ class DesktopWindowManager extends ChangeNotifier {
   bool _geometryNotifyScheduled = false;
   bool _dragActive = false;
   bool _resizeActive = false;
+  List<String>? _showDesktopHiddenIds;
 
-  static const double _snapEdgePx = 28;
+  double get _snapEdgePx => desktopSettings.snapEdgePx;
 
-  List<DesktopWindow> get windows => List.unmodifiable(_windows);
+  List<DesktopWorkspace> get workspaces => List.unmodifiable(_workspaces);
+  DesktopWorkspace get activeWorkspace => _workspaces[_activeWs];
+  int get activeWorkspaceIndex => _activeWs;
+
+  /// 当前工作区窗口（任务栏 / 既有调用兼容）。
+  List<DesktopWindow> get windows =>
+      List.unmodifiable(activeWorkspace.windows);
+
+  /// 所有工作区窗口（渲染层 Offstage 保活）。
+  List<DesktopWindow> get allWindows => [
+        for (final ws in _workspaces) ...ws.windows,
+      ];
+
+  int workspaceIndexOfWindow(String id) {
+    for (var i = 0; i < _workspaces.length; i++) {
+      if (_workspaces[i].windows.any((w) => w.id == id)) return i;
+    }
+    return -1;
+  }
+
+  bool isWindowInActiveWorkspace(String id) =>
+      workspaceIndexOfWindow(id) == _activeWs;
 
   /// 递增以通知已聚焦窗口重新夺取键盘焦点（如点标题栏）。
   int get focusGeneration => _focusGeneration;
 
   DesktopWindow? get focusedWindow {
-    for (final w in _windows) {
+    for (final w in activeWorkspace.windows) {
       if (w.focused) return w;
     }
     return null;
@@ -143,15 +196,14 @@ class DesktopWindowManager extends ChangeNotifier {
 
   bool get layoutRestored => _layoutRestored;
 
-  /// 拖动贴边时的预览区域（无则 null）。
+  /// 「显示桌面」是否处于隐藏态。
+  bool get showingDesktop =>
+      _showDesktopHiddenIds != null && _showDesktopHiddenIds!.isNotEmpty;
+
   TileZone? get snapPreviewZone => _snapPreviewZone;
-
   String? get snapPreviewWindowId => _snapPreviewWindowId;
-
-  /// 拖到顶边时预览最大化。
   bool get snapPreviewMaximize => _snapPreviewMaximize;
 
-  /// 贴边预览矩形（相对桌面坐标，不含任务栏）。
   Rect? get snapPreviewRect {
     if (_snapPreviewWindowId == null || desktopSize == Size.zero) return null;
     if (_snapPreviewMaximize) {
@@ -163,8 +215,16 @@ class DesktopWindowManager extends ChangeNotifier {
     return rectForTileZone(zone);
   }
 
-  /// 正在拖动或缩放：窗口框应暂时去掉 MouseRegion，避免 mouse_tracker 重入。
   bool get pointerGeometryActive => _dragActive || _resizeActive;
+
+  void _initWorkspaces(int count) {
+    _workspaces.clear();
+    final n = count.clamp(1, 9);
+    for (var i = 0; i < n; i++) {
+      _workspaces.add(DesktopWorkspace('ws${++_wsIdSeq}', '桌面 ${i + 1}'));
+    }
+    _activeWs = 0;
+  }
 
   String _nextId() => 'w${++_idSeq}';
 
@@ -201,11 +261,133 @@ class DesktopWindowManager extends ChangeNotifier {
           return i < 0 ? path : path.substring(i + 1);
         }
         return '编辑器';
+      case DesktopAppType.forwards:
+        return '端口转发';
+      case DesktopAppType.runCommand:
+        return '运行命令';
+      case DesktopAppType.cron:
+        return '计划任务';
+      case DesktopAppType.users:
+        return '用户与组';
+      case DesktopAppType.packages:
+        return '包管理器';
+      case DesktopAppType.firewall:
+        return '防火墙';
     }
   }
 
-  /// 供 App 更新标题等元数据后触发重绘。
-  void requestRebuild() {
+  void notifyConnectionRestored() {
+    for (final w in allWindows) {
+      try {
+        w.onConnectionRestored?.call();
+      } catch (e) {
+        debugPrint('onConnectionRestored: $e');
+      }
+    }
+  }
+
+  /// 标题等元数据变更后通知外壳重绘（不改变焦点）。
+  void requestRebuild() => notifyListeners();
+
+  void switchWorkspace(int i) {
+    if (i < 0 || i >= _workspaces.length || i == _activeWs) return;
+    _activeWs = i;
+    final wins = activeWorkspace.windows;
+    DesktopWindow? best;
+    for (final w in wins) {
+      w.focused = false;
+      if (w.state == WindowState.minimized) continue;
+      if (best == null || w.z > best.z) best = w;
+    }
+    if (best != null) {
+      best.focused = true;
+      _focusGeneration++;
+    }
+    notifyListeners();
+  }
+
+  void addWorkspace({String? name}) {
+    if (_workspaces.length >= 9) return;
+    final idx = _workspaces.length;
+    _workspaces.add(
+      DesktopWorkspace('ws${++_wsIdSeq}', name ?? '桌面 ${idx + 1}'),
+    );
+    desktopSettings.workspaceCount = _workspaces.length;
+    unawaited(desktopSettings.persist());
+    notifyListeners();
+  }
+
+  void removeWorkspace(int i) {
+    if (_workspaces.length <= 1) return;
+    if (i < 0 || i >= _workspaces.length) return;
+    final victim = _workspaces.removeAt(i);
+    final target = _workspaces[i > 0 ? i - 1 : 0];
+    target.windows.addAll(victim.windows);
+    if (_activeWs >= _workspaces.length) {
+      _activeWs = _workspaces.length - 1;
+    } else if (_activeWs > i) {
+      _activeWs--;
+    } else if (_activeWs == i) {
+      _activeWs = _activeWs.clamp(0, _workspaces.length - 1);
+    }
+    desktopSettings.workspaceCount = _workspaces.length;
+    unawaited(desktopSettings.persist());
+    notifyListeners();
+  }
+
+  void moveWindowToWorkspace(String winId, int wsIndex) {
+    if (wsIndex < 0 || wsIndex >= _workspaces.length) return;
+    DesktopWorkspace? from;
+    DesktopWindow? win;
+    for (final ws in _workspaces) {
+      final j = ws.windows.indexWhere((w) => w.id == winId);
+      if (j >= 0) {
+        from = ws;
+        win = ws.windows.removeAt(j);
+        break;
+      }
+    }
+    if (from == null || win == null) return;
+    if (identical(from, _workspaces[wsIndex])) {
+      from.windows.add(win);
+      return;
+    }
+    win.focused = false;
+    _workspaces[wsIndex].windows.add(win);
+    notifyListeners();
+  }
+
+  void toggleAlwaysOnTop(String id) {
+    final w = _find(id);
+    if (w == null) return;
+    w.alwaysOnTop = !w.alwaysOnTop;
+    if (w.alwaysOnTop) w.z = ++_zSeq;
+    notifyListeners();
+  }
+
+  /// 显示桌面：最小化当前工作区全部；再点恢复。
+  void toggleShowDesktop() {
+    final hidden = _showDesktopHiddenIds;
+    if (hidden != null && hidden.isNotEmpty) {
+      for (final id in hidden) {
+        final w = _find(id);
+        if (w != null && w.state == WindowState.minimized) {
+          w.state = WindowState.normal;
+        }
+      }
+      _showDesktopHiddenIds = null;
+      notifyListeners();
+      return;
+    }
+    final ids = <String>[];
+    for (final w in activeWorkspace.windows) {
+      if (w.state != WindowState.minimized) {
+        ids.add(w.id);
+        w.state = WindowState.minimized;
+        w.focused = false;
+      }
+    }
+    _showDesktopHiddenIds = ids;
     notifyListeners();
   }
 
@@ -229,31 +411,41 @@ class DesktopWindowManager extends ChangeNotifier {
       focused: false,
       args: a,
     );
-    _windows.add(win);
+    activeWorkspace.windows.add(win);
     focus(win.id);
     notifyListeners();
     return win;
   }
 
   void close(String id) {
-    final i = _windows.indexWhere((w) => w.id == id);
-    if (i < 0) return;
-    final wasFocused = _windows[i].focused;
-    _windows[i].onWillClose = null;
-    _windows.removeAt(i);
-    if (wasFocused && _windows.isNotEmpty) {
+    DesktopWorkspace? owner;
+    var i = -1;
+    for (final ws in _workspaces) {
+      i = ws.windows.indexWhere((w) => w.id == id);
+      if (i >= 0) {
+        owner = ws;
+        break;
+      }
+    }
+    if (owner == null || i < 0) return;
+    final wasFocused = owner.windows[i].focused;
+    owner.windows[i].onWillClose = null;
+    owner.windows[i].onConnectionRestored = null;
+    owner.windows[i].tryOpenEditorPath = null;
+    owner.windows.removeAt(i);
+    if (wasFocused && owner.windows.isNotEmpty) {
       DesktopWindow? best;
-      for (final w in _windows) {
+      for (final w in owner.windows) {
         if (w.state == WindowState.minimized) continue;
         if (best == null || w.z > best.z) best = w;
       }
-      best ??= _windows.last;
+      best ??= owner.windows.last;
       focus(best.id);
+    } else {
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  /// 带 [DesktopWindow.onWillClose] 确认的关闭。
   Future<bool> requestClose(String id) async {
     final w = _find(id);
     if (w == null) return true;
@@ -269,8 +461,12 @@ class DesktopWindowManager extends ChangeNotifier {
   void focus(String id, {bool reclaimKeyboard = true}) {
     final target = _find(id);
     if (target == null) return;
+    final wi = workspaceIndexOfWindow(id);
+    if (wi >= 0 && wi != _activeWs) {
+      _activeWs = wi;
+    }
     var changed = false;
-    for (final w in _windows) {
+    for (final w in allWindows) {
       final should = identical(w, target);
       if (w.focused != should) {
         w.focused = should;
@@ -281,7 +477,6 @@ class DesktopWindowManager extends ChangeNotifier {
       target.state = WindowState.normal;
       changed = true;
     }
-    // 已在最前则不抬 z，避免缩放/拖动 onPanStart 无谓整桌面重建打断指针。
     if (target.z < _zSeq) {
       target.z = ++_zSeq;
       changed = true;
@@ -317,16 +512,18 @@ class DesktopWindowManager extends ChangeNotifier {
     _dragActive = true;
     final next = w.rect.shift(delta);
     w.rect = _clampDragRect(next);
-    final hint = _detectSnapHint(w.rect);
-    _snapPreviewMaximize = hint.maximize;
-    _snapPreviewZone = hint.zone;
-    _snapPreviewWindowId =
-        (hint.maximize || hint.zone != null) ? id : null;
-    // 指针事件中同步 notify 会带着 MouseRegion 重建，触发 mouse_tracker 重入断言。
+    if (desktopSettings.snapEnabled) {
+      final hint = _detectSnapHint(w.rect);
+      _snapPreviewMaximize = hint.maximize;
+      _snapPreviewZone = hint.zone;
+      _snapPreviewWindowId =
+          (hint.maximize || hint.zone != null) ? id : null;
+    } else {
+      _clearSnapPreview(notify: false);
+    }
     _notifyGeometryChanged();
   }
 
-  /// 标题栏拖动结束：若靠近边缘则贴边分屏或最大化。
   void endDrag(String id) {
     final forThis = _snapPreviewWindowId == id;
     final maximize = forThis && _snapPreviewMaximize;
@@ -356,7 +553,6 @@ class DesktopWindowManager extends ChangeNotifier {
     _notifyGeometryChanged();
   }
 
-  /// 贴边分屏到指定区域（写入 normal rect，退出最大化）。
   void tile(String id, TileZone zone) {
     final w = _find(id);
     if (w == null || desktopSize == Size.zero) return;
@@ -369,7 +565,6 @@ class DesktopWindowManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 工作区内某贴边区域的目标矩形。
   Rect rectForTileZone(TileZone zone) {
     final workH = math.max(0.0, desktopSize.height - taskbarH);
     final workW = math.max(0.0, desktopSize.width);
@@ -462,15 +657,14 @@ class DesktopWindowManager extends ChangeNotifier {
     _notifyGeometryChanged();
   }
 
-  /// 在可见窗口间循环焦点。
   void cycleFocus({bool reverse = false}) {
-    final candidates = _windows
+    final candidates = activeWorkspace.windows
         .where((w) => w.state != WindowState.minimized)
         .toList()
       ..sort((a, b) => a.z.compareTo(b.z));
     if (candidates.isEmpty) {
-      if (_windows.isEmpty) return;
-      restore(_windows.last.id);
+      if (activeWorkspace.windows.isEmpty) return;
+      restore(activeWorkspace.windows.last.id);
       return;
     }
     final focused = focusedWindow;
@@ -485,7 +679,6 @@ class DesktopWindowManager extends ChangeNotifier {
     focus(candidates[idx].id);
   }
 
-  /// 缩放手势结束：立即落盘当前类型的优选尺寸，并刷新几何。
   void endResize(String id) {
     final w = _find(id);
     _resizeActive = false;
@@ -506,14 +699,15 @@ class DesktopWindowManager extends ChangeNotifier {
     w.state = WindowState.minimized;
     w.focused = false;
     DesktopWindow? best;
-    for (final o in _windows) {
+    for (final o in activeWorkspace.windows) {
       if (o.id == id || o.state == WindowState.minimized) continue;
       if (best == null || o.z > best.z) best = o;
     }
     if (best != null) {
       focus(best.id);
+    } else {
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   void toggleMaximize(String id) {
@@ -553,17 +747,17 @@ class DesktopWindowManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 退出桌面模式：清空窗口（触发各 App dispose 回收 shell/转发）。
-  /// 下次进入从空桌面开始；已记住的窗口尺寸会保留。
   Future<void> leaveDesktop() async {
     if (_disposed) return;
     await _flushPendingPreferredSize();
-    _windows.clear();
+    for (final ws in _workspaces) {
+      ws.windows.clear();
+    }
+    _showDesktopHiddenIds = null;
     _layoutRestored = false;
     notifyListeners();
   }
 
-  /// 任务栏按钮：已聚焦则最小化，否则聚焦（并还原）。
   void taskbarActivate(String id) {
     final w = _find(id);
     if (w == null) return;
@@ -585,29 +779,38 @@ class DesktopWindowManager extends ChangeNotifier {
     if (old != Size.zero && old.width > 0 && old.height > 0) {
       final sx = s.width / old.width;
       final sy = s.height / old.height;
-      for (final w in _windows) {
+      for (final w in allWindows) {
         final r = w.rect;
         w.rect = _clampNormalRect(
           Rect.fromLTWH(r.left * sx, r.top * sy, r.width * sx, r.height * sy),
         );
       }
     } else {
-      for (final w in _windows) {
+      for (final w in allWindows) {
         w.rect = _clampNormalRect(w.rect);
       }
     }
     notifyListeners();
   }
 
-  /// 进入桌面：标记就绪；加载按类型的优选尺寸；不还原窗口清单/位置。
   Future<void> prepareFreshDesktop() async {
     if (_layoutRestored || _disposed) return;
     _layoutRestored = true;
-    _windows.clear();
-    // 清掉历史版本按 host 落盘的完整布局，避免残留。
+    for (final ws in _workspaces) {
+      ws.windows.clear();
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('desktop_layout_$hostKey');
+    } catch (_) {}
+    try {
+      await desktopSettings.load();
+      if (!_disposed) {
+        final want = desktopSettings.workspaceCount.clamp(1, 9);
+        if (_workspaces.length != want) {
+          _initWorkspaces(want);
+        }
+      }
     } catch (_) {}
     try {
       final loaded = await _sizeStore.load();
@@ -621,9 +824,8 @@ class DesktopWindowManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 是否已有复用主 shell 的终端窗口。
   bool get hasPrimaryTerminal {
-    for (final w in _windows) {
+    for (final w in allWindows) {
       if (w.type == DesktopAppType.terminal && w.args['usePrimary'] == true) {
         return true;
       }
@@ -631,7 +833,6 @@ class DesktopWindowManager extends ChangeNotifier {
     return false;
   }
 
-  /// 打开终端：若尚无主终端则优先复用主 shell。
   DesktopWindow openTerminal({bool preferPrimary = true}) {
     if (preferPrimary && !hasPrimaryTerminal) {
       return open(DesktopAppType.terminal, args: const {'usePrimary': true});
@@ -645,13 +846,12 @@ class DesktopWindowManager extends ChangeNotifier {
     _persistSizeTimer?.cancel();
     _persistSizeTimer = null;
     _geometryNotifyScheduled = false;
-    _windows.clear();
+    for (final ws in _workspaces) {
+      ws.windows.clear();
+    }
     super.dispose();
   }
 
-  // --- internals ---
-
-  /// 拖动/缩放等高频几何变更：合并到微任务再通知，避开指针事件中的 mouse_tracker 临界区。
   void _notifyGeometryChanged() {
     if (_disposed || _geometryNotifyScheduled) return;
     _geometryNotifyScheduled = true;
@@ -669,19 +869,19 @@ class DesktopWindowManager extends ChangeNotifier {
   }
 
   DesktopWindow? _find(String id) {
-    for (final w in _windows) {
+    for (final w in allWindows) {
       if (w.id == id) return w;
     }
     return null;
   }
 
   Rect _staggeredDefaultRect(DesktopAppType type) {
-    final i = _windows.length;
+    final i = activeWorkspace.windows.length;
     final workH = math.max(minHeight, desktopSize.height - taskbarH);
     final workW = math.max(minWidth, desktopSize.width);
     final pref = _preferredSizes[type.name];
-    final wFrac = pref?.w ?? _defaultWFrac;
-    final hFrac = pref?.h ?? _defaultHFrac;
+    final wFrac = pref?.w ?? desktopSettings.defaultWindowWFrac;
+    final hFrac = pref?.h ?? desktopSettings.defaultWindowHFrac;
     final w = (workW * wFrac).clamp(minWidth, workW);
     final h = (workH * hFrac).clamp(minHeight, workH);
     final left = 40.0 + (i % 6) * 28.0;
@@ -750,7 +950,6 @@ class DesktopWindowManager extends ChangeNotifier {
     if (nearR && nearB) return (zone: TileZone.bottomRight, maximize: false);
     if (nearL) return (zone: TileZone.left, maximize: false);
     if (nearR) return (zone: TileZone.right, maximize: false);
-    // 顶边中央：最大化（与 Win/mac 习惯一致）；底边：下半屏。
     if (nearT) return (zone: null, maximize: true);
     if (nearB) return (zone: TileZone.bottom, maximize: false);
     return (zone: null, maximize: false);
@@ -789,7 +988,6 @@ class DesktopWindowManager extends ChangeNotifier {
 
   Rect _clampDragRect(Rect r) {
     final workH = math.max(0.0, desktopSize.height - taskbarH);
-    // 标题栏中心点保持在桌面内：left ∈ [-w+80, desktopW-80], top ∈ [0, workH-titleBarH]
     final minLeft = -r.width + 80;
     final maxLeft = desktopSize.width - 80;
     final minTop = 0.0;

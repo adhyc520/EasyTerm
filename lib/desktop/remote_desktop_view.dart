@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,16 +8,24 @@ import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
+import '../widgets/desktop_settings_dialog.dart';
 import 'apps/browser_app.dart';
 import 'apps/containers_app.dart';
+import 'apps/cron_app.dart';
 import 'apps/disk_usage_app.dart';
 import 'apps/editor_app.dart';
 import 'apps/file_manager_app.dart';
+import 'apps/firewall_app.dart';
+import 'apps/forwards_app.dart';
 import 'apps/logs_app.dart';
 import 'apps/monitor_app.dart';
+import 'apps/packages_app.dart';
+import 'apps/run_command_app.dart';
 import 'apps/task_manager_app.dart';
 import 'apps/terminal_app.dart';
 import 'apps/transfers_app.dart';
+import 'apps/users_app.dart';
+import 'desktop_command_palette.dart';
 import 'desktop_taskbar.dart';
 import 'desktop_window_frame.dart';
 import 'desktop_window_manager.dart';
@@ -45,9 +54,56 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
   bool? _lastDropped;
   bool? _lastConnecting;
   String? _lastError;
+  bool _paletteOpen = false;
 
   DesktopWindowManager get wm => widget.wm;
   SshWorkspaceController get controller => widget.controller;
+
+  void _openPalette() {
+    if (_paletteOpen) return;
+    setState(() => _paletteOpen = true);
+  }
+
+  void _closePalette() {
+    if (!_paletteOpen) return;
+    setState(() => _paletteOpen = false);
+    // 归还键盘焦点给当前窗口
+    final id = wm.focusedWindow?.id;
+    if (id != null) wm.focus(id);
+  }
+
+  Future<void> _showDesktopMenu(BuildContext context, Offset global) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(global.dx, global.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(value: 'terminal', child: Text('在此打开终端')),
+        PopupMenuItem(value: 'files', child: Text('在此打开文件管理器')),
+        PopupMenuDivider(),
+        PopupMenuItem(value: 'workspace', child: Text('新建工作区')),
+        PopupMenuItem(value: 'settings', child: Text('桌面设置')),
+      ],
+    );
+    if (!context.mounted || selected == null) return;
+    switch (selected) {
+      case 'terminal':
+        wm.openTerminal(preferPrimary: false);
+      case 'files':
+        wm.open(DesktopAppType.files);
+      case 'workspace':
+        wm.addWorkspace();
+      case 'settings':
+        if (context.mounted) {
+          await showDesktopSettingsDialog(context, wm: wm);
+        }
+    }
+  }
 
   @override
   void initState() {
@@ -94,7 +150,12 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
         controller.error == _lastError) {
       return;
     }
+    final wasOnline = (_lastConnected == true) && (_lastDropped != true);
+    final nowOnline = controller.connected && !controller.dropped;
     _syncConnectionSnapshot();
+    if (!wasOnline && nowOnline) {
+      wm.notifyConnectionRestored();
+    }
     setState(() {});
   }
 
@@ -197,6 +258,89 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                 }
               },
             ),
+            ...workbenchBindActivators(
+              workbenchMetaOrControl(LogicalKeyboardKey.keyR),
+              () => wm.open(DesktopAppType.runCommand),
+            ),
+            ...workbenchBindActivators(
+              workbenchMetaOrControl(LogicalKeyboardKey.keyP, shift: true),
+              _openPalette,
+            ),
+            ...workbenchBindActivators(
+              workbenchMetaOrControl(LogicalKeyboardKey.keyT),
+              () {
+                final id = wm.focusedWindow?.id;
+                if (id != null) wm.toggleAlwaysOnTop(id);
+              },
+            ),
+            for (var i = 1; i <= 9; i++)
+              ...workbenchBindActivators(
+                [
+                  SingleActivator(
+                    [
+                      LogicalKeyboardKey.digit1,
+                      LogicalKeyboardKey.digit2,
+                      LogicalKeyboardKey.digit3,
+                      LogicalKeyboardKey.digit4,
+                      LogicalKeyboardKey.digit5,
+                      LogicalKeyboardKey.digit6,
+                      LogicalKeyboardKey.digit7,
+                      LogicalKeyboardKey.digit8,
+                      LogicalKeyboardKey.digit9,
+                    ][i - 1],
+                    control: true,
+                  ),
+                ],
+                () {
+                  if (i - 1 < wm.workspaces.length) {
+                    wm.switchWorkspace(i - 1);
+                  }
+                },
+              ),
+            const SingleActivator(
+              LogicalKeyboardKey.arrowRight,
+              control: true,
+            ): () {
+              final n = wm.workspaces.length;
+              if (n == 0) return;
+              wm.switchWorkspace((wm.activeWorkspaceIndex + 1) % n);
+            },
+            const SingleActivator(
+              LogicalKeyboardKey.arrowLeft,
+              control: true,
+            ): () {
+              final n = wm.workspaces.length;
+              if (n == 0) return;
+              wm.switchWorkspace(
+                (wm.activeWorkspaceIndex - 1 + n) % n,
+              );
+            },
+            const SingleActivator(
+              LogicalKeyboardKey.arrowRight,
+              control: true,
+              shift: true,
+            ): () {
+              final id = wm.focusedWindow?.id;
+              if (id == null) return;
+              final n = wm.workspaces.length;
+              if (n < 2) return;
+              final next = (wm.activeWorkspaceIndex + 1) % n;
+              wm.moveWindowToWorkspace(id, next);
+              wm.switchWorkspace(next);
+            },
+            const SingleActivator(
+              LogicalKeyboardKey.arrowLeft,
+              control: true,
+              shift: true,
+            ): () {
+              final id = wm.focusedWindow?.id;
+              if (id == null) return;
+              final n = wm.workspaces.length;
+              if (n < 2) return;
+              final prev = (wm.activeWorkspaceIndex - 1 + n) % n;
+              wm.moveWindowToWorkspace(id, prev);
+              wm.switchWorkspace(prev);
+            },
           },
           // CallbackShortcuts 自带不可聚焦 Focus；勿再包一层可聚焦 Focus，
           // 否则会抢走终端硬件键盘焦点（按键进不了 xterm）。
@@ -205,16 +349,24 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
             children: [
               // 背景不监听 wm：拖动/缩放时不应重建桌面图标（其内部也有鼠标 annotation）。
               Positioned.fill(
-                child: _DesktopBackground(
-                  onOpenApp: (type) {
-                    if (type == DesktopAppType.terminal) {
-                      wm.openTerminal();
-                    } else if (type == DesktopAppType.editor) {
-                      // 编辑器需具体路径；桌面图标改为打开文件管理器。
-                      wm.open(DesktopAppType.files);
-                    } else {
-                      wm.open(type);
-                    }
+                child: ListenableBuilder(
+                  listenable: wm.desktopSettings,
+                  builder: (context, _) {
+                    return _DesktopBackground(
+                      showGrid: wm.desktopSettings.showGrid,
+                      wallpaper: wm.desktopSettings.wallpaper,
+                      onOpenApp: (type) {
+                        if (type == DesktopAppType.terminal) {
+                          wm.openTerminal();
+                        } else if (type == DesktopAppType.editor) {
+                          wm.open(DesktopAppType.files);
+                        } else {
+                          wm.open(type);
+                        }
+                      },
+                      onContextMenu: (pos) =>
+                          unawaited(_showDesktopMenu(context, pos)),
+                    );
                   },
                 ),
               ),
@@ -227,10 +379,15 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                 child: ListenableBuilder(
                   listenable: wm,
                   builder: (context, _) {
-                    final visible = wm.windows
+                    final hosts = wm.allWindows
                         .where((w) => w.state != WindowState.minimized)
                         .toList()
-                      ..sort((a, b) => a.z.compareTo(b.z));
+                      ..sort((a, b) {
+                        final at = a.alwaysOnTop ? 1 : 0;
+                        final bt = b.alwaysOnTop ? 1 : 0;
+                        if (at != bt) return at - bt;
+                        return a.z.compareTo(b.z);
+                      });
                     return Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -254,13 +411,14 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                               ),
                             ),
                           ),
-                        for (final w in visible)
+                        for (final w in hosts)
                           _DesktopWindowHost(
                             key: ValueKey(w.id),
                             windowId: w.id,
                             wm: wm,
                             controller: controller,
                             settings: widget.settings,
+                            offstage: !wm.isWindowInActiveWorkspace(w.id),
                           ),
                       ],
                     );
@@ -271,8 +429,16 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: DesktopTaskbar(wm: wm),
+                child: DesktopTaskbar(wm: wm, controller: controller),
               ),
+              if (_paletteOpen)
+                Positioned.fill(
+                  child: DesktopCommandPalette(
+                    wm: wm,
+                    controller: controller,
+                    onClose: _closePalette,
+                  ),
+                ),
               // 掉线浮层
               if (dropped)
                 Positioned.fill(
@@ -358,12 +524,14 @@ class _DesktopWindowHost extends StatefulWidget {
     required this.wm,
     required this.controller,
     required this.settings,
+    this.offstage = false,
   });
 
   final String windowId;
   final DesktopWindowManager wm;
   final SshWorkspaceController controller;
   final WorkbenchSettingsStore settings;
+  final bool offstage;
 
   @override
   State<_DesktopWindowHost> createState() => _DesktopWindowHostState();
@@ -374,7 +542,7 @@ class _DesktopWindowHostState extends State<_DesktopWindowHost> {
   DesktopAppType? _contentType;
 
   DesktopWindow? get _window {
-    for (final w in widget.wm.windows) {
+    for (final w in widget.wm.allWindows) {
       if (w.id == widget.windowId) return w;
     }
     return null;
@@ -453,6 +621,48 @@ class _DesktopWindowHostState extends State<_DesktopWindowHost> {
           wm: widget.wm,
           controller: widget.controller,
         );
+      case DesktopAppType.forwards:
+        return ForwardsApp(
+          key: ValueKey('fwd-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
+      case DesktopAppType.runCommand:
+        return RunCommandApp(
+          key: ValueKey('run-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
+      case DesktopAppType.cron:
+        return CronApp(
+          key: ValueKey('cron-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
+      case DesktopAppType.users:
+        return UsersApp(
+          key: ValueKey('users-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
+      case DesktopAppType.packages:
+        return PackagesApp(
+          key: ValueKey('pkg-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
+      case DesktopAppType.firewall:
+        return FirewallApp(
+          key: ValueKey('fw-${window.id}'),
+          window: window,
+          wm: widget.wm,
+          controller: widget.controller,
+        );
     }
   }
 
@@ -473,20 +683,31 @@ class _DesktopWindowHostState extends State<_DesktopWindowHost> {
       top: r.top,
       width: r.width,
       height: r.height,
-      child: DesktopWindowFrame(
-        window: w,
-        wm: widget.wm,
-        // 同一 content 实例 → Element 可跳过内容子树更新。
-        child: _content!,
+      child: Offstage(
+        offstage: widget.offstage,
+        child: DesktopWindowFrame(
+          window: w,
+          wm: widget.wm,
+          // 同一 content 实例 → Element 可跳过内容子树更新。
+          child: _content!,
+        ),
       ),
     );
   }
 }
 
 class _DesktopBackground extends StatelessWidget {
-  const _DesktopBackground({required this.onOpenApp});
+  const _DesktopBackground({
+    required this.onOpenApp,
+    required this.onContextMenu,
+    this.showGrid = true,
+    this.wallpaper = '',
+  });
 
   final void Function(DesktopAppType type) onOpenApp;
+  final void Function(Offset globalPosition) onContextMenu;
+  final bool showGrid;
+  final String wallpaper;
 
   static const _shortcuts = <(DesktopAppType, IconData, String)>[
     (DesktopAppType.terminal, Icons.terminal_rounded, '终端'),
@@ -498,14 +719,32 @@ class _DesktopBackground extends StatelessWidget {
     (DesktopAppType.containers, Icons.view_in_ar_rounded, '容器'),
     (DesktopAppType.diskUsage, Icons.pie_chart_rounded, '磁盘占用'),
     (DesktopAppType.transfers, Icons.swap_vert_rounded, '传输'),
+    (DesktopAppType.forwards, Icons.alt_route_rounded, '端口转发'),
+    (DesktopAppType.runCommand, Icons.play_circle_outline_rounded, '运行命令'),
+    (DesktopAppType.cron, Icons.schedule_rounded, '计划任务'),
+    (DesktopAppType.users, Icons.groups_rounded, '用户与组'),
+    (DesktopAppType.packages, Icons.inventory_2_rounded, '包管理器'),
+    (DesktopAppType.firewall, Icons.security_rounded, '防火墙'),
     (DesktopAppType.editor, Icons.folder_open_rounded, '打开文件'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    return DecoratedBox(
-      decoration: BoxDecoration(
+    Decoration decoration;
+    if (wallpaper.isNotEmpty &&
+        (wallpaper.startsWith('file:') || wallpaper.startsWith('/'))) {
+      final path = wallpaper.startsWith('file:')
+          ? Uri.parse(wallpaper).toFilePath()
+          : wallpaper;
+      decoration = BoxDecoration(
+        image: DecorationImage(
+          image: FileImage(File(path)),
+          fit: BoxFit.cover,
+        ),
+      );
+    } else {
+      decoration = BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -516,27 +755,41 @@ class _DesktopBackground extends StatelessWidget {
           ],
           stops: const [0.0, 0.55, 1.0],
         ),
+      );
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (d) => onContextMenu(d.globalPosition),
+      child: DecoratedBox(
+        decoration: decoration,
+        child: showGrid
+            ? CustomPaint(
+                painter: _GridPainter(color: wb.border.withValues(alpha: 0.22)),
+                child: _shortcutLayer(),
+              )
+            : _shortcutLayer(),
       ),
-      child: CustomPaint(
-        painter: _GridPainter(color: wb.border.withValues(alpha: 0.22)),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 64),
-            child: Wrap(
-              direction: Axis.vertical,
-              spacing: 12,
-              runSpacing: 16,
-              children: [
-                for (final s in _shortcuts)
-                  _DesktopShortcutIcon(
-                    icon: s.$2,
-                    label: s.$3,
-                    onOpen: () => onOpenApp(s.$1),
-                  ),
-              ],
-            ),
-          ),
+    );
+  }
+
+  Widget _shortcutLayer() {
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 64),
+        child: Wrap(
+          direction: Axis.vertical,
+          spacing: 12,
+          runSpacing: 16,
+          children: [
+            for (final s in _shortcuts)
+              _DesktopShortcutIcon(
+                icon: s.$2,
+                label: s.$3,
+                onOpen: () => onOpenApp(s.$1),
+              ),
+          ],
         ),
       ),
     );
