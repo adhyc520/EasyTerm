@@ -44,7 +44,10 @@ jobs:
 
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
+      # Default shell on this runner is pwsh; use $env:VAR (bash $VAR is empty there).
+      - name: Build Windows release
+        shell: pwsh
+        run: flutter build windows --release --build-name "$env:APP_VERSION" --build-number "$env:GITHUB_RUN_NUMBER"
 
       - name: Pack
         shell: pwsh
