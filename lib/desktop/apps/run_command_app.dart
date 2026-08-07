@@ -166,6 +166,7 @@ class _RunCommandAppState extends State<RunCommandApp> {
                   Expanded(
                     child: TextField(
                       controller: _cmdCtrl,
+                      autofocus: true,
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 13,

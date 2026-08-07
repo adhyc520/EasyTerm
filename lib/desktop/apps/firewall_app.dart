@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/remote_firewall.dart';
+import '../../services/remote_sudo.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../widgets/sudo_password_dialog.dart';
 import '../desktop_window_manager.dart';
 
 /// 防火墙：检测 ufw / firewalld / iptables；UFW 支持启停与放行/拒绝/删规则。
+/// 特权操作优先 `sudo -n`；需密码时弹窗用 `sudo -S` 授权。
 class FirewallApp extends StatefulWidget {
   const FirewallApp({
     super.key,
@@ -112,13 +115,19 @@ class _FirewallAppState extends State<FirewallApp> {
       _busy = true;
       _error = null;
     });
-    final err = await runFirewallMutate(
+    final err = await runWithSudoPasswordPrompt(
+      context,
       widget.controller,
-      cmd,
-      terminalHint: hint,
+      attempt: (sudoPassword) => runFirewallMutate(
+        widget.controller,
+        cmd,
+        terminalHint: hint,
+        sudoPassword: sudoPassword,
+      ),
     );
     if (!mounted) return;
     setState(() => _busy = false);
+    if (RemoteSudo.isCancelled(err)) return;
     if (err != null) {
       setState(() => _error = err);
       return;
@@ -241,6 +250,7 @@ class _FirewallAppState extends State<FirewallApp> {
                   width: 120,
                   child: TextField(
                     controller: _portCtrl,
+                    autofocus: true,
                     style: TextStyle(fontSize: 12, color: wb.primaryText),
                     decoration: InputDecoration(
                       isDense: true,

@@ -63,8 +63,13 @@ class _FileManagerAppState extends State<FileManagerApp> {
     final focused = widget.window.focused;
     final gen = widget.wm.focusGeneration;
     final gained = focused && !_wasFocused;
+    final lost = !focused && _wasFocused;
     final reclaimed = focused && gen != _seenFocusGeneration;
     _wasFocused = focused;
+    if (lost) {
+      _browserKey.currentState?.releaseKeyboardFocus();
+      return;
+    }
     if (!gained && !reclaimed) return;
     _seenFocusGeneration = gen;
     WidgetsBinding.instance.addPostFrameCallback((_) {

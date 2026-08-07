@@ -273,6 +273,9 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   String get password => _password;
   String? get privateKeyPem => _privateKeyPem;
 
+  /// 本会话缓存的远端 sudo 密码（仅内存，不落盘）；用于包管理 / 防火墙等特权操作。
+  String? cachedSudoPassword;
+
   final RemoteSession _remoteSession = RemoteSession();
 
   /// 传输会话（SSHClient + SftpClient + 掉线监控）。
@@ -1581,12 +1584,15 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   }
 
   /// 排队执行一次性命令（多窗口轮询共享，限制并发）。
+  ///
+  /// [stdinBytes] 写入远端 stdin 后关闭（例如 `sudo -S`）。
   Future<String?> runQueued(
     String command, {
     Duration timeout = const Duration(seconds: 15),
+    List<int>? stdinBytes,
   }) {
     if (!_connected || dropped) return Future.value(null);
-    return _cmdQueue.run(command, timeout: timeout);
+    return _cmdQueue.run(command, timeout: timeout, stdinBytes: stdinBytes);
   }
 
   /// 最近一次排队命令失败原因（供托盘 / UI 展示）。
@@ -1635,11 +1641,13 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   Future<RemoteStream> startRemoteStream(
     String command, {
     int maxLines = 5000,
+    List<int>? stdinBytes,
   }) async {
     final stream = await RemoteStream.start(
       clientForDesktop,
       command: command,
       maxLines: maxLines,
+      stdinBytes: stdinBytes,
     );
     registerRemoteStream(stream);
     return stream;
@@ -1682,6 +1690,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     await _remoteSession.detach(keepNotify: false);
 
     _connected = false;
+    cachedSudoPassword = null;
     if (!keepTerminal) {
       _terminal = null;
       _entries = [];
@@ -1772,6 +1781,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     if (_sessionDisposed) return;
     _connected = false;
     _dropped = true;
+    cachedSudoPassword = null;
 
     String message;
     try {

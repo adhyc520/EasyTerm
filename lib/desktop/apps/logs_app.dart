@@ -486,6 +486,7 @@ class _LogsAppState extends State<LogsApp> {
                   width: _source == RemoteLogSource.journal ? 160 : 140,
                   child: TextField(
                     controller: _filterCtrl,
+                    autofocus: true,
                     style: TextStyle(fontSize: 12, color: wb.primaryText),
                     decoration: InputDecoration(
                       isDense: true,

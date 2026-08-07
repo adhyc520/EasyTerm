@@ -29,10 +29,13 @@ class RemoteStream extends ChangeNotifier {
   String? _error;
 
   /// 启动流式命令。
+  ///
+  /// [stdinBytes] 写入远端 stdin 后关闭（例如 `sudo -S`）。
   static Future<RemoteStream> start(
     SSHClient? client, {
     required String command,
     int maxLines = 5000,
+    List<int>? stdinBytes,
   }) async {
     if (client == null) {
       throw StateError('SSH 未连接');
@@ -44,6 +47,10 @@ class RemoteStream extends ChangeNotifier {
       maxLines: maxLines,
     );
     s._wire();
+    if (stdinBytes != null && stdinBytes.isNotEmpty) {
+      session.write(Uint8List.fromList(stdinBytes));
+      await session.stdin.close();
+    }
     s._debugCounted = true;
     debugAliveStreams++;
     if (kDebugMode) {
@@ -153,6 +160,24 @@ class RemoteStream extends ChangeNotifier {
   int? get exitCode => _exitCode;
   String? get error => _error;
   String get command => _cmd;
+
+  /// 等到通道关闭（成功 / 失败 / [stop]）。
+  Future<void> waitUntilClosed() {
+    if (_closed) return Future.value();
+    final c = Completer<void>();
+    void listener() {
+      if (!_closed) return;
+      removeListener(listener);
+      if (!c.isCompleted) c.complete();
+    }
+
+    addListener(listener);
+    if (_closed) {
+      removeListener(listener);
+      if (!c.isCompleted) c.complete();
+    }
+    return c.future;
+  }
 
   Future<void> stop() async {
     _closed = true;

@@ -265,6 +265,7 @@ class _ContainersAppState extends State<ContainersApp> {
                 Expanded(
                   child: TextField(
                     controller: _filterCtrl,
+                    autofocus: true,
                     style: TextStyle(fontSize: 12, color: wb.primaryText),
                     decoration: InputDecoration(
                       isDense: true,

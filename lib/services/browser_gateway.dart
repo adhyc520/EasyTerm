@@ -240,6 +240,15 @@ class BrowserGateway {
             continue;
           }
           if (lower == 'content-encoding') continue;
+          // Origin is 127.0.0.1 gateway — upstream CSP / COOP break SPA assets.
+          if (lower == 'content-security-policy' ||
+              lower == 'content-security-policy-report-only' ||
+              lower == 'clear-site-data' ||
+              lower == 'cross-origin-opener-policy' ||
+              lower == 'cross-origin-embedder-policy' ||
+              lower == 'cross-origin-resource-policy') {
+            continue;
+          }
           if (stripLengthAndEncoding &&
               (lower == 'content-length' || lower == 'transfer-encoding')) {
             continue;
@@ -618,11 +627,19 @@ class BrowserGateway {
 
   String? _rewriteHeaderUrl(String url, _GatewayTarget target) {
     final trimmed = url.trim();
-    if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-      return null;
-    }
     final p = port;
     if (p == null) return null;
+    // Root-relative Location would otherwise escape /{token}/{host}/{port}/.
+    if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+      return rewriteGatewayRootRelativeUrl(
+        trimmed,
+        gatewayPort: p,
+        token: token,
+        currentRemoteHost: target.host,
+        currentRemotePort: target.port,
+        currentHttps: target.https,
+      );
+    }
     if (trimmed.startsWith('//') ||
         trimmed.toLowerCase().startsWith('http://') ||
         trimmed.toLowerCase().startsWith('https://')) {

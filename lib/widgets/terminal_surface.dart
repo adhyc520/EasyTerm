@@ -115,6 +115,12 @@ class TerminalSurfaceState extends State<TerminalSurface> {
     _termFocus.requestFocus();
   }
 
+  /// 窗口失焦时释放硬件键盘，避免按键仍进 PTY 而桌面 TextField 无法输入。
+  void releaseKeyboardFocus() {
+    if (!mounted) return;
+    _releaseKeyboardFocus();
+  }
+
   @override
   void didUpdateWidget(covariant TerminalSurface oldWidget) {
     super.didUpdateWidget(oldWidget);

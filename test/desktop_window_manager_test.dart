@@ -98,6 +98,16 @@ void main() {
       expect(wm.windows, isEmpty);
     });
 
+    test('each window owns a focus scope disposed on close', () {
+      final a = wm.open(DesktopAppType.files);
+      final b = wm.open(DesktopAppType.packages);
+      expect(a.focusScope, isNot(same(b.focusScope)));
+      expect(b.focused, isTrue);
+      expect(a.focused, isFalse);
+      wm.close(b.id);
+      expect(wm.windows.single.id, a.id);
+    });
+
     test('forwards and runCommand default titles', () {
       expect(
         DesktopWindowManager.defaultTitle(DesktopAppType.forwards, const {}),

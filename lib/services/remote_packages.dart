@@ -1,3 +1,4 @@
+import 'remote_sudo.dart';
 import 'ssh_workspace_controller.dart';
 
 enum RemotePackageManager {
@@ -206,19 +207,45 @@ List<RemotePackage> parseSearchPackages(
   ];
 }
 
-String listInstalledCommand(RemotePackageManager pm, {int limit = 400}) {
+String listInstalledCommand(
+  RemotePackageManager pm, {
+  int limit = 20000,
+  String? nameFilter,
+}) {
+  final filter = nameFilter?.trim() ?? '';
+  // 仅允许包名通配安全字符，避免注入。
+  final useFilter =
+      filter.isNotEmpty && RegExp(r'^[A-Za-z0-9+._:@/-]+$').hasMatch(filter);
+  final head = limit > 0 ? ' | head -n $limit' : '';
+
   switch (pm) {
     case RemotePackageManager.apt:
-      return "dpkg-query -W -f='\${Package}\\t\${Version}\\n' 2>/dev/null | head -n $limit";
+      if (useFilter) {
+        final pat = filter.replaceAll("'", "'\\''");
+        return "dpkg-query -W -f='\${Package}\\t\${Version}\\n' '*$pat*' 2>/dev/null$head";
+      }
+      return "dpkg-query -W -f='\${Package}\\t\${Version}\\n' 2>/dev/null$head";
     case RemotePackageManager.dnf:
     case RemotePackageManager.yum:
-      return "rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | sort | head -n $limit";
-    case RemotePackageManager.pacman:
-      return 'pacman -Q 2>/dev/null | head -n $limit';
-    case RemotePackageManager.brew:
-      return 'brew list --versions 2>/dev/null | head -n $limit';
     case RemotePackageManager.zypper:
-      return "rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | sort | head -n $limit";
+      if (useFilter) {
+        final pat = filter.replaceAll("'", "'\\''");
+        return "rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | "
+            "grep -iF -- '$pat' | sort$head";
+      }
+      return "rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | sort$head";
+    case RemotePackageManager.pacman:
+      if (useFilter) {
+        final pat = filter.replaceAll("'", "'\\''");
+        return "pacman -Q 2>/dev/null | grep -iF -- '$pat'$head";
+      }
+      return 'pacman -Q 2>/dev/null$head';
+    case RemotePackageManager.brew:
+      if (useFilter) {
+        final pat = filter.replaceAll("'", "'\\''");
+        return "brew list --versions 2>/dev/null | grep -iF -- '$pat'$head";
+      }
+      return 'brew list --versions 2>/dev/null$head';
     case RemotePackageManager.unknown:
       return 'true';
   }
@@ -244,41 +271,57 @@ String searchPackagesCommand(RemotePackageManager pm, String query) {
   }
 }
 
-/// 返回需要在远端执行的 install/remove 命令（可能含 sudo -n）。
+/// 返回需要在远端执行的 install/remove 命令（可能含 sudo -n / sudo -S）。
 String mutatePackageCommand(
   RemotePackageManager pm, {
   required String name,
   required bool install,
+  bool sudoWithStdin = false,
+}) {
+  final core = mutatePackageStreamCommand(
+    pm,
+    name: name,
+    install: install,
+    sudoWithStdin: sudoWithStdin,
+  );
+  return '$core; echo __EC:\$?';
+}
+
+/// 流式安装/卸载命令（无 `__EC` 尾标，退出码走 SSH session）。
+String mutatePackageStreamCommand(
+  RemotePackageManager pm, {
+  required String name,
+  required bool install,
+  bool sudoWithStdin = false,
 }) {
   final n = name.replaceAll("'", "'\\''");
-  final sudo = 'sudo -n';
+  final sudo = sudoWithStdin ? "sudo -S -p ''" : 'sudo -n';
   switch (pm) {
     case RemotePackageManager.apt:
       return install
-          ? "$sudo apt-get install -y '$n' 2>&1; echo __EC:\$?"
-          : "$sudo apt-get remove -y '$n' 2>&1; echo __EC:\$?";
+          ? "$sudo apt-get install -y '$n' 2>&1"
+          : "$sudo apt-get remove -y '$n' 2>&1";
     case RemotePackageManager.dnf:
       return install
-          ? "$sudo dnf install -y '$n' 2>&1; echo __EC:\$?"
-          : "$sudo dnf remove -y '$n' 2>&1; echo __EC:\$?";
+          ? "$sudo dnf install -y '$n' 2>&1"
+          : "$sudo dnf remove -y '$n' 2>&1";
     case RemotePackageManager.yum:
       return install
-          ? "$sudo yum install -y '$n' 2>&1; echo __EC:\$?"
-          : "$sudo yum remove -y '$n' 2>&1; echo __EC:\$?";
+          ? "$sudo yum install -y '$n' 2>&1"
+          : "$sudo yum remove -y '$n' 2>&1";
     case RemotePackageManager.pacman:
       return install
-          ? "$sudo pacman -S --noconfirm '$n' 2>&1; echo __EC:\$?"
-          : "$sudo pacman -R --noconfirm '$n' 2>&1; echo __EC:\$?";
+          ? "$sudo pacman -S --noconfirm '$n' 2>&1"
+          : "$sudo pacman -R --noconfirm '$n' 2>&1";
     case RemotePackageManager.brew:
-      return install
-          ? "brew install '$n' 2>&1; echo __EC:\$?"
-          : "brew uninstall '$n' 2>&1; echo __EC:\$?";
+      return install ? "brew install '$n' 2>&1" : "brew uninstall '$n' 2>&1";
     case RemotePackageManager.zypper:
       return install
-          ? "$sudo zypper --non-interactive install '$n' 2>&1; echo __EC:\$?"
-          : "$sudo zypper --non-interactive remove '$n' 2>&1; echo __EC:\$?";
+          ? "$sudo zypper --non-interactive install '$n' 2>&1"
+          : "$sudo zypper --non-interactive remove '$n' 2>&1";
     case RemotePackageManager.unknown:
-      return 'echo unsupported; echo __EC:1';
+      // 保持非零退出：mutatePackageCommand 会追加 `__EC:$?`。
+      return 'echo unsupported; false';
   }
 }
 
@@ -330,7 +373,8 @@ echo none
 Future<RemotePackagesSnapshot?> fetchInstalledPackages(
   SshWorkspaceController c, {
   RemotePackageManager? manager,
-  int limit = 400,
+  int limit = 20000,
+  String? nameFilter,
 }) async {
   final pm = manager ?? await detectPackageManager(c);
   if (pm == RemotePackageManager.unknown) {
@@ -340,7 +384,10 @@ Future<RemotePackagesSnapshot?> fetchInstalledPackages(
       error: '未检测到 apt/dnf/yum/pacman/brew/zypper',
     );
   }
-  final raw = await c.runQueued(listInstalledCommand(pm, limit: limit));
+  final raw = await c.runQueued(
+    listInstalledCommand(pm, limit: limit, nameFilter: nameFilter),
+    timeout: const Duration(seconds: 45),
+  );
   if (raw == null) return null;
   return RemotePackagesSnapshot(
     manager: pm,
@@ -362,27 +409,34 @@ Future<List<RemotePackage>?> searchRemotePackages(
 }
 
 /// 返回 null 表示成功；否则为错误信息。
+///
+/// [sudoPassword] 非空时用 `sudo -S` 并从 stdin 注入密码。
 Future<String?> mutateRemotePackage(
   SshWorkspaceController c, {
   required RemotePackageManager manager,
   required String name,
   required bool install,
+  String? sudoPassword,
 }) async {
   if (!isSafePackageName(name)) return '非法包名';
+  final usePwd = sudoPassword != null && sudoPassword.isNotEmpty;
   final raw = await c.runQueued(
-    mutatePackageCommand(manager, name: name, install: install),
+    mutatePackageCommand(
+      manager,
+      name: name,
+      install: install,
+      sudoWithStdin: usePwd,
+    ),
     timeout: const Duration(minutes: 5),
+    stdinBytes: usePwd ? RemoteSudo.passwordStdin(sudoPassword) : null,
   );
-  if (raw == null) return '命令失败或已断开';
-  final m = RegExp(r'__EC:(\d+)').firstMatch(raw);
-  final ec = int.tryParse(m?.group(1) ?? '') ?? 1;
-  if (ec == 0) return null;
-  final msg = raw.replaceAll(RegExp(r'__EC:\d+\s*$'), '').trim();
-  if (msg.toLowerCase().contains('password') ||
-      msg.toLowerCase().contains('a password is required') ||
-      msg.toLowerCase().contains('sudo: a password is required') ||
-      msg.contains('sudo:')) {
-    return '需要交互式 sudo。请在终端执行：\n${mutatePackageTerminalHint(manager, name: name, install: install)}';
-  }
-  return msg.isEmpty ? '操作失败 (exit $ec)' : msg;
+  return RemoteSudo.interpretExit(
+    raw,
+    usedPassword: usePwd,
+    terminalHint: mutatePackageTerminalHint(
+      manager,
+      name: name,
+      install: install,
+    ),
+  );
 }

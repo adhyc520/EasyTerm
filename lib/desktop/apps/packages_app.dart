@@ -6,10 +6,11 @@ import 'package:flutter/services.dart';
 import '../../services/remote_packages.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../widgets/package_op_log_dialog.dart';
 import '../desktop_window_manager.dart';
 
 /// 包管理器：检测 apt/dnf/yum/pacman/brew/zypper，列表 / 搜索 / 安装 / 卸载。
-/// 特权操作优先 `sudo -n`；失败则提示在终端交互执行。
+/// 特权操作弹出实时日志框；需密码时再弹 sudo 授权。
 class PackagesApp extends StatefulWidget {
   const PackagesApp({
     super.key,
@@ -40,6 +41,10 @@ class _PackagesAppState extends State<PackagesApp>
   final _filterCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   final _installCtrl = TextEditingController();
+  final _filterFocus = FocusNode();
+  final _searchFocus = FocusNode();
+  final _installFocus = FocusNode();
+  bool _wasFocused = false;
 
   bool get _connected =>
       widget.controller.connected && !widget.controller.dropped;
@@ -48,18 +53,42 @@ class _PackagesAppState extends State<PackagesApp>
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    _wasFocused = widget.window.focused;
     widget.window.onConnectionRestored = _onRestored;
+    widget.wm.addListener(_onWm);
     unawaited(_reload());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _claimTextFocus());
   }
 
   @override
   void dispose() {
     widget.window.onConnectionRestored = null;
+    widget.wm.removeListener(_onWm);
     _tabs.dispose();
     _filterCtrl.dispose();
     _searchCtrl.dispose();
     _installCtrl.dispose();
+    _filterFocus.dispose();
+    _searchFocus.dispose();
+    _installFocus.dispose();
     super.dispose();
+  }
+
+  void _onWm() {
+    final focused = widget.window.focused;
+    final gained = focused && !_wasFocused;
+    _wasFocused = focused;
+    if (gained) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _claimTextFocus());
+    }
+  }
+
+  void _claimTextFocus() {
+    if (!mounted || !widget.window.focused) return;
+    if (_loading && _installed.isEmpty) return;
+    final node = _tabs.index == 0 ? _filterFocus : _searchFocus;
+    if (!node.canRequestFocus) return;
+    node.requestFocus();
   }
 
   void _onRestored() {
@@ -101,6 +130,7 @@ class _PackagesAppState extends State<PackagesApp>
         _selected = null;
       }
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _claimTextFocus());
   }
 
   List<RemotePackage> get _filteredInstalled {
@@ -150,7 +180,7 @@ class _PackagesAppState extends State<PackagesApp>
         title: Text(install ? '安装软件包' : '卸载软件包'),
         content: Text(
           install
-              ? '将尝试：\n${mutatePackageTerminalHint(_pm, name: name, install: true)}\n\n若远端 sudo 需密码，请改在终端执行。'
+              ? '将安装「$name」。若远端需要 sudo，会弹出密码输入框。'
               : '将尝试卸载「$name」。此操作可能影响系统，确定继续？',
         ),
         actions: [
@@ -170,16 +200,18 @@ class _PackagesAppState extends State<PackagesApp>
       _busy = true;
       _error = null;
     });
-    final err = await mutateRemotePackage(
-      widget.controller,
+    final result = await showPackageOpLogDialog(
+      context,
+      controller: widget.controller,
       manager: _pm,
-      name: name,
+      packageName: name,
       install: install,
     );
     if (!mounted) return;
     setState(() => _busy = false);
-    if (err != null) {
-      setState(() => _error = err);
+    if (result == null) return;
+    if (result != true) {
+      setState(() => _error = install ? '安装失败，详见日志' : '卸载失败，详见日志');
       return;
     }
     if (mounted) {
@@ -313,11 +345,12 @@ class _PackagesAppState extends State<PackagesApp>
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
           child: TextField(
             controller: _filterCtrl,
+            focusNode: _filterFocus,
             onChanged: (_) => setState(() {}),
             style: TextStyle(fontSize: 12, color: wb.primaryText),
             decoration: InputDecoration(
               isDense: true,
-              hintText: '筛选已安装…',
+              hintText: '筛选已安装（如 openjdk）…',
               hintStyle: TextStyle(color: wb.textMuted, fontSize: 12),
               prefixIcon: Icon(Icons.search, size: 16, color: wb.textMuted),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -384,6 +417,7 @@ class _PackagesAppState extends State<PackagesApp>
               Expanded(
                 child: TextField(
                   controller: _searchCtrl,
+                  focusNode: _searchFocus,
                   onSubmitted: (_) => unawaited(_runSearch()),
                   style: TextStyle(fontSize: 12, color: wb.primaryText),
                   decoration: InputDecoration(
@@ -421,6 +455,7 @@ class _PackagesAppState extends State<PackagesApp>
               Expanded(
                 child: TextField(
                   controller: _installCtrl,
+                  focusNode: _installFocus,
                   style: TextStyle(fontSize: 12, color: wb.primaryText),
                   decoration: InputDecoration(
                     isDense: true,

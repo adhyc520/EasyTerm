@@ -79,96 +79,99 @@ class DesktopWindowFrame extends StatelessWidget {
     // 时子 InkWell 抢到手势也能抬起窗口（GestureDetector.onTap 会被子控件吃掉）。
     return TapRegion(
       groupId: window.id,
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) {
-          // 延迟抬层，避免与当前指针事件的 mouse_tracker 重叠。
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            wm.focus(window.id, reclaimKeyboard: !window.focused);
-          });
-        },
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: wb.panel,
-                borderRadius: radius,
-                border: Border.all(
-                  color: borderColor,
-                  width: focused ? 1.5 : 1,
+      child: FocusScope(
+        node: window.focusScope,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) {
+            // 延迟抬层，避免与当前指针事件的 mouse_tracker 重叠。
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              wm.focus(window.id, reclaimKeyboard: !window.focused);
+            });
+          },
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: wb.panel,
+                  borderRadius: radius,
+                  border: Border.all(
+                    color: borderColor,
+                    width: focused ? 1.5 : 1,
+                  ),
+                  boxShadow: focused
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                 ),
-                boxShadow: focused
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ]
-                    : [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.22),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-              ),
-              child: ClipRRect(
-                borderRadius: radius,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _TitleBar(
-                      height: titleBarH,
-                      icon: _iconFor(window.type),
-                      title: window.title,
-                      focused: focused,
-                      maximized: isMax,
-                      alwaysOnTop: window.alwaysOnTop,
-                      workspaceCount: wm.workspaces.length,
-                      onPanStart: () {
-                        // 勿在指针回调里同步抬 z：Stack 重排会销毁/重建 MouseRegion。
-                        wm.beginDrag(window.id);
-                      },
-                      onPanUpdate: (d) {
-                        wm.dragBy(window.id, d);
-                      },
-                      onPanEnd: () => wm.endDrag(window.id),
-                      onDoubleTap: () => wm.toggleMaximize(window.id),
-                      onMinimize: () => wm.minimize(window.id),
-                      onMaximize: () => wm.toggleMaximize(window.id),
-                      onClose: () => unawaited(wm.requestClose(window.id)),
-                      onFocus: () => wm.focus(window.id),
-                      onTile: (zone) => wm.tile(window.id, zone),
-                      onToggleAlwaysOnTop: () =>
-                          wm.toggleAlwaysOnTop(window.id),
-                      onMoveToWorkspace: (i) =>
-                          wm.moveWindowToWorkspace(window.id, i),
-                      onSnapLayout: (zone) => wm.tile(window.id, zone),
-                    ),
-                    Expanded(
-                      child: ColoredBox(
-                        color: wb.bg,
-                        // 与手柄同宽的内边距：手柄落在空白边框带上，不与内容抢指针。
-                        child: isMax
-                            ? child
-                            : Padding(
-                                padding: const EdgeInsets.only(
-                                  left: handle,
-                                  right: handle,
-                                  bottom: handle,
-                                ),
-                                child: child,
-                              ),
+                child: ClipRRect(
+                  borderRadius: radius,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _TitleBar(
+                        height: titleBarH,
+                        icon: _iconFor(window.type),
+                        title: window.title,
+                        focused: focused,
+                        maximized: isMax,
+                        alwaysOnTop: window.alwaysOnTop,
+                        workspaceCount: wm.workspaces.length,
+                        onPanStart: () {
+                          // 勿在指针回调里同步抬 z：Stack 重排会销毁/重建 MouseRegion。
+                          wm.beginDrag(window.id);
+                        },
+                        onPanUpdate: (d) {
+                          wm.dragBy(window.id, d);
+                        },
+                        onPanEnd: () => wm.endDrag(window.id),
+                        onDoubleTap: () => wm.toggleMaximize(window.id),
+                        onMinimize: () => wm.minimize(window.id),
+                        onMaximize: () => wm.toggleMaximize(window.id),
+                        onClose: () => unawaited(wm.requestClose(window.id)),
+                        onFocus: () => wm.focus(window.id),
+                        onTile: (zone) => wm.tile(window.id, zone),
+                        onToggleAlwaysOnTop: () =>
+                            wm.toggleAlwaysOnTop(window.id),
+                        onMoveToWorkspace: (i) =>
+                            wm.moveWindowToWorkspace(window.id, i),
+                        onSnapLayout: (zone) => wm.tile(window.id, zone),
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: ColoredBox(
+                          color: wb.bg,
+                          // 与手柄同宽的内边距：手柄落在空白边框带上，不与内容抢指针。
+                          child: isMax
+                              ? child
+                              : Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: handle,
+                                    right: handle,
+                                    bottom: handle,
+                                  ),
+                                  child: child,
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            if (!isMax) ..._resizeHandles(),
-          ],
+              if (!isMax) ..._resizeHandles(),
+            ],
+          ),
         ),
       ),
     );

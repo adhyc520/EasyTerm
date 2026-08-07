@@ -196,6 +196,7 @@ class _CronAppState extends State<CronApp> {
                       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
                       child: TextField(
                         controller: _editCtrl,
+                        autofocus: true,
                         maxLines: null,
                         expands: true,
                         textAlignVertical: TextAlignVertical.top,

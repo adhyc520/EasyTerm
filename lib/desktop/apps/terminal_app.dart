@@ -87,8 +87,13 @@ class _TerminalAppState extends State<TerminalApp> {
     final focused = widget.window.focused;
     final gen = widget.wm.focusGeneration;
     final gained = focused && !_wasFocused;
+    final lost = !focused && _wasFocused;
     final reclaimed = focused && gen != _seenFocusGeneration;
     _wasFocused = focused;
+    if (lost) {
+      _surfaceKey.currentState?.releaseKeyboardFocus();
+      return;
+    }
     if (!gained && !reclaimed) return;
     _seenFocusGeneration = gen;
     WidgetsBinding.instance.addPostFrameCallback((_) {

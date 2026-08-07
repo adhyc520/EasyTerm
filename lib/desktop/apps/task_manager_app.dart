@@ -1532,70 +1532,87 @@ class _NetworkPane extends StatelessWidget {
       }
     }
 
+    // Two Expanded regions share leftover height after the fixed filter/chrome
+    // so short TabBarView viewports never RenderFlex-overflow.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
+        Expanded(
+          flex: 2,
+          child: ListView(
+            padding: EdgeInsets.zero,
             children: [
-              _PerfCard(
-                label: '下行',
-                value: formatNetRate(rxSum),
-                history: _norm(rxHist),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _PerfCard(
+                      label: '下行',
+                      value: formatNetRate(rxSum),
+                      history: _norm(rxHist),
+                    ),
+                    _PerfCard(
+                      label: '上行',
+                      value: formatNetRate(txSum),
+                      history: _norm(txHist),
+                    ),
+                    _PerfCard(
+                      label: '已建立',
+                      value: s?.tcpEstablished?.toString() ?? '—',
+                    ),
+                    _PerfCard(
+                      label: '监听',
+                      value: s?.tcpListen?.toString() ??
+                          (s == null ? '—' : '${s.listeners.length}'),
+                    ),
+                    _PerfCard(
+                      label: 'TIME_WAIT',
+                      value: s?.tcpTimeWait?.toString() ?? '—',
+                    ),
+                  ],
+                ),
               ),
-              _PerfCard(
-                label: '上行',
-                value: formatNetRate(txSum),
-                history: _norm(txHist),
-              ),
-              _PerfCard(
-                label: '已建立',
-                value: s?.tcpEstablished?.toString() ?? '—',
-              ),
-              _PerfCard(
-                label: '监听',
-                value: s?.tcpListen?.toString() ??
-                    (s == null ? '—' : '${s.listeners.length}'),
-              ),
-              _PerfCard(
-                label: 'TIME_WAIT',
-                value: s?.tcpTimeWait?.toString() ?? '—',
-              ),
+              if (visibleRates.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
+                  child: Row(
+                    children: [
+                      Text(
+                        '网卡',
+                        style: TextStyle(fontSize: 11, color: wb.textMuted),
+                      ),
+                      const Spacer(),
+                      FilterChip(
+                        label: const Text(
+                          '隐藏回环',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        selected: hideLoopback,
+                        onSelected: onHideLoopback,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                  child: Column(
+                    children: [
+                      for (final r in visibleRates.take(8))
+                        _IfaceRow(rate: r),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        if (visibleRates.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
-            child: Row(
-              children: [
-                Text('网卡', style: TextStyle(fontSize: 11, color: wb.textMuted)),
-                const Spacer(),
-                FilterChip(
-                  label: const Text('隐藏回环', style: TextStyle(fontSize: 11)),
-                  selected: hideLoopback,
-                  onSelected: onHideLoopback,
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-            child: Column(
-              children: [
-                for (final r in visibleRates.take(8))
-                  _IfaceRow(rate: r),
-              ],
-            ),
-          ),
-        ],
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
           child: Row(
             children: [
               Text(
@@ -1678,6 +1695,7 @@ class _NetworkPane extends StatelessWidget {
         ),
         const Divider(height: 1),
         Expanded(
+          flex: 3,
           child: !connected && s == null
               ? Center(
                   child: Text('未连接', style: TextStyle(color: wb.textMuted)),

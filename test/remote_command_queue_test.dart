@@ -12,7 +12,7 @@ void main() {
       var runCount = 0;
 
       final q = RemoteCommandQueue.test(
-        (cmd, timeout) async {
+        (cmd, timeout, {stdinBytes}) async {
           runCount++;
           concurrent++;
           if (concurrent > maxSeen) maxSeen = concurrent;
@@ -48,7 +48,7 @@ void main() {
     test('clearPending completes queued with null', () async {
       final gate = Completer<void>();
       final q = RemoteCommandQueue.test(
-        (cmd, timeout) async {
+        (cmd, timeout, {stdinBytes}) async {
           await gate.future;
           return 'ok';
         },
@@ -68,7 +68,7 @@ void main() {
 
     test('dispose completes pending with null', () async {
       final q = RemoteCommandQueue.test(
-        (cmd, timeout) async {
+        (cmd, timeout, {stdinBytes}) async {
           await Future<void>.delayed(const Duration(milliseconds: 80));
           return 'late';
         },
@@ -81,6 +81,19 @@ void main() {
       expect(await b, isNull);
       // in-flight may still complete
       expect(await a, anyOf(isNull, 'late'));
+    });
+
+    test('forwards stdinBytes to runner', () async {
+      List<int>? seen;
+      final q = RemoteCommandQueue.test(
+        (cmd, timeout, {stdinBytes}) async {
+          seen = stdinBytes;
+          return 'ok';
+        },
+      );
+      await q.run('sudo -S true', stdinBytes: [1, 2, 3]);
+      expect(seen, [1, 2, 3]);
+      q.dispose();
     });
   });
 }

@@ -229,6 +229,7 @@ class _ForwardsAppState extends State<ForwardsApp> {
                   width: 140,
                   child: TextField(
                     controller: _hostCtrl,
+                    autofocus: true,
                     style: TextStyle(
                       fontSize: 12,
                       color: wb.primaryText,

@@ -640,6 +640,14 @@ class SftpBrowserState extends State<SftpBrowser> {
     }
   }
 
+  /// 窗口失焦时释放，避免抢走其它窗口 TextField 的键盘。
+  void releaseKeyboardFocus() {
+    if (!mounted) return;
+    if (_focusNode.hasFocus) {
+      _focusNode.unfocus();
+    }
+  }
+
   @override
   void didUpdateWidget(covariant SftpBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);

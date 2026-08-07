@@ -237,6 +237,7 @@ class _UsersAppState extends State<UsersApp>
               Expanded(
                 child: TextField(
                   controller: _filterCtrl,
+                  autofocus: true,
                   onChanged: (v) => setState(() => _filter = v),
                   style: TextStyle(fontSize: 12, color: wb.primaryText),
                   decoration: InputDecoration(

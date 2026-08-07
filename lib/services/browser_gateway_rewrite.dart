@@ -187,6 +187,46 @@ String? rewriteRemoteAbsoluteUrl(
   }
 }
 
+/// Rewrite a root-relative path (`/assets/x.js`) onto the gateway prefix.
+///
+/// Without this, browsers resolve `/…` against `http://127.0.0.1:{port}/…`
+/// and drop `/{token}/{host}/{remotePort}/`, so SPA CSS/JS 404 → white screen
+/// while `<title>` from the HTML document still appears.
+String? rewriteGatewayRootRelativeUrl(
+  String pathAndQuery, {
+  required int gatewayPort,
+  required String token,
+  required String currentRemoteHost,
+  required int currentRemotePort,
+  required bool currentHttps,
+}) {
+  final trimmed = pathAndQuery.trim();
+  if (trimmed.isEmpty) return null;
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return null;
+  try {
+    return buildGatewayNavigationUri(
+      gatewayPort: gatewayPort,
+      token: token,
+      remoteHost: currentRemoteHost,
+      remotePort: currentRemotePort,
+      pathAndQuery: trimmed,
+      https: currentHttps,
+    ).toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+bool _isSkippableBrowserUrl(String trimmed) {
+  if (trimmed.isEmpty || trimmed.startsWith('#')) return true;
+  final lower = trimmed.toLowerCase();
+  return lower.startsWith('data:') ||
+      lower.startsWith('javascript:') ||
+      lower.startsWith('mailto:') ||
+      lower.startsWith('blob:') ||
+      lower.startsWith('about:');
+}
+
 /// Rewrite HTML/CSS/JS body absolute URLs; optionally inject fetch/XHR shim.
 String rewriteGatewayResponseBody(
   String body, {
@@ -199,9 +239,18 @@ String rewriteGatewayResponseBody(
 }) {
   String? rewrite(String url) {
     final trimmed = url.trim();
-    if (trimmed.isEmpty) return null;
+    if (_isSkippableBrowserUrl(trimmed)) return null;
+
+    // Root-relative: must stay under /{token}/{host}/{port}/…
     if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
-      return null;
+      return rewriteGatewayRootRelativeUrl(
+        trimmed,
+        gatewayPort: gatewayPort,
+        token: token,
+        currentRemoteHost: currentRemoteHost,
+        currentRemotePort: currentRemotePort,
+        currentHttps: currentHttps,
+      );
     }
     if (trimmed.startsWith('//') ||
         trimmed.toLowerCase().startsWith('http://') ||
@@ -267,6 +316,9 @@ String rewriteGatewayResponseBody(
       out,
       gatewayPort: gatewayPort,
       token: token,
+      currentRemoteHost: currentRemoteHost,
+      currentRemotePort: currentRemotePort,
+      currentHttps: currentHttps,
     );
   }
 
@@ -278,6 +330,9 @@ String injectGatewayFetchShim(
   String html, {
   required int gatewayPort,
   required String token,
+  required String currentRemoteHost,
+  required int currentRemotePort,
+  required bool currentHttps,
 }) {
   if (html.contains('data-et-gw-shim')) return html;
 
@@ -286,6 +341,9 @@ String injectGatewayFetchShim(
 (function(){
   var TOKEN=${_jsString(token)};
   var GW_PORT=$gatewayPort;
+  var REMOTE_HOST=${_jsString(currentRemoteHost)};
+  var REMOTE_PORT=$currentRemotePort;
+  var REMOTE_HTTPS=${currentHttps ? 'true' : 'false'};
   var SCHEME_KEY=${_jsString(kGatewaySchemeQueryKey)};
   var INTERNAL_SUFFIX=[".local",".internal",".lan",".home",".corp",".intranet",".private",".test",".localhost"];
   function isTunneledHost(h){
@@ -315,9 +373,30 @@ String injectGatewayFetchShim(
     if(h.indexOf(".")<0) return true;
     return false;
   }
+  function gwUrl(path, search, hash, https){
+    var q=search||"";
+    if(https){
+      q=q?(q+"&"+SCHEME_KEY+"=https"):("?"+SCHEME_KEY+"=https");
+    }
+    return "http://127.0.0.1:"+GW_PORT+"/"+TOKEN+"/"+encodeURIComponent(REMOTE_HOST)+"/"+REMOTE_PORT+(path||"/")+q+(hash||"");
+  }
   function rewrite(u){
     try{
       if(!u || typeof u!=="string") return u;
+      // Root-relative API/static paths must keep the gateway prefix.
+      if(u.charAt(0)==="/" && u.charAt(1)!=="/"){
+        var qi=u.indexOf("?");
+        var hi=u.indexOf("#");
+        var path=u, search="", hash="";
+        if(qi>=0 && (hi<0||qi<hi)){
+          path=u.slice(0,qi);
+          if(hi>=0){ search=u.slice(qi,hi); hash=u.slice(hi); }
+          else { search=u.slice(qi); }
+        } else if(hi>=0){
+          path=u.slice(0,hi); hash=u.slice(hi);
+        }
+        return gwUrl(path||"/", search, hash, REMOTE_HTTPS);
+      }
       var a=document.createElement("a");
       a.href=u;
       var proto=a.protocol.toLowerCase();

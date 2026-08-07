@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
@@ -9,13 +10,21 @@ class RemoteCommandQueue {
   RemoteCommandQueue(
     this._clientGetter, {
     this.maxConcurrent = 2,
-    Future<String?> Function(String command, Duration timeout)? testRunner,
+    Future<String?> Function(
+      String command,
+      Duration timeout, {
+      List<int>? stdinBytes,
+    })? testRunner,
   }) : _testRunner = testRunner;
 
   /// 无 SSH 的单元测试入口。
   @visibleForTesting
   factory RemoteCommandQueue.test(
-    Future<String?> Function(String command, Duration timeout) runner, {
+    Future<String?> Function(
+      String command,
+      Duration timeout, {
+      List<int>? stdinBytes,
+    }) runner, {
     int maxConcurrent = 2,
   }) {
     return RemoteCommandQueue(
@@ -26,7 +35,11 @@ class RemoteCommandQueue {
   }
 
   final SSHClient? Function() _clientGetter;
-  final Future<String?> Function(String command, Duration timeout)? _testRunner;
+  final Future<String?> Function(
+    String command,
+    Duration timeout, {
+    List<int>? stdinBytes,
+  })? _testRunner;
   final int maxConcurrent;
 
   int _inFlight = 0;
@@ -37,13 +50,16 @@ class RemoteCommandQueue {
   int get pendingCount => _pending.length;
 
   /// 排队执行；失败 / 掉线 / 超时均返回 `null`，错误写入 [lastError]。
+  ///
+  /// [stdinBytes] 写入远端 stdin 后关闭（用于 `sudo -S` 等）。
   Future<String?> run(
     String command, {
     Duration timeout = const Duration(seconds: 15),
+    List<int>? stdinBytes,
   }) {
     if (_disposed) return Future.value(null);
     final c = Completer<String?>();
-    _enqueue(_QueuedCmd(command, timeout, c));
+    _enqueue(_QueuedCmd(command, timeout, c, stdinBytes));
     return c.future;
   }
 
@@ -69,7 +85,11 @@ class RemoteCommandQueue {
     try {
       final testRunner = _testRunner;
       if (testRunner != null) {
-        final out = await testRunner(cmd.command, cmd.timeout);
+        final out = await testRunner(
+          cmd.command,
+          cmd.timeout,
+          stdinBytes: cmd.stdinBytes,
+        );
         if (out == null) {
           lastError = '命令失败或已断开';
           lastErrorAt = DateTime.now();
@@ -86,14 +106,14 @@ class RemoteCommandQueue {
         if (!cmd.completer.isCompleted) cmd.completer.complete(null);
         return;
       }
-      final out = await client
-          .run(cmd.command, stderr: false)
-          .timeout(cmd.timeout);
+      final out = await _runOnce(
+        client,
+        cmd.command,
+        stdinBytes: cmd.stdinBytes,
+      ).timeout(cmd.timeout);
       lastError = null;
       if (!cmd.completer.isCompleted) {
-        cmd.completer.complete(
-          utf8.decode(out, allowMalformed: true).trim(),
-        );
+        cmd.completer.complete(out);
       }
     } catch (e) {
       debugPrint('cmdq run: $e');
@@ -105,6 +125,52 @@ class RemoteCommandQueue {
     } finally {
       _inFlight--;
       _pump();
+    }
+  }
+
+  /// 有 stdin 时走 [SSHClient.execute]；否则沿用 [SSHClient.run]。
+  static Future<String> _runOnce(
+    SSHClient client,
+    String command, {
+    List<int>? stdinBytes,
+  }) async {
+    if (stdinBytes == null || stdinBytes.isEmpty) {
+      final out = await client.run(command, stderr: false);
+      return utf8.decode(out, allowMalformed: true).trim();
+    }
+
+    final session = await client.execute(command);
+    try {
+      final outputBuilder = BytesBuilder(copy: false);
+      final stdoutDone = Completer<void>();
+      final stderrDone = Completer<void>();
+
+      session.stdout.listen(
+        outputBuilder.add,
+        onDone: stdoutDone.complete,
+        onError: stdoutDone.completeError,
+        cancelOnError: true,
+      );
+      // 命令侧通常已 `2>&1`；仍吞掉 stderr 以免阻塞。
+      session.stderr.listen(
+        (_) {},
+        onDone: stderrDone.complete,
+        onError: stderrDone.completeError,
+        cancelOnError: true,
+      );
+
+      session.write(Uint8List.fromList(stdinBytes));
+      await session.stdin.close();
+
+      await stdoutDone.future;
+      await stderrDone.future;
+      await session.done;
+      return utf8.decode(outputBuilder.takeBytes(), allowMalformed: true).trim();
+    } finally {
+      // timeout / 取消时也关掉通道，避免 sudo -S session 泄漏。
+      try {
+        session.close();
+      } catch (_) {}
     }
   }
 
@@ -126,8 +192,9 @@ class RemoteCommandQueue {
 }
 
 class _QueuedCmd {
-  _QueuedCmd(this.command, this.timeout, this.completer);
+  _QueuedCmd(this.command, this.timeout, this.completer, this.stdinBytes);
   final String command;
   final Duration timeout;
   final Completer<String?> completer;
+  final List<int>? stdinBytes;
 }

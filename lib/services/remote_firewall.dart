@@ -1,3 +1,4 @@
+import 'remote_sudo.dart';
 import 'ssh_workspace_controller.dart';
 
 enum RemoteFirewallBackend { ufw, firewalld, iptables, unknown }
@@ -219,16 +220,17 @@ Future<String?> runFirewallMutate(
   SshWorkspaceController c,
   String command, {
   String? terminalHint,
+  String? sudoPassword,
 }) async {
-  final raw = await c.runQueued(command);
-  if (raw == null) return '命令失败或已断开';
-  final m = RegExp(r'__EC:(\d+)').firstMatch(raw);
-  final ec = int.tryParse(m?.group(1) ?? '') ?? 1;
-  if (ec == 0) return null;
-  final msg = raw.replaceAll(RegExp(r'__EC:\d+\s*$'), '').trim();
-  if (msg.toLowerCase().contains('password') ||
-      msg.toLowerCase().contains('sudo:')) {
-    return '需要交互式 sudo。请在终端执行：\n${terminalHint ?? command.replaceAll('sudo -n ', 'sudo ')}';
-  }
-  return msg.isEmpty ? '操作失败 (exit $ec)' : msg;
+  final usePwd = sudoPassword != null && sudoPassword.isNotEmpty;
+  final cmd = usePwd ? RemoteSudo.toStdinCommand(command) : command;
+  final raw = await c.runQueued(
+    cmd,
+    stdinBytes: usePwd ? RemoteSudo.passwordStdin(sudoPassword) : null,
+  );
+  return RemoteSudo.interpretExit(
+    raw,
+    usedPassword: usePwd,
+    terminalHint: terminalHint ?? command.replaceAll('sudo -n ', 'sudo '),
+  );
 }

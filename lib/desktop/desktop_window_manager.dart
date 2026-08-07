@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/desktop_settings_store.dart';
@@ -76,7 +75,8 @@ class DesktopWindow {
     this.alwaysOnTop = false,
     Map<String, dynamic>? args,
     this.preMaxRect,
-  }) : args = args ?? <String, dynamic>{};
+  })  : args = args ?? <String, dynamic>{},
+        focusScope = FocusScopeNode(debugLabel: 'desk-$id');
 
   final String id;
   final DesktopAppType type;
@@ -86,6 +86,9 @@ class DesktopWindow {
   bool focused;
   bool alwaysOnTop;
   final Map<String, dynamic> args;
+
+  /// 本窗口内容的焦点域：失焦时统一 unfocus，避免终端/WebView 抢走其它窗输入。
+  final FocusScopeNode focusScope;
 
   /// normal 态逻辑坐标（最大化时仍保留，或由 [preMaxRect] 还原）。
   Rect rect;
@@ -99,6 +102,10 @@ class DesktopWindow {
 
   /// SSH 重连成功后由桌面外壳调用，各 App 自行恢复。
   VoidCallback? onConnectionRestored;
+
+  void disposeFocus() {
+    focusScope.dispose();
+  }
 
   /// 当前应绘制的几何（minimized 时仍返回 normal，由视图过滤）。
   Rect displayRect(Size desktopSize, double taskbarH) {
@@ -294,8 +301,10 @@ class DesktopWindowManager extends ChangeNotifier {
     _activeWs = i;
     final wins = activeWorkspace.windows;
     DesktopWindow? best;
-    for (final w in wins) {
+    for (final w in allWindows) {
       w.focused = false;
+    }
+    for (final w in wins) {
       if (w.state == WindowState.minimized) continue;
       if (best == null || w.z > best.z) best = w;
     }
@@ -303,6 +312,7 @@ class DesktopWindowManager extends ChangeNotifier {
       best.focused = true;
       _focusGeneration++;
     }
+    _syncWindowFocusScopes(prefer: best);
     notifyListeners();
   }
 
@@ -429,9 +439,12 @@ class DesktopWindowManager extends ChangeNotifier {
     }
     if (owner == null || i < 0) return;
     final wasFocused = owner.windows[i].focused;
-    owner.windows[i].onWillClose = null;
-    owner.windows[i].onConnectionRestored = null;
-    owner.windows[i].tryOpenEditorPath = null;
+    final closing = owner.windows[i];
+    closing.onWillClose = null;
+    closing.onConnectionRestored = null;
+    closing.tryOpenEditorPath = null;
+    closing.focusScope.unfocus();
+    closing.disposeFocus();
     owner.windows.removeAt(i);
     if (wasFocused && owner.windows.isNotEmpty) {
       DesktopWindow? best;
@@ -485,8 +498,33 @@ class DesktopWindowManager extends ChangeNotifier {
       _focusGeneration++;
       changed = true;
     }
-    if (!changed) return;
-    notifyListeners();
+    if (changed) {
+      _syncWindowFocusScopes(prefer: target);
+      notifyListeners();
+    } else {
+      // 已是焦点窗时仍确保其它窗焦点域已释放（防终端残留）。
+      _syncWindowFocusScopes(prefer: target);
+    }
+  }
+
+  /// 非焦点窗口的 [FocusScope] 一律放下，避免 PTY/WebView/输入框串台。
+  void _syncWindowFocusScopes({DesktopWindow? prefer}) {
+    for (final w in allWindows) {
+      if (w.focused) continue;
+      if (w.focusScope.hasFocus || w.focusScope.hasPrimaryFocus) {
+        w.focusScope.unfocus();
+      }
+    }
+    final target = prefer ?? focusedWindow;
+    if (target == null || !target.focused) return;
+    // 延迟到帧后：此时窗口子树已挂上 FocusScope。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !target.focused) return;
+      if (!target.focusScope.canRequestFocus) return;
+      if (!target.focusScope.hasFocus) {
+        target.focusScope.requestFocus();
+      }
+    });
   }
 
   void beginDrag(String id) {
@@ -750,6 +788,7 @@ class DesktopWindowManager extends ChangeNotifier {
   Future<void> leaveDesktop() async {
     if (_disposed) return;
     await _flushPendingPreferredSize();
+    _disposeAllWindowFocus();
     for (final ws in _workspaces) {
       ws.windows.clear();
     }
@@ -796,6 +835,7 @@ class DesktopWindowManager extends ChangeNotifier {
   Future<void> prepareFreshDesktop() async {
     if (_layoutRestored || _disposed) return;
     _layoutRestored = true;
+    _disposeAllWindowFocus();
     for (final ws in _workspaces) {
       ws.windows.clear();
     }
@@ -846,10 +886,20 @@ class DesktopWindowManager extends ChangeNotifier {
     _persistSizeTimer?.cancel();
     _persistSizeTimer = null;
     _geometryNotifyScheduled = false;
+    _disposeAllWindowFocus();
     for (final ws in _workspaces) {
       ws.windows.clear();
     }
     super.dispose();
+  }
+
+  void _disposeAllWindowFocus() {
+    for (final w in allWindows) {
+      try {
+        w.focusScope.unfocus();
+        w.disposeFocus();
+      } catch (_) {}
+    }
   }
 
   void _notifyGeometryChanged() {

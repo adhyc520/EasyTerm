@@ -157,6 +157,8 @@ void main() {
 <html><head><title>t</title></head>
 <body>
 <a href="http://api:8080/v1">link</a>
+<script src="/assets/app.js"></script>
+<link rel="stylesheet" href="/static/app.css"/>
 <div style="background:url(https://cdn/x.png)"></div>
 </body></html>
 ''';
@@ -171,9 +173,38 @@ void main() {
       );
       expect(out, contains('127.0.0.1:9/tok/api/8080/v1'));
       expect(out, contains('127.0.0.1:9/tok/cdn/443/x.png'));
+      // Root-relative SPA assets must keep the gateway prefix (else white screen).
+      expect(out, contains('127.0.0.1:9/tok/app/80/assets/app.js'));
+      expect(out, contains('127.0.0.1:9/tok/app/80/static/app.css'));
       expect(out, contains('$kGatewaySchemeQueryKey=https'));
       expect(out, contains('data-et-gw-shim'));
       expect(out, contains('XMLHttpRequest'));
+      expect(out, contains('REMOTE_HOST'));
+    });
+
+    test('rewriteGatewayRootRelativeUrl prefixes token path', () {
+      final u = rewriteGatewayRootRelativeUrl(
+        '/api/v1?x=1',
+        gatewayPort: 9,
+        token: 'tok',
+        currentRemoteHost: 'app.internal',
+        currentRemotePort: 3000,
+        currentHttps: true,
+      );
+      expect(u, contains('127.0.0.1:9/tok/app.internal/3000/api/v1'));
+      expect(u, contains('$kGatewaySchemeQueryKey=https'));
+      expect(u, contains('x=1'));
+      expect(
+        rewriteGatewayRootRelativeUrl(
+          'relative',
+          gatewayPort: 9,
+          token: 'tok',
+          currentRemoteHost: 'app',
+          currentRemotePort: 80,
+          currentHttps: false,
+        ),
+        isNull,
+      );
     });
 
     test('injectGatewayFetchShim is idempotent', () {
@@ -182,11 +213,17 @@ void main() {
         html,
         gatewayPort: 1,
         token: 't',
+        currentRemoteHost: 'app',
+        currentRemotePort: 80,
+        currentHttps: false,
       );
       final twice = injectGatewayFetchShim(
         once,
         gatewayPort: 1,
         token: 't',
+        currentRemoteHost: 'app',
+        currentRemotePort: 80,
+        currentHttps: false,
       );
       expect('data-et-gw-shim'.allMatches(twice).length, 1);
     });

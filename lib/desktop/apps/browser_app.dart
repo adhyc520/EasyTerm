@@ -77,6 +77,7 @@ class _BrowserAppState extends State<BrowserApp> {
   bool _dismissJsHint = false;
   bool _wasConnected = false;
   bool _addressFocused = false;
+  bool _wasWindowFocused = false;
 
   FocusNode? _boundAddressFocus;
 
@@ -94,6 +95,8 @@ class _BrowserAppState extends State<BrowserApp> {
   void initState() {
     super.initState();
     c.addListener(_onController);
+    widget.wm.addListener(_onWm);
+    _wasWindowFocused = widget.window.focused;
     _wasConnected = c.connected && !c.dropped;
     _bookmarks = BrowserBookmarksStore(_hostKey);
     _history = BrowserHistoryStore(_hostKey);
@@ -108,6 +111,16 @@ class _BrowserAppState extends State<BrowserApp> {
     unawaited(_loadLists());
     unawaited(_loadJsHintDismissed());
     unawaited(_boot());
+  }
+
+  void _onWm() {
+    final focused = widget.window.focused;
+    final lost = !focused && _wasWindowFocused;
+    _wasWindowFocused = focused;
+    if (lost) {
+      final tab = _tab;
+      if (tab != null) unawaited(_releaseWebViewKeyboard(tab));
+    }
   }
 
   String _nextTabId() => '${++_tabIdSeq}';
@@ -188,6 +201,7 @@ class _BrowserAppState extends State<BrowserApp> {
   @override
   void dispose() {
     c.removeListener(_onController);
+    widget.wm.removeListener(_onWm);
     _boundAddressFocus?.removeListener(_onAddressFocusChange);
     unawaited(_backend?.close());
     _backend = null;
