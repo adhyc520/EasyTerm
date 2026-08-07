@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/workbench_settings_store.dart';
@@ -55,6 +56,7 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
   bool? _lastConnecting;
   String? _lastError;
   bool _paletteOpen = false;
+  bool _dismissDisconnectBanner = false;
 
   DesktopWindowManager get wm => widget.wm;
   SshWorkspaceController get controller => widget.controller;
@@ -83,8 +85,8 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
         Offset.zero & overlay.size,
       ),
       items: const [
-        PopupMenuItem(value: 'terminal', child: Text('在此打开终端')),
-        PopupMenuItem(value: 'files', child: Text('在此打开文件管理器')),
+        PopupMenuItem(value: 'terminal', child: Text('打开终端')),
+        PopupMenuItem(value: 'files', child: Text('文件管理器')),
         PopupMenuDivider(),
         PopupMenuItem(value: 'workspace', child: Text('新建工作区')),
         PopupMenuItem(value: 'settings', child: Text('桌面设置')),
@@ -155,6 +157,11 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
     _syncConnectionSnapshot();
     if (!wasOnline && nowOnline) {
       wm.notifyConnectionRestored();
+      _dismissDisconnectBanner = false;
+    }
+    // 新掉线时重新显示横幅。
+    if (wasOnline && !nowOnline) {
+      _dismissDisconnectBanner = false;
     }
     setState(() {});
   }
@@ -275,22 +282,19 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
             ),
             for (var i = 1; i <= 9; i++)
               ...workbenchBindActivators(
-                [
-                  SingleActivator(
-                    [
-                      LogicalKeyboardKey.digit1,
-                      LogicalKeyboardKey.digit2,
-                      LogicalKeyboardKey.digit3,
-                      LogicalKeyboardKey.digit4,
-                      LogicalKeyboardKey.digit5,
-                      LogicalKeyboardKey.digit6,
-                      LogicalKeyboardKey.digit7,
-                      LogicalKeyboardKey.digit8,
-                      LogicalKeyboardKey.digit9,
-                    ][i - 1],
-                    control: true,
-                  ),
-                ],
+                workbenchMetaOrControl(
+                  [
+                    LogicalKeyboardKey.digit1,
+                    LogicalKeyboardKey.digit2,
+                    LogicalKeyboardKey.digit3,
+                    LogicalKeyboardKey.digit4,
+                    LogicalKeyboardKey.digit5,
+                    LogicalKeyboardKey.digit6,
+                    LogicalKeyboardKey.digit7,
+                    LogicalKeyboardKey.digit8,
+                    LogicalKeyboardKey.digit9,
+                  ][i - 1],
+                ),
                 () {
                   if (i - 1 < wm.workspaces.length) {
                     wm.switchWorkspace(i - 1);
@@ -439,74 +443,97 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                     onClose: _closePalette,
                   ),
                 ),
-              // 掉线浮层
-              if (dropped)
-                Positioned.fill(
-                  child: ColoredBox(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 360),
-                        child: Material(
-                          color: wb.panelElevated,
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.cloud_off_rounded,
-                                  size: 40,
-                                  color: Color(0xFFEF4444),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  controller.connecting ? '正在重连…' : '连接已断开',
-                                  style: TextStyle(
-                                    color: wb.primaryText,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                if (controller.error != null &&
-                                    controller.error!.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    controller.error!,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: wb.textMuted,
-                                      fontSize: 12,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  ),
-                                ],
-                                if (!controller.connecting) ...[
-                                  const SizedBox(height: 16),
-                                  FilledButton.icon(
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor: wb.accentBlue,
-                                      ),
-                                      onPressed: () =>
-                                          unawaited(controller.reconnect()),
-                                      icon: const Icon(Icons.refresh_rounded),
-                                      label: const Text('重连'),
-                                    ),
-                                  ] else ...[
-                                    const SizedBox(height: 16),
-                                    CircularProgressIndicator(
-                                      color: wb.accentBlue,
-                                    ),
-                                  ],
-                                ],
+              // 掉线横幅（非模态）：可关闭，不阻断背后窗口交互。
+              if (dropped && !_dismissDisconnectBanner)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: 12,
+                  child: Builder(
+                    builder: (context) {
+                      final l = AppLocalizations.of(context);
+                      return Material(
+                        elevation: 6,
+                        color: wb.panelElevated,
+                        borderRadius: BorderRadius.circular(10),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.cloud_off_rounded,
+                                size: 22,
+                                color: controller.connecting
+                                    ? wb.accentBlue
+                                    : const Color(0xFFEF4444),
                               ),
-                            ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      controller.connecting
+                                          ? (l?.desktopReconnecting ??
+                                              '正在重连…')
+                                          : (l?.terminalDisconnected ??
+                                              '连接已断开'),
+                                      style: TextStyle(
+                                        color: wb.primaryText,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (controller.error != null &&
+                                        controller.error!.isNotEmpty)
+                                      Text(
+                                        controller.error!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: wb.textMuted,
+                                          fontSize: 11,
+                                          fontFamily: 'monospace',
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              if (!controller.connecting)
+                                TextButton(
+                                  onPressed: () =>
+                                      unawaited(controller.reconnect()),
+                                  child: Text(
+                                    l?.desktopReconnect ?? '重连',
+                                  ),
+                                )
+                              else
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 8),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              IconButton(
+                                tooltip: l?.desktopDismissBanner ?? '关闭提示',
+                                iconSize: 18,
+                                onPressed: () => setState(
+                                  () => _dismissDisconnectBanner = true,
+                                ),
+                                icon: Icon(Icons.close, color: wb.textMuted),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
+                ),
             ],
           ),
         );
@@ -725,7 +752,7 @@ class _DesktopBackground extends StatelessWidget {
     (DesktopAppType.users, Icons.groups_rounded, '用户与组'),
     (DesktopAppType.packages, Icons.inventory_2_rounded, '包管理器'),
     (DesktopAppType.firewall, Icons.security_rounded, '防火墙'),
-    (DesktopAppType.editor, Icons.folder_open_rounded, '打开文件'),
+    (DesktopAppType.editor, Icons.edit_note_rounded, '编辑器'),
   ];
 
   @override

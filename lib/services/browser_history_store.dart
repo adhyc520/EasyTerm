@@ -39,6 +39,13 @@ class BrowserHistoryStore {
     return list;
   }
 
+  Future<List<String>> remove(String url) async {
+    final list = await load();
+    list.removeWhere((e) => e == url);
+    await save(list);
+    return list;
+  }
+
   Future<List<String>> clear() async {
     await save(const []);
     return <String>[];

@@ -2047,6 +2047,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'OK'**
   String get updateOk;
+
+  /// No description provided for @desktopReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting…'**
+  String get desktopReconnecting;
+
+  /// No description provided for @desktopReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
+  String get desktopReconnect;
+
+  /// No description provided for @desktopDismissBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get desktopDismissBanner;
+
+  /// No description provided for @desktopPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get desktopPaused;
+
+  /// No description provided for @desktopUndoLast.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo last'**
+  String get desktopUndoLast;
+
+  /// No description provided for @sudoNeedAuthTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'sudo authorization required'**
+  String get sudoNeedAuthTitle;
+
+  /// No description provided for @sudoAuthBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote privileged commands need a sudo password. It is reused for this session (expires after 15 minutes of idle) and is never saved to disk.'**
+  String get sudoAuthBody;
+
+  /// No description provided for @sudoPasswordLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'sudo password'**
+  String get sudoPasswordLabel;
+
+  /// No description provided for @sudoUseSshPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Use SSH login password'**
+  String get sudoUseSshPassword;
+
+  /// No description provided for @sudoAuthorize.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorize'**
+  String get sudoAuthorize;
+
+  /// No description provided for @sudoPasswordIncorrect.
+  ///
+  /// In en, this message translates to:
+  /// **'Incorrect password, try again'**
+  String get sudoPasswordIncorrect;
+
+  /// No description provided for @sudoLockedSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'sudo password locked'**
+  String get sudoLockedSnack;
+
+  /// No description provided for @sudoCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get sudoCancel;
+
+  /// No description provided for @sudoShowPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Show'**
+  String get sudoShowPassword;
+
+  /// No description provided for @sudoHidePassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide'**
+  String get sudoHidePassword;
 }
 
 class _AppLocalizationsDelegate

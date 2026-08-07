@@ -79,6 +79,7 @@ String? buildLinuxLogFollowCommand({
   String? path,
   int lines = 300,
   String? priority,
+  int? pid,
 }) {
   final n = lines.clamp(20, 2000);
   switch (source) {
@@ -103,6 +104,7 @@ String? buildLinuxLogFollowCommand({
       );
       if (u.isNotEmpty) buf.write(' -u $u');
       if (priOk) buf.write(' -p $pri');
+      if (pid != null && pid > 0) buf.write(' _PID=$pid');
       return buf.toString();
   }
 }
@@ -127,6 +129,7 @@ Future<RemoteLogSnapshot?> fetchRemoteLogs(
   String? path,
   int lines = 200,
   String? priority,
+  int? pid,
 }) async {
   if (!controller.connected) return null;
   final n = lines.clamp(20, 2000);
@@ -140,6 +143,7 @@ Future<RemoteLogSnapshot?> fetchRemoteLogs(
         path: path,
         lines: n,
         priority: priority,
+        pid: pid,
       );
     case RemoteOsKind.windows:
       return _fetchWindows(
@@ -157,6 +161,7 @@ Future<RemoteLogSnapshot?> fetchRemoteLogs(
         path: path,
         lines: n,
         priority: priority,
+        pid: pid,
       );
       if (linux.lines.isNotEmpty || linux.error == null) {
         return linux;
@@ -178,6 +183,7 @@ Future<RemoteLogSnapshot> _fetchLinux(
   String? path,
   required int lines,
   String? priority,
+  int? pid,
 }) async {
   if (source == RemoteLogSource.docker) {
     final ref = (unit ?? '').trim();
@@ -232,14 +238,18 @@ Future<RemoteLogSnapshot> _fetchLinux(
   );
   if (u.isNotEmpty) buf.write(' -u $u');
   if (priOk) buf.write(' -p $pri');
+  if (pid != null && pid > 0) buf.write(' _PID=$pid');
   buf.write(
     r' 2>/dev/null || (dmesg -T 2>/dev/null | tail -n '
     '$lines) || echo "__ET_LOG_ERR__ journalctl unavailable"',
   );
   final raw = await controller.runRemoteForStatus(buf.toString());
+  final label = u.isNotEmpty
+      ? u
+      : (pid != null && pid > 0 ? 'PID $pid' : null);
   return parseLinuxJournal(
     raw ?? '',
-    unit: u.isEmpty ? null : u,
+    unit: label,
   );
 }
 

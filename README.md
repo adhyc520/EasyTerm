@@ -6,6 +6,14 @@
 
 <p align="center">
   <img src="images/home.png" alt="EasyTerm main window — terminal with SFTP sidebar and status bar" width="920" />
+  <br />
+  <em>Terminal workbench / 终端工作台</em>
+</p>
+
+<p align="center">
+  <img src="images/桌面模式.png" alt="EasyTerm remote visual desktop — multi-window terminal, files, and task manager" width="920" />
+  <br />
+  <em>Remote visual desktop / 远程可视化桌面</em>
 </p>
 
 ---

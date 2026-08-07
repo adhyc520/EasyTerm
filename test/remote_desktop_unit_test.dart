@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:isolate';
+import 'dart:typed_data';
+
 import 'package:easyterm/services/browser_gateway_rewrite.dart';
 import 'package:easyterm/services/desktop_window_size_store.dart';
 import 'package:easyterm/services/remote_browser_backend.dart';
@@ -182,6 +186,26 @@ void main() {
       expect(out, contains('REMOTE_HOST'));
     });
 
+    test('rewriteGatewayResponseBody works via Isolate.run (sendable)', () async {
+      final html =
+          '<html><head></head><body>${'<a href="http://api:8080/x">' * 2000}</body></html>';
+      final body = Uint8List.fromList(utf8.encode(html));
+      final out = await Isolate.run(() {
+        final text = utf8.decode(body, allowMalformed: true);
+        return rewriteGatewayResponseBody(
+          text,
+          gatewayPort: 9,
+          token: 'tok',
+          currentRemoteHost: 'app',
+          currentRemotePort: 80,
+          currentHttps: false,
+          isHtml: true,
+        );
+      });
+      expect(out, contains('data-et-gw-shim'));
+      expect(out, contains('127.0.0.1:9/tok/api/8080/x'));
+    });
+
     test('rewriteGatewayRootRelativeUrl prefixes token path', () {
       final u = rewriteGatewayRootRelativeUrl(
         '/api/v1?x=1',
@@ -276,6 +300,38 @@ void main() {
       expect(list[1].memPercent, 3.2);
       expect(list[1].memoryBytes, 65536 * 1024);
       expect(list[1].name, 'chrome');
+    });
+
+    test('parseWindowsGetProcessCsv', () {
+      const raw = '''
+"Id","ProcessName","CPU","WorkingSet","UserName"
+"1234","chrome",12.5,51325952,"DESKTOP\\alice"
+"568","svchost",,8388608,""
+"bad"
+''';
+      final list = parseWindowsGetProcessCsv(raw);
+      expect(list, hasLength(2));
+      expect(list[0].name, 'chrome');
+      expect(list[0].pid, 1234);
+      expect(list[0].cpuPercent, 12.5);
+      expect(list[0].memoryBytes, 51325952);
+      expect(list[0].user, r'DESKTOP\alice');
+      expect(list[1].name, 'svchost');
+      expect(list[1].pid, 568);
+      expect(list[1].cpuPercent, isNull);
+      expect(list[1].memoryBytes, 8388608);
+      expect(list[1].user, isNull);
+    });
+
+    test('parseWindowsGetProcessCsv without UserName column', () {
+      const raw = '''
+"Id","ProcessName","CPU","WorkingSet"
+"99","notepad",1.0,4096
+''';
+      final list = parseWindowsGetProcessCsv(raw);
+      expect(list, hasLength(1));
+      expect(list[0].pid, 99);
+      expect(list[0].user, isNull);
     });
 
     test('parseWindowsTasklistCsv', () {
@@ -613,8 +669,11 @@ a1b2c3d4e5f6|12.5%|40.0%|100MiB / 1GiB|1kB / 2kB
     test('isSafeDiskUsagePath', () {
       expect(isSafeDiskUsagePath('/var/www'), isTrue);
       expect(isSafeDiskUsagePath(r'C:\Users'), isTrue);
+      expect(isSafeDiskUsagePath('/var/log (nginx)'), isTrue);
+      expect(isSafeDiskUsagePath('bad;rm'), isTrue); // shell-quoted
       expect(isSafeDiskUsagePath('../etc'), isFalse);
-      expect(isSafeDiskUsagePath('bad;rm'), isFalse);
+      expect(isSafeDiskUsagePath('/var/../etc'), isFalse);
+      expect(isSafeDiskUsagePath('bad\npath'), isFalse);
     });
 
     test('parseLinuxDu', () {
@@ -629,6 +688,36 @@ a1b2c3d4e5f6|12.5%|40.0%|100MiB / 1GiB|1kB / 2kB
       expect(snap.entries.first.name, 'b');
       expect(snap.entries.first.bytes, 4096);
       expect(snap.totalBytes, 8192);
+    });
+
+    test('parseLinuxDu distinguishes permission vs not found', () {
+      final denied = parseLinuxDu(
+        '__ET_DU_ERR__ permission_denied',
+        path: '/root',
+      );
+      expect(denied.errorKind, RemoteDiskUsageErrorKind.permission);
+      expect(denied.error, '权限不足');
+      expect(denied.entries, isEmpty);
+
+      final missing = parseLinuxDu(
+        '__ET_DU_ERR__ not_found',
+        path: '/nope',
+      );
+      expect(missing.errorKind, RemoteDiskUsageErrorKind.notFound);
+      expect(missing.error, '路径不存在');
+    });
+
+    test('classifyDiskUsageError', () {
+      expect(
+        classifyDiskUsageError('Permission denied'),
+        RemoteDiskUsageErrorKind.permission,
+      );
+      expect(
+        classifyDiskUsageError('No such file or directory'),
+        RemoteDiskUsageErrorKind.notFound,
+      );
+      expect(looksLikeDiskUsagePermissionDenied('access denied'), isTrue);
+      expect(looksLikeDiskUsageNotFound('path not found'), isTrue);
     });
 
     test('parseWindowsDu', () {

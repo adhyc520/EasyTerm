@@ -28,12 +28,28 @@ class RemoteFirewallRule {
   final String from;
 }
 
+/// firewalld `--list-all` 解析结果（当前默认 zone）。
+class FirewalldZoneInfo {
+  const FirewalldZoneInfo({
+    required this.zone,
+    this.services = const [],
+    this.ports = const [],
+    this.availableZones = const [],
+  });
+
+  final String zone;
+  final List<String> services;
+  final List<String> ports;
+  final List<String> availableZones;
+}
+
 class RemoteFirewallSnapshot {
   const RemoteFirewallSnapshot({
     required this.backend,
     required this.active,
     required this.statusText,
     required this.rules,
+    this.firewalldZone,
     this.error,
   });
 
@@ -41,6 +57,7 @@ class RemoteFirewallSnapshot {
   final bool? active;
   final String statusText;
   final List<RemoteFirewallRule> rules;
+  final FirewalldZoneInfo? firewalldZone;
   final String? error;
 }
 
@@ -106,6 +123,63 @@ List<RemoteFirewallRule> parseFirewalldList(String raw) {
   return rules;
 }
 
+/// 解析 `firewall-cmd --list-all`：zone 名、services、ports。
+///
+/// 典型首行形如 `public (active)` 或仅 `public`。
+FirewalldZoneInfo? parseFirewalldZoneInfo(
+  String raw, {
+  List<String> availableZones = const [],
+}) {
+  final lines = raw.split(RegExp(r'\r?\n'));
+  String? zone;
+  var services = <String>[];
+  var ports = <String>[];
+  for (final line in lines) {
+    final trimmed = line.trimRight();
+    if (trimmed.isEmpty) continue;
+    final zoneM = RegExp(
+      r'^([A-Za-z0-9_-]+)\s*(?:\([^)]*\))?\s*$',
+    ).firstMatch(trimmed);
+    if (zone == null &&
+        zoneM != null &&
+        !trimmed.contains(':') &&
+        !RegExp(r'^\s').hasMatch(line)) {
+      zone = zoneM.group(1);
+      continue;
+    }
+    final t = trimmed.trimLeft();
+    if (t.toLowerCase().startsWith('services:')) {
+      final rest = t.substring('services:'.length).trim();
+      if (rest.isNotEmpty) {
+        services = rest
+            .split(RegExp(r'\s+'))
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+    } else if (t.toLowerCase().startsWith('ports:')) {
+      final rest = t.substring('ports:'.length).trim();
+      if (rest.isNotEmpty) {
+        ports = rest.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+      }
+    }
+  }
+  if (zone == null || zone.isEmpty) return null;
+  return FirewalldZoneInfo(
+    zone: zone,
+    services: services,
+    ports: ports,
+    availableZones: availableZones,
+  );
+}
+
+List<String> parseFirewalldZonesList(String raw) {
+  return raw
+      .split(RegExp(r'\s+'))
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty && RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(e))
+      .toList();
+}
+
 List<RemoteFirewallRule> parseIptablesList(String raw) {
   final rules = <RemoteFirewallRule>[];
   for (final line in raw.split(RegExp(r'\r?\n'))) {
@@ -127,6 +201,12 @@ bool isSafeFirewallPortSpec(String spec) {
   if (spec.isEmpty || spec.length > 32) return false;
   // 22 / 22/tcp / 80:90/tcp / OpenSSH
   return RegExp(r'^[A-Za-z0-9][A-Za-z0-9/:._-]*$').hasMatch(spec);
+}
+
+/// firewalld service 名（如 http、dhcpv6-client）。
+bool isSafeFirewalldServiceName(String name) {
+  if (name.isEmpty || name.length > 64) return false;
+  return RegExp(r'^[a-z0-9_-]+$').hasMatch(name);
 }
 
 Future<RemoteFirewallBackend> detectFirewallBackend(
@@ -167,17 +247,22 @@ Future<RemoteFirewallSnapshot?> fetchFirewallSnapshot(
       );
     case RemoteFirewallBackend.firewalld:
       final raw = await c.runQueued(
-        'firewall-cmd --state 2>&1; echo __SEP__; firewall-cmd --list-all 2>&1',
+        'firewall-cmd --state 2>&1; echo __SEP__; '
+        'firewall-cmd --list-all 2>&1; echo __SEP__; '
+        'firewall-cmd --get-zones 2>&1',
       );
       if (raw == null) return null;
       final parts = raw.split('__SEP__');
       final state = parts.first.trim().toLowerCase();
       final list = parts.length > 1 ? parts[1].trim() : '';
+      final zonesRaw = parts.length > 2 ? parts[2].trim() : '';
+      final zones = parseFirewalldZonesList(zonesRaw);
       return RemoteFirewallSnapshot(
         backend: be,
         active: state.contains('running'),
         statusText: raw.replaceAll('__SEP__', '\n').trim(),
         rules: parseFirewalldList(list),
+        firewalldZone: parseFirewalldZoneInfo(list, availableZones: zones),
       );
     case RemoteFirewallBackend.iptables:
       final raw = await c.runQueued('iptables -L -n -v 2>&1 | head -n 200');
@@ -215,6 +300,43 @@ String ufwDeleteCommand(int number) =>
 String ufwSetEnabledCommand(bool enable) => enable
     ? 'sudo -n ufw --force enable 2>&1; echo __EC:\$?'
     : 'sudo -n ufw disable 2>&1; echo __EC:\$?';
+
+String firewalldReloadCommand() =>
+    'sudo -n firewall-cmd --reload 2>&1; echo __EC:\$?';
+
+String firewalldSetDefaultZoneCommand(String zone) {
+  final z = zone.replaceAll("'", "'\\''");
+  return "sudo -n firewall-cmd --set-default-zone='$z' 2>&1; echo __EC:\$?";
+}
+
+bool isSafeFirewalldZoneName(String name) {
+  if (name.isEmpty || name.length > 64) return false;
+  return RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(name);
+}
+
+String firewalldAddServiceCommand(String service) {
+  final s = service.replaceAll("'", "'\\''");
+  return "sudo -n firewall-cmd --permanent --add-service='$s' 2>&1 && "
+      'sudo -n firewall-cmd --reload 2>&1; echo __EC:\$?';
+}
+
+String firewalldAddPortCommand(String portSpec) {
+  final p = portSpec.replaceAll("'", "'\\''");
+  return "sudo -n firewall-cmd --permanent --add-port='$p' 2>&1 && "
+      'sudo -n firewall-cmd --reload 2>&1; echo __EC:\$?';
+}
+
+String firewalldRemoveServiceCommand(String service) {
+  final s = service.replaceAll("'", "'\\''");
+  return "sudo -n firewall-cmd --permanent --remove-service='$s' 2>&1 && "
+      'sudo -n firewall-cmd --reload 2>&1; echo __EC:\$?';
+}
+
+String firewalldRemovePortCommand(String portSpec) {
+  final p = portSpec.replaceAll("'", "'\\''");
+  return "sudo -n firewall-cmd --permanent --remove-port='$p' 2>&1 && "
+      'sudo -n firewall-cmd --reload 2>&1; echo __EC:\$?';
+}
 
 Future<String?> runFirewallMutate(
   SshWorkspaceController c,

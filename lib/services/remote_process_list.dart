@@ -13,6 +13,9 @@ class RemoteProcess {
     this.memPercent,
     this.memoryBytes,
     this.session,
+    this.cmdline,
+    this.ppid,
+    this.startTime,
   });
 
   final int pid;
@@ -24,6 +27,34 @@ class RemoteProcess {
   /// 工作集 / RSS（字节）。
   final int? memoryBytes;
   final String? session;
+
+  /// 完整命令行（详情拉取，列表通常为空）。
+  final String? cmdline;
+
+  /// 父进程 PID。
+  final int? ppid;
+
+  /// 启动时间（如 `ps` lstart / WMI CreationDate）。
+  final String? startTime;
+}
+
+/// 进程详情（按需拉取，不进列表快照）。
+class RemoteProcessDetail {
+  const RemoteProcessDetail({
+    required this.pid,
+    this.cmdline,
+    this.ppid,
+    this.startTime,
+    this.message,
+  });
+
+  final int pid;
+  final String? cmdline;
+  final int? ppid;
+  final String? startTime;
+
+  /// 不可用时的说明（如 Windows 拉取失败）。
+  final String? message;
 }
 
 class RemoteProcessSnapshot {
@@ -54,7 +85,12 @@ ps -eo pid=,user:16=,pcpu=,pmem=,rss=,comm:48= --sort=-pcpu 2>/dev/null | head -
 String get kLinuxProcessListOneLine =>
     kLinuxProcessList.replaceAll('\n', ';').trim();
 
-/// Windows OpenSSH：CSV，无表头。
+/// Windows：优先 PowerShell Get-Process（含 CPU + WorkingSet + UserName）。
+/// `-IncludeUserName` 在 Win8+/Win10+ 可用；失败时回退无用户列。
+const String kWindowsProcessListPs =
+    r'powershell -NoProfile -NonInteractive -Command "try { Get-Process -IncludeUserName | Select-Object Id,ProcessName,CPU,WorkingSet,UserName | ConvertTo-Csv -NoTypeInformation } catch { Get-Process | Select-Object Id,ProcessName,CPU,WorkingSet | ConvertTo-Csv -NoTypeInformation }"';
+
+/// Windows OpenSSH 回退：CSV，无表头。
 const String kWindowsProcessList =
     r'tasklist.exe /FO CSV /NH 2>nul || tasklist /FO CSV /NH';
 
@@ -93,10 +129,9 @@ Future<RemoteProcessSnapshot?> fetchRemoteProcessSnapshot(
         processes: parseLinuxProcessList(raw ?? ''),
       );
     case RemoteOsKind.windows:
-      final raw = await controller.runRemoteForStatus(kWindowsProcessList);
       return RemoteProcessSnapshot(
         os: RemoteOsKind.windows,
-        processes: parseWindowsTasklistCsv(raw ?? ''),
+        processes: await _fetchWindowsProcesses(controller),
       );
     case RemoteOsKind.unknown:
       // 兜底：先试 Linux，再试 Windows。
@@ -109,8 +144,7 @@ Future<RemoteProcessSnapshot?> fetchRemoteProcessSnapshot(
           processes: linux,
         );
       }
-      final winRaw = await controller.runRemoteForStatus(kWindowsProcessList);
-      final win = parseWindowsTasklistCsv(winRaw ?? '');
+      final win = await _fetchWindowsProcesses(controller);
       if (win.isNotEmpty) {
         return RemoteProcessSnapshot(
           os: RemoteOsKind.windows,
@@ -124,7 +158,18 @@ Future<RemoteProcessSnapshot?> fetchRemoteProcessSnapshot(
   }
 }
 
-/// 结束进程。[force] 为 true 时 Linux 用 SIGKILL，Windows 仍用 /F。
+Future<List<RemoteProcess>> _fetchWindowsProcesses(
+  SshWorkspaceController controller,
+) async {
+  final psRaw = await controller.runRemoteForStatus(kWindowsProcessListPs);
+  final fromPs = parseWindowsGetProcessCsv(psRaw ?? '');
+  if (fromPs.isNotEmpty) return fromPs;
+  final raw = await controller.runRemoteForStatus(kWindowsProcessList);
+  return parseWindowsTasklistCsv(raw ?? '');
+}
+
+/// 结束进程。[force] 为 true 时 Linux 用 SIGKILL、Windows 加 `/F`；
+/// 为 false 时 Linux 用 SIGTERM、Windows 用不带 `/F` 的 `taskkill`。
 Future<String?> killRemoteProcess(
   SshWorkspaceController controller, {
   required RemoteOsKind os,
@@ -137,12 +182,92 @@ Future<String?> killRemoteProcess(
     case RemoteOsKind.linux:
       cmd = force ? 'kill -KILL $pid' : 'kill -TERM $pid';
     case RemoteOsKind.windows:
-      cmd = 'taskkill.exe /PID $pid /F 2>nul || taskkill /PID $pid /F';
+      cmd = force
+          ? 'taskkill.exe /PID $pid /F 2>nul || taskkill /PID $pid /F'
+          : 'taskkill.exe /PID $pid 2>nul || taskkill /PID $pid';
     case RemoteOsKind.unknown:
       return '未知远端系统，无法结束进程';
   }
   final out = await controller.runRemoteForStatus(cmd);
   return out;
+}
+
+/// 按需拉取进程详情（cmdline / PPID / 启动时间）。列表命令保持不变以免破坏解析。
+Future<RemoteProcessDetail?> fetchRemoteProcessDetail(
+  SshWorkspaceController c, {
+  required int pid,
+  required RemoteOsKind os,
+}) async {
+  if (!c.connected || pid <= 0) return null;
+  switch (os) {
+    case RemoteOsKind.linux:
+      final cmd = 'cmdline=\$(tr \'\\0\' \' \' < /proc/$pid/cmdline 2>/dev/null); '
+          'ppid=\$(awk \'{print \$4}\' /proc/$pid/stat 2>/dev/null); '
+          'start=\$(ps -o lstart= -p $pid 2>/dev/null | sed \'s/^[[:space:]]*//\'); '
+          'printf \'CMDLINE:%s\\n\' "\$cmdline"; '
+          'printf \'PPID:%s\\n\' "\$ppid"; '
+          'printf \'START:%s\\n\' "\$start"';
+      final raw = await c.runRemoteForStatus(cmd);
+      if (raw == null) return null;
+      return parseRemoteProcessDetail(pid, raw);
+    case RemoteOsKind.windows:
+      // OpenSSH + PowerShell 转义易碎；尽力拉取，失败则带说明返回。
+      final cmd = 'powershell -NoProfile -NonInteractive -Command '
+          '"\$p = Get-CimInstance Win32_Process -Filter \'ProcessId = $pid\' '
+          '-ErrorAction SilentlyContinue; '
+          'if (\$null -eq \$p) { \'NOTFOUND\' } else { '
+          '\'CMDLINE:\' + \$p.CommandLine; '
+          '\'PPID:\' + \$p.ParentProcessId; '
+          '\'START:\' + \$p.CreationDate }"';
+      final raw = await c.runRemoteForStatus(cmd);
+      if (raw == null ||
+          raw.trim().isEmpty ||
+          raw.trim().startsWith('NOTFOUND')) {
+        return RemoteProcessDetail(
+          pid: pid,
+          message: 'Windows 下无法获取进程详情',
+        );
+      }
+      final parsed = parseRemoteProcessDetail(pid, raw);
+      if (parsed.cmdline == null &&
+          parsed.ppid == null &&
+          parsed.startTime == null) {
+        return RemoteProcessDetail(
+          pid: pid,
+          message: 'Windows 下无法获取进程详情',
+        );
+      }
+      return parsed;
+    case RemoteOsKind.unknown:
+      return RemoteProcessDetail(
+        pid: pid,
+        message: '未知远端系统，无法获取进程详情',
+      );
+  }
+}
+
+RemoteProcessDetail parseRemoteProcessDetail(int pid, String raw) {
+  String? cmdline;
+  int? ppid;
+  String? start;
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trimRight();
+    if (t.startsWith('CMDLINE:')) {
+      cmdline = t.substring('CMDLINE:'.length).trim();
+      if (cmdline.isEmpty) cmdline = null;
+    } else if (t.startsWith('PPID:')) {
+      ppid = int.tryParse(t.substring('PPID:'.length).trim());
+    } else if (t.startsWith('START:')) {
+      start = t.substring('START:'.length).trim();
+      if (start.isEmpty) start = null;
+    }
+  }
+  return RemoteProcessDetail(
+    pid: pid,
+    cmdline: cmdline,
+    ppid: ppid,
+    startTime: start,
+  );
 }
 
 List<RemoteProcess> parseLinuxProcessList(String raw) {
@@ -171,6 +296,42 @@ List<RemoteProcess> parseLinuxProcessList(String raw) {
       ),
     );
   }
+  return out;
+}
+
+/// 解析 `Get-Process | ConvertTo-Csv`。
+/// 列：Id, ProcessName, CPU, WorkingSet（字节）[, UserName]。
+/// CPU 为累计秒数，填入 [RemoteProcess.cpuPercent] 供排序/展示。
+List<RemoteProcess> parseWindowsGetProcessCsv(String raw) {
+  if (raw.isEmpty) return const [];
+  final out = <RemoteProcess>[];
+  for (final line in raw.split(RegExp(r'[\r\n]+'))) {
+    final t = line.trim();
+    if (t.isEmpty) continue;
+    final cols = _parseCsvLine(t);
+    if (cols.length < 4) continue;
+    final idRaw = cols[0].trim();
+    // 跳过表头
+    if (idRaw.toLowerCase() == 'id') continue;
+    final pid = int.tryParse(idRaw);
+    final name = cols[1].trim();
+    if (pid == null || pid <= 0 || name.isEmpty) continue;
+    final cpuRaw = cols[2].trim();
+    final cpu = cpuRaw.isEmpty ? null : double.tryParse(cpuRaw);
+    final wsRaw = cols[3].trim();
+    final ws = wsRaw.isEmpty ? null : int.tryParse(wsRaw);
+    final userRaw = cols.length >= 5 ? cols[4].trim() : '';
+    out.add(
+      RemoteProcess(
+        pid: pid,
+        name: name,
+        user: userRaw.isEmpty ? null : userRaw,
+        cpuPercent: cpu,
+        memoryBytes: ws,
+      ),
+    );
+  }
+  out.sort((a, b) => (b.memoryBytes ?? 0).compareTo(a.memoryBytes ?? 0));
   return out;
 }
 

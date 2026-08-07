@@ -1,10 +1,34 @@
-import 'dart:typed_data';
-
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
 import 'sftp_planned_upload.dart';
 import 'sftp_upload_task_list.dart';
+
+/// 列表排序列（目录始终优先，再按此列）。
+enum SftpSortColumn { name, size, mtime }
+
+/// 目录优先后按 [column]/[ascending] 排序（原地）。
+void sortSftpEntries(
+  List<SftpName> entries, {
+  required SftpSortColumn column,
+  required bool ascending,
+}) {
+  entries.sort((a, b) {
+    if (a.attr.isDirectory != b.attr.isDirectory) {
+      return a.attr.isDirectory ? -1 : 1;
+    }
+    final int cmp;
+    switch (column) {
+      case SftpSortColumn.name:
+        cmp = a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
+      case SftpSortColumn.size:
+        cmp = (a.attr.size ?? 0).compareTo(b.attr.size ?? 0);
+      case SftpSortColumn.mtime:
+        cmp = (a.attr.modifyTime ?? 0).compareTo(b.attr.modifyTime ?? 0);
+    }
+    return ascending ? cmp : -cmp;
+  });
+}
 
 /// SFTP 浏览器对主机的依赖面：侧栏与桌面文件管理器共用。
 abstract class SftpBrowserHost extends ChangeNotifier {
@@ -12,7 +36,25 @@ abstract class SftpBrowserHost extends ChangeNotifier {
   String get remoteCwd;
   List<SftpName> get entries;
   bool get loadingDir;
+  /// 最近一次目录加载失败；成功刷新后应为 null。
+  String? get loadError;
   SftpUploadTaskList get uploadTasks;
+
+  /// 是否显示以 `.` 开头的隐藏项。
+  bool get showHidden;
+  set showHidden(bool value);
+
+  SftpSortColumn get sortColumn;
+  bool get sortAscending;
+  /// 同列再点则切换升降序；换列则升序。
+  void setSort(SftpSortColumn col);
+
+  bool get canGoBack;
+  bool get canGoForward;
+  bool get canGoUp;
+  Future<void> goBack();
+  Future<void> goForward();
+  Future<void> navigateUp();
 
   Future<void> refreshDirectory();
   Future<void> navigateInto(String name);

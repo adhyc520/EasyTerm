@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/ssh_workspace_controller.dart';
+import '../services/workbench_desktop_shortcuts.dart';
 import '../theme/workbench_theme.dart';
 import '../widgets/desktop_settings_dialog.dart';
+import '../widgets/desktop_shortcuts_cheatsheet.dart';
 import 'desktop_window_manager.dart';
 
 /// 桌面命令面板：⌘/Ctrl+Shift+P 唤起，模糊搜索执行动作。
@@ -48,8 +50,13 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
     super.dispose();
   }
 
+  String get _mod => workbenchUsesMetaPrimaryModifier() ? '⌘' : 'Ctrl';
+
   List<_Cmd> _buildCommands() {
     final wm = widget.wm;
+    final mod = _mod;
+    final focusedId = wm.focusedWindow?.id;
+
     final items = <_Cmd>[
       _Cmd(
         title: '终端',
@@ -57,6 +64,7 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
         category: '应用',
         icon: Icons.terminal_rounded,
         keywords: 'terminal tm',
+        shortcut: '$mod+N',
         invoke: () => wm.openTerminal(preferPrimary: false),
       ),
       _Cmd(
@@ -127,6 +135,7 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
         category: '应用',
         icon: Icons.play_circle_outline_rounded,
         keywords: 'run command exec',
+        shortcut: '$mod+R',
         invoke: () => wm.open(DesktopAppType.runCommand),
       ),
       _Cmd(
@@ -165,11 +174,94 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
         invoke: () => showDesktopSettingsDialog(context, wm: wm),
       ),
       _Cmd(
+        title: '键盘快捷键',
+        category: '设置',
+        icon: Icons.keyboard_rounded,
+        keywords: 'shortcuts cheatsheet keys keymap help',
+        invoke: () => showDesktopShortcutsCheatsheet(context),
+      ),
+      _Cmd(
         title: '显示桌面',
         category: '窗口',
         icon: Icons.desktop_windows_rounded,
         keywords: 'show desktop',
         invoke: () => wm.toggleShowDesktop(),
+      ),
+      _Cmd(
+        title: '最小化当前窗口',
+        category: '窗口',
+        icon: Icons.remove_rounded,
+        keywords: 'minimize',
+        shortcut: '$mod+M',
+        invoke: () {
+          if (focusedId != null) wm.minimize(focusedId);
+        },
+      ),
+      _Cmd(
+        title: '最大化 / 还原当前窗口',
+        category: '窗口',
+        icon: Icons.crop_square_rounded,
+        keywords: 'maximize restore',
+        shortcut: '$mod+Alt+↑',
+        invoke: () {
+          if (focusedId != null) wm.toggleMaximize(focusedId);
+        },
+      ),
+      _Cmd(
+        title: '当前窗口左半屏',
+        category: '窗口',
+        icon: Icons.vertical_split_rounded,
+        keywords: 'tile left snap',
+        shortcut: '$mod+Alt+←',
+        invoke: () {
+          if (focusedId != null) wm.tile(focusedId, TileZone.left);
+        },
+      ),
+      _Cmd(
+        title: '当前窗口右半屏',
+        category: '窗口',
+        icon: Icons.vertical_split_rounded,
+        keywords: 'tile right snap',
+        shortcut: '$mod+Alt+→',
+        invoke: () {
+          if (focusedId != null) wm.tile(focusedId, TileZone.right);
+        },
+      ),
+      _Cmd(
+        title: '循环切换窗口',
+        category: '窗口',
+        icon: Icons.flip_to_front_rounded,
+        keywords: 'cycle windows focus',
+        shortcut: '$mod+`',
+        invoke: () => wm.cycleFocus(),
+      ),
+      _Cmd(
+        title: '反向循环窗口',
+        category: '窗口',
+        icon: Icons.flip_to_back_rounded,
+        keywords: 'cycle windows reverse',
+        shortcut: '$mod+Shift+`',
+        invoke: () => wm.cycleFocus(reverse: true),
+      ),
+      _Cmd(
+        title: '关闭当前窗口',
+        category: '窗口',
+        icon: Icons.close_rounded,
+        keywords: 'close',
+        shortcut: '$mod+W',
+        invoke: () {
+          if (focusedId != null) wm.requestClose(focusedId);
+        },
+      ),
+      _Cmd(
+        title: '置顶 / 取消置顶当前窗口',
+        category: '窗口',
+        icon: Icons.push_pin_rounded,
+        keywords: 'pin always on top',
+        shortcut: '$mod+T',
+        invoke: () {
+          if (focusedId != null) wm.toggleAlwaysOnTop(focusedId);
+        },
       ),
       _Cmd(
         title: '重连',
@@ -199,9 +291,34 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
           category: '工作区',
           icon: Icons.grid_view_rounded,
           keywords: 'ws ${i + 1}',
+          shortcut: i < 9 ? '$mod+${i + 1}' : null,
           invoke: () => wm.switchWorkspace(idx),
         ),
       );
+    }
+
+    if (focusedId != null && wm.workspaces.length > 1) {
+      for (var i = 0; i < wm.workspaces.length; i++) {
+        final idx = i;
+        final current = wm.workspaceIndexOfWindow(focusedId);
+        if (current == idx) continue;
+        items.add(
+          _Cmd(
+            title: '移到桌面 ${i + 1}',
+            subtitle: wm.workspaces[i].name,
+            category: '工作区',
+            icon: Icons.open_with_rounded,
+            keywords: 'move workspace ws ${i + 1} 移到',
+            shortcut: null,
+            invoke: () {
+              final id = wm.focusedWindow?.id;
+              if (id == null) return;
+              wm.moveWindowToWorkspace(id, idx);
+              wm.switchWorkspace(idx);
+            },
+          ),
+        );
+      }
     }
 
     for (final w in wm.windows) {
@@ -354,6 +471,16 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
                                   fontSize: 11,
                                 ),
                               ),
+                              trailing: c.shortcut == null
+                                  ? null
+                                  : Text(
+                                      c.shortcut!,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontFamily: 'monospace',
+                                        color: wb.textMuted,
+                                      ),
+                                    ),
                               onTap: () {
                                 _selected = i;
                                 _runSelected();
@@ -395,6 +522,7 @@ class _Cmd {
     required this.invoke,
     this.subtitle,
     this.keywords = '',
+    this.shortcut,
   });
 
   final String title;
@@ -402,6 +530,7 @@ class _Cmd {
   final String category;
   final IconData icon;
   final String keywords;
+  final String? shortcut;
   final void Function() invoke;
 
   bool matches(String q) {

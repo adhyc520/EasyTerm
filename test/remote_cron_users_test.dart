@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:easyterm/services/remote_cron.dart';
+import 'package:easyterm/services/remote_sudo.dart';
 import 'package:easyterm/services/remote_users.dart';
 
 void main() {
@@ -41,8 +44,100 @@ alice:x:1000:1000:Alice:/home/alice:/bin/bash
       expect(snap.recent.single.user, 'alice');
       expect(snap.accounts.length, 2);
       expect(snap.accounts.firstWhere((a) => a.name == 'alice').home, '/home/alice');
-      expect(snap.accounts.firstWhere((a) => a.name == 'root').isSystem, isTrue);
-      expect(snap.accounts.firstWhere((a) => a.name == 'alice').isSystem, isFalse);
+      expect(snap.accounts.firstWhere((a) => a.name == 'root').isSystem(), isTrue);
+      expect(snap.accounts.firstWhere((a) => a.name == 'alice').isSystem(), isFalse);
+    });
+
+    test('reads UID_MIN from login.defs', () {
+      const raw = '''
+__WHO__
+__LAST__
+__PASSWD__
+svc:x:500:500:svc:/home/svc:/bin/bash
+alice:x:1000:1000:Alice:/home/alice:/bin/bash
+__GROUP__
+__LOGINDEFS__
+UID_MIN			500
+''';
+      final snap = parseRemoteUsersBundle(raw);
+      expect(snap.uidMin, 500);
+      expect(snap.accounts.firstWhere((a) => a.name == 'svc').isSystem(snap.uidMin), isFalse);
+      expect(snap.accounts.firstWhere((a) => a.name == 'alice').isSystem(snap.uidMin), isFalse);
+    });
+
+    test('resolves group names and failed logins', () {
+      const raw = '''
+__WHO__
+__LAST__
+__LASTB__
+bob ssh:notty 10.0.0.1 Fri Aug 7 09:00 - 09:00  (00:00)
+__PASSWD__
+alice:x:1000:1000:Alice:/home/alice:/bin/bash
+__GROUP__
+alice:x:1000:
+sudo:x:27:alice
+docker:x:999:alice,bob
+''';
+      final snap = parseRemoteUsersBundle(raw);
+      final alice = snap.accounts.single;
+      expect(alice.groupName, 'alice');
+      expect(alice.groups, ['sudo', 'docker']);
+      expect(snap.failedLogins.single.user, 'bob');
+      expect(snap.failedLogins.single.host, '10.0.0.1');
+    });
+  });
+
+  group('isSafeUsername', () {
+    test('accepts common names', () {
+      expect(isSafeUsername('alice'), isTrue);
+      expect(isSafeUsername('_svc'), isTrue);
+      expect(isSafeUsername('bob-1'), isTrue);
+      expect(isSafeUsername('www-data'), isTrue);
+    });
+
+    test('rejects invalid', () {
+      expect(isSafeUsername(''), isFalse);
+      expect(isSafeUsername('Alice'), isFalse);
+      expect(isSafeUsername('1bob'), isFalse);
+      expect(isSafeUsername('a' * 33), isFalse);
+      expect(isSafeUsername('bob;rm'), isFalse);
+    });
+  });
+
+  group('user mutate commands', () {
+    test('append __EC and use sudo -n; password stays off argv', () {
+      expect(userAddCommand('alice'), contains("useradd -m 'alice'"));
+      expect(userAddCommand('alice'), contains(r'__EC:$?'));
+      expect(userAddCommand('alice'), isNot(contains('chpasswd')));
+
+      final withPass = userAddCommand('alice', password: 's3cret');
+      expect(withPass, contains('chpasswd'));
+      expect(withPass, contains('useradd'));
+      expect(withPass, isNot(contains('s3cret')));
+      expect(withPass, isNot(contains('alice:s3cret')));
+
+      expect(userSetPasswordCommand('alice'), contains('chpasswd'));
+      expect(userSetPasswordCommand('alice'), isNot(contains('alice:')));
+      expect(
+        utf8.decode(chpasswdStdinPayload('alice', 's3cret')),
+        'alice:s3cret\n',
+      );
+
+      expect(userDeleteCommand('alice'), contains('userdel -r'));
+      expect(userLockCommand('alice'), contains('usermod -L'));
+      expect(userUnlockCommand('alice'), contains('usermod -U'));
+      expect(sessionKickByTtyCommand('pts/0'), contains("pkill -KILL -t 'pts/0'"));
+    });
+
+    test('sudo -S keeps chpasswd payload after sudo password line', () {
+      final cmd = RemoteSudo.toStdinCommand(userSetPasswordCommand('alice'));
+      expect(cmd, contains("sudo -S -p ''"));
+      expect(cmd, isNot(contains('sudo -n')));
+      final stdin = <int>[
+        ...RemoteSudo.passwordStdin('sudo-secret'),
+        ...chpasswdStdinPayload('alice', 'user-secret'),
+      ];
+      expect(utf8.decode(stdin), 'sudo-secret\nalice:user-secret\n');
     });
   });
 }

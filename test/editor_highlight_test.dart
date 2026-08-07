@@ -105,6 +105,95 @@ void main() {
     });
   });
 
+  group('html highlight', () {
+    test('colors tags attributes strings comments', () {
+      final kinds = kindsOf(
+        '<!-- c --><div class="x">hi</div>\n',
+        EditorLanguage.html,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('div')), isTrue);
+      expect(kinds.any((k) => k.startsWith('key:') && k.contains('class')), isTrue);
+      expect(kinds.any((k) => k.startsWith('string:') && k.contains('x')), isTrue);
+    });
+  });
+
+  group('css highlight', () {
+    test('colors selectors properties comments', () {
+      final kinds = kindsOf(
+        '/* c */\n.foo { color: red; }\n',
+        EditorLanguage.css,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('foo')), isTrue);
+      expect(kinds.any((k) => k.startsWith('key:') && k.contains('color')), isTrue);
+    });
+  });
+
+  group('python highlight', () {
+    test('colors keywords strings comments', () {
+      final kinds = kindsOf(
+        "# c\ndef f():\n  return 'hi'\n",
+        EditorLanguage.python,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('def')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('return')), isTrue);
+      expect(kinds.any((k) => k.startsWith('string:')), isTrue);
+    });
+  });
+
+  group('dockerfile highlight', () {
+    test('colors instructions and comments', () {
+      final kinds = kindsOf(
+        '# base\nFROM alpine\nRUN echo hi\nCMD ["sh"]\n',
+        EditorLanguage.dockerfile,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('FROM')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('RUN')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('CMD')), isTrue);
+    });
+  });
+
+  group('markdown highlight', () {
+    test('colors headings fences and bold', () {
+      final kinds = kindsOf(
+        '# Title\n**bold**\n```\ncode\n```\n',
+        EditorLanguage.markdown,
+      );
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('Title')), isTrue);
+      expect(kinds.any((k) => k.startsWith('key:') && k.contains('bold')), isTrue);
+      expect(kinds.any((k) => k.startsWith('string:') && k.contains('code')), isTrue);
+    });
+  });
+
+  group('ini highlight', () {
+    test('colors sections keys values comments', () {
+      final kinds = kindsOf(
+        '; c\n[main]\nname=alice\n',
+        EditorLanguage.ini,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('main')), isTrue);
+      expect(kinds.any((k) => k.startsWith('key:') && k.contains('name')), isTrue);
+      expect(kinds.any((k) => k.startsWith('string:') && k.contains('alice')), isTrue);
+    });
+  });
+
+  group('xml highlight', () {
+    test('reuses html tag coloring', () {
+      final kinds = kindsOf(
+        '<!-- c --><root attr="x"/>\n',
+        EditorLanguage.xml,
+      );
+      expect(kinds.any((k) => k.startsWith('comment:')), isTrue);
+      expect(kinds.any((k) => k.startsWith('keyword:') && k.contains('root')), isTrue);
+      expect(kinds.any((k) => k.startsWith('key:') && k.contains('attr')), isTrue);
+      expect(kinds.any((k) => k.startsWith('string:') && k.contains('x')), isTrue);
+    });
+  });
+
   test('plain language stays uncolored beyond base', () {
     final span = buildHighlightedSpan(
       'hello',

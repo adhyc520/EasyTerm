@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../services/remote_process_list.dart';
@@ -60,6 +61,7 @@ class _TerminalAppState extends State<TerminalApp> {
     _wasConnected = widget.controller.connected && !widget.controller.dropped;
     widget.controller.addListener(_onController);
     widget.wm.addListener(_onWm);
+    widget.settings.addListener(_onSettings);
     if (!_usePrimary) {
       unawaited(_openShell());
     }
@@ -70,12 +72,61 @@ class _TerminalAppState extends State<TerminalApp> {
   void dispose() {
     widget.controller.removeListener(_onController);
     widget.wm.removeListener(_onWm);
+    widget.settings.removeListener(_onSettings);
     final shell = _shell;
     _shell = null;
     if (shell != null) {
       unawaited(shell.close());
     }
     super.dispose();
+  }
+
+  void _onSettings() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _bumpFont(double delta) async {
+    final s = widget.settings;
+    final next = (s.terminalFontSize + delta).clamp(6.0, 48.0);
+    if (next == s.terminalFontSize) return;
+    s.terminalFontSize = next;
+    await s.persist();
+  }
+
+  Future<void> _resetFont() async {
+    final s = widget.settings;
+    if (s.terminalFontSize == 14) return;
+    s.terminalFontSize = 14;
+    await s.persist();
+  }
+
+  Future<void> _openInFiles() async {
+    final fallback = () {
+      final cwd = widget.window.args['cwd']?.toString().trim();
+      if (cwd != null && cwd.isNotEmpty) return cwd;
+      return widget.controller.remoteCwd;
+    }();
+
+    var path = fallback;
+    if (widget.controller.connected && !widget.controller.dropped) {
+      try {
+        final raw = await widget.controller.runQueued(
+          r'pwd 2>/dev/null || echo "$PWD"',
+          timeout: const Duration(seconds: 2),
+        );
+        final line = raw
+            ?.split(RegExp(r'[\r\n]+'))
+            .map((s) => s.trim())
+            .firstWhere((s) => s.isNotEmpty, orElse: () => '');
+        if (line != null && line.startsWith('/')) {
+          path = line;
+        }
+      } catch (_) {
+        // best-effort; fall back to args / remoteCwd
+      }
+    }
+    if (!mounted) return;
+    widget.wm.open(DesktopAppType.files, args: {'cwd': path});
   }
 
   void _onWm() {
@@ -213,32 +264,84 @@ class _TerminalAppState extends State<TerminalApp> {
   Widget _buildSurface(Terminal term, {required bool connected}) {
     final c = widget.controller;
     final settings = widget.settings;
-    return DropTarget(
-      onDragDone: (detail) {
-        final paths = resolveDesktopDropPaths(detail);
-        if (paths.isEmpty) return;
-        final text = paths.join(' ');
-        if (_usePrimary) {
-          c.pasteRemoteInput(text);
-        } else {
-          _shell?.paste(text);
-        }
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.equal, meta: true): () =>
+            unawaited(_bumpFont(1)),
+        const SingleActivator(LogicalKeyboardKey.equal, control: true): () =>
+            unawaited(_bumpFont(1)),
+        const SingleActivator(LogicalKeyboardKey.add, meta: true): () =>
+            unawaited(_bumpFont(1)),
+        const SingleActivator(LogicalKeyboardKey.add, control: true): () =>
+            unawaited(_bumpFont(1)),
+        const SingleActivator(LogicalKeyboardKey.minus, meta: true): () =>
+            unawaited(_bumpFont(-1)),
+        const SingleActivator(LogicalKeyboardKey.minus, control: true): () =>
+            unawaited(_bumpFont(-1)),
+        const SingleActivator(LogicalKeyboardKey.digit0, meta: true): () =>
+            unawaited(_resetFont()),
+        const SingleActivator(LogicalKeyboardKey.digit0, control: true): () =>
+            unawaited(_resetFont()),
       },
-      child: TerminalSurface(
-        key: _surfaceKey,
-        terminal: term,
-        connected: connected,
-        connecting: c.connecting,
-        autofocus: widget.window.focused,
-        onReconnect: c.dropped ? () => unawaited(c.reconnect()) : null,
-        errorText: c.error,
-        themeBg: context.wb.terminalBg,
-        fontSize: settings.terminalFontSize,
-        fontFamily: settings.terminalFontFamily,
-        selectToCopy: settings.selectToCopy,
-        showLeftBorder: false,
-        tapRegionGroupId: widget.window.id,
-        releaseFocusOnTapOutside: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: context.wb.panel,
+            child: SizedBox(
+              height: 32,
+              child: Row(
+                children: [
+                  const SizedBox(width: 8),
+                  Text(
+                    '字号 ${settings.terminalFontSize.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: context.wb.textMuted,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => unawaited(_openInFiles()),
+                    child: const Text('在文件管理器打开'),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: DropTarget(
+              onDragDone: (detail) {
+                final paths = resolveDesktopDropPaths(detail);
+                if (paths.isEmpty) return;
+                final text = paths.join(' ');
+                if (_usePrimary) {
+                  c.pasteRemoteInput(text);
+                } else {
+                  _shell?.paste(text);
+                }
+              },
+              child: TerminalSurface(
+                key: _surfaceKey,
+                terminal: term,
+                connected: connected,
+                connecting: c.connecting,
+                autofocus: widget.window.focused,
+                onReconnect:
+                    c.dropped ? () => unawaited(c.reconnect()) : null,
+                errorText: c.error,
+                themeBg: context.wb.terminalBg,
+                fontSize: settings.terminalFontSize,
+                fontFamily: settings.terminalFontFamily,
+                selectToCopy: settings.selectToCopy,
+                showLeftBorder: false,
+                tapRegionGroupId: widget.window.id,
+                releaseFocusOnTapOutside: false,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

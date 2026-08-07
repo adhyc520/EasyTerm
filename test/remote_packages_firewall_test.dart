@@ -36,6 +36,121 @@ void main() {
       expect(isSafePackageName('../x'), isFalse);
     });
 
+    test('simulate remove apt dry-run', () {
+      expect(
+        simulateRemoveCommand(RemotePackageManager.apt, 'curl'),
+        contains("apt-get -s remove 'curl'"),
+      );
+      expect(
+        simulateRemoveCommand(RemotePackageManager.dnf, 'curl'),
+        contains('dnf remove'),
+      );
+      expect(
+        simulateRemoveCommand(RemotePackageManager.yum, 'curl'),
+        contains('yum'),
+      );
+      expect(
+        simulateRemoveCommand(RemotePackageManager.brew, 'curl'),
+        contains("brew uninstall --dry-run 'curl'"),
+      );
+      expect(simulateRemoveCommand(RemotePackageManager.pacman, 'curl'), isNull);
+      expect(simulateRemoveCommand(RemotePackageManager.zypper, 'curl'), isNull);
+      const raw = '''
+NOTE: This is only a simulation!
+Remv curl [8.5.0-2]
+Remv libcurl4 [8.5.0-2]
+''';
+      expect(
+        parseRemoveSimulation(RemotePackageManager.apt, raw),
+        ['curl', 'libcurl4'],
+      );
+      const brewRaw = '''
+Would uninstall 2 formulae:
+curl
+gettext
+''';
+      expect(
+        parseRemoveSimulation(RemotePackageManager.brew, brewRaw),
+        ['curl', 'gettext'],
+      );
+    });
+
+    test('install target with version', () {
+      expect(isSafePackageVersion('8.5.0-2'), isTrue);
+      expect(isSafePackageVersion('1.2.3~rc1'), isTrue);
+      expect(isSafePackageVersion('bad;rm'), isFalse);
+      expect(
+        packageInstallTarget(RemotePackageManager.apt, 'curl', version: '8.5.0'),
+        'curl=8.5.0',
+      );
+      expect(
+        packageInstallTarget(RemotePackageManager.dnf, 'curl', version: '8.5.0'),
+        'curl-8.5.0',
+      );
+      expect(
+        packageInstallTarget(
+          RemotePackageManager.brew,
+          'curl',
+          version: '8.5.0',
+        ),
+        'curl@8.5.0',
+      );
+      expect(
+        packageInstallTarget(
+          RemotePackageManager.pacman,
+          'curl',
+          version: '8.5.0',
+        ),
+        'curl',
+      );
+      final apt = mutatePackageStreamCommand(
+        RemotePackageManager.apt,
+        name: 'curl',
+        install: true,
+        version: '8.5.0-2',
+      );
+      expect(apt, contains("'curl=8.5.0-2'"));
+      final dnf = mutatePackageStreamCommand(
+        RemotePackageManager.dnf,
+        name: 'curl',
+        install: true,
+        version: '8.5.0',
+      );
+      expect(dnf, contains("'curl-8.5.0'"));
+      final brew = mutatePackageStreamCommand(
+        RemotePackageManager.brew,
+        name: 'curl',
+        install: true,
+        version: '8.5.0',
+      );
+      expect(brew, contains("'curl@8.5.0'"));
+    });
+
+    test('parse package version candidates', () {
+      const madison = '''
+curl | 8.5.0-2ubuntu2 | http://archive.ubuntu.com/ubuntu jammy/main amd64 Packages
+curl | 7.81.0-1 | http://archive.ubuntu.com/ubuntu jammy/main amd64 Packages
+''';
+      expect(
+        parsePackageVersions(RemotePackageManager.apt, madison),
+        ['8.5.0-2ubuntu2', '7.81.0-1'],
+      );
+      const dnfRaw = '8.5.0-1.fc39\n8.4.0-1.fc39\n';
+      expect(
+        parsePackageVersions(RemotePackageManager.dnf, dnfRaw),
+        ['8.5.0-1.fc39', '8.4.0-1.fc39'],
+      );
+      expect(
+        packageVersionsCommand(RemotePackageManager.apt, 'curl'),
+        contains('apt-cache madison'),
+      );
+      expect(
+        packageVersionsCommand(RemotePackageManager.dnf, 'curl'),
+        contains('repoquery'),
+      );
+      expect(packageVersionsCommand(RemotePackageManager.brew, 'curl'), isNull);
+    });
+
     test('mutate commands include sudo -n for apt', () {
       final cmd = mutatePackageCommand(
         RemotePackageManager.apt,
@@ -105,6 +220,69 @@ Status: active
       expect(isSafeFirewallPortSpec('22/tcp'), isTrue);
       expect(isSafeFirewallPortSpec('OpenSSH'), isTrue);
       expect(isSafeFirewallPortSpec('80;rm'), isFalse);
+    });
+
+    test('parse firewalld --list-all zone', () {
+      const raw = '''
+public (active)
+  target: default
+  icmp-block-inversion: no
+  interfaces: eth0
+  sources:
+  services: dhcpv6-client ssh http
+  ports: 8080/tcp 9090/udp
+  protocols:
+  forward: yes
+  masquerade: no
+  forward-ports:
+  source-ports:
+  icmp-blocks:
+  rich rules:
+''';
+      final zone = parseFirewalldZoneInfo(raw);
+      expect(zone, isNotNull);
+      expect(zone!.zone, 'public');
+      expect(zone.services, ['dhcpv6-client', 'ssh', 'http']);
+      expect(zone.ports, ['8080/tcp', '9090/udp']);
+      final withZones = parseFirewalldZoneInfo(
+        raw,
+        availableZones: ['public', 'trusted', 'drop'],
+      );
+      expect(withZones!.availableZones, ['public', 'trusted', 'drop']);
+    });
+
+    test('parse firewalld zones list', () {
+      expect(
+        parseFirewalldZonesList('public trusted drop dmz'),
+        ['public', 'trusted', 'drop', 'dmz'],
+      );
+      expect(isSafeFirewalldZoneName('public'), isTrue);
+      expect(isSafeFirewalldZoneName('dmz'), isTrue);
+      expect(isSafeFirewalldZoneName('pub;rm'), isFalse);
+      expect(
+        firewalldSetDefaultZoneCommand('trusted'),
+        contains("--set-default-zone='trusted'"),
+      );
+    });
+
+    test('safe firewalld service names', () {
+      expect(isSafeFirewalldServiceName('http'), isTrue);
+      expect(isSafeFirewalldServiceName('dhcpv6-client'), isTrue);
+      expect(isSafeFirewalldServiceName('HTTP'), isFalse);
+      expect(isSafeFirewalldServiceName('http;rm'), isFalse);
+    });
+
+    test('firewalld mutate helpers', () {
+      expect(
+        firewalldAddServiceCommand('http'),
+        contains("--add-service='http'"),
+      );
+      expect(firewalldAddServiceCommand('http'), contains('--reload'));
+      expect(
+        firewalldAddPortCommand('8080/tcp'),
+        contains("--add-port='8080/tcp'"),
+      );
+      expect(firewalldReloadCommand(), contains('--reload'));
     });
 
     test('toStdinCommand rewrites sudo -n', () {

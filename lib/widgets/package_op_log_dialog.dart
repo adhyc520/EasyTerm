@@ -10,13 +10,15 @@ import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 import 'sudo_password_dialog.dart';
 
-/// 弹出安装/卸载进度日志框；成功返回 `true`，失败 `false`，取消 `null`。
+/// 弹出安装/卸载/升级进度日志框；成功返回 `true`，失败 `false`，取消 `null`。
 Future<bool?> showPackageOpLogDialog(
   BuildContext context, {
   required SshWorkspaceController controller,
   required RemotePackageManager manager,
   required String packageName,
   required bool install,
+  String? version,
+  bool upgradeAll = false,
 }) {
   return showDialog<bool>(
     context: context,
@@ -26,6 +28,8 @@ Future<bool?> showPackageOpLogDialog(
       manager: manager,
       packageName: packageName,
       install: install,
+      version: version,
+      upgradeAll: upgradeAll,
     ),
   );
 }
@@ -36,12 +40,16 @@ class _PackageOpLogDialog extends StatefulWidget {
     required this.manager,
     required this.packageName,
     required this.install,
+    this.version,
+    this.upgradeAll = false,
   });
 
   final SshWorkspaceController controller;
   final RemotePackageManager manager;
   final String packageName;
   final bool install;
+  final String? version;
+  final bool upgradeAll;
 
   @override
   State<_PackageOpLogDialog> createState() => _PackageOpLogDialogState();
@@ -59,8 +67,14 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
   bool? _success;
   String? _status;
 
-  String get _title =>
-      widget.install ? '安装 ${widget.packageName}' : '卸载 ${widget.packageName}';
+  String get _title {
+    if (widget.upgradeAll) return '升级全部软件包';
+    final ver = widget.version?.trim() ?? '';
+    final label = widget.install && ver.isNotEmpty
+        ? '${widget.packageName}@$ver'
+        : widget.packageName;
+    return widget.install ? '安装 $label' : '卸载 $label';
+  }
 
   @override
   void initState() {
@@ -130,12 +144,18 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
 
       final usePwd = pwd != null && pwd.isNotEmpty;
       final sudoPassword = usePwd ? pwd : null;
-      final cmd = mutatePackageStreamCommand(
-        widget.manager,
-        name: widget.packageName,
-        install: widget.install,
-        sudoWithStdin: usePwd,
-      );
+      final cmd = widget.upgradeAll
+          ? upgradeAllPackagesStreamCommand(
+              widget.manager,
+              sudoWithStdin: usePwd,
+            )
+          : mutatePackageStreamCommand(
+              widget.manager,
+              name: widget.packageName,
+              install: widget.install,
+              version: widget.install ? widget.version : null,
+              sudoWithStdin: usePwd,
+            );
       _appendLocal('\$ $cmd');
       if (usePwd) _appendLocal('(已注入 sudo 密码)');
       setState(() {});
@@ -192,7 +212,9 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
         setState(() {
           _running = false;
           _success = true;
-          _status = widget.install ? '安装完成' : '卸载完成';
+          _status = widget.upgradeAll
+              ? '升级完成'
+              : (widget.install ? '安装完成' : '卸载完成');
           _appendLocal('—— 退出码 0 ——');
         });
         _scrollToEnd();

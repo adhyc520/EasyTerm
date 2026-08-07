@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
@@ -8,7 +9,10 @@ import '../../services/remote_network.dart';
 import '../../services/remote_process_list.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../widgets/destructive_action_dialog.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_monitor_widgets.dart';
+import '../widgets/desktop_scrollable_actions.dart';
 
 enum _ProcSort { name, pid, user, cpu, memory }
 
@@ -46,8 +50,13 @@ class _TaskManagerAppState extends State<TaskManagerApp>
   _ProcSort _procSort = _ProcSort.memory;
   bool _procSortAsc = false;
   int? _selectedPid;
+  bool _detailOpen = false;
+  int? _detailPid;
+  Future<RemoteProcessDetail?>? _detailFuture;
   bool _killing = false;
   final _procFilterCtrl = TextEditingController();
+  final _procFilterFocus = FocusNode();
+  final _procListFocus = FocusNode();
 
   // Performance
   RemoteHostSnapshot? _snap;
@@ -78,6 +87,9 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   bool _loading = false;
   String? _error;
+  bool _userPaused = false;
+  Duration _interval = const Duration(seconds: 3);
+  DateTime? _lastTickAt;
 
   @override
   void initState() {
@@ -97,6 +109,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     _tabs.removeListener(_onTab);
     _tabs.dispose();
     _procFilterCtrl.dispose();
+    _procFilterFocus.dispose();
+    _procListFocus.dispose();
     _svcFilterCtrl.dispose();
     _netFilterCtrl.dispose();
     widget.window.onConnectionRestored = null;
@@ -115,6 +129,11 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     if (_tabs.indexIsChanging) return;
     _armTimer();
     unawaited(_tick());
+    if (_tabs.index == 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _procListFocus.requestFocus();
+      });
+    }
   }
 
   void _onWm() {
@@ -126,23 +145,11 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     if (mounted) setState(() {});
   }
 
-  bool get _paused => widget.window.state == WindowState.minimized;
+  bool get _paused =>
+      widget.window.state == WindowState.minimized || _userPaused;
 
   bool get _connected =>
       widget.controller.connected && !widget.controller.dropped;
-
-  Duration get _interval {
-    switch (_tabs.index) {
-      case 1:
-        return const Duration(seconds: 2);
-      case 2:
-        return const Duration(seconds: 3);
-      case 3:
-        return const Duration(seconds: 8);
-      default:
-        return const Duration(seconds: 3);
-    }
-  }
 
   void _armTimer() {
     _timer?.cancel();
@@ -204,12 +211,20 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     setState(() {
       _processes = snap.processes;
       _loading = false;
+      _lastTickAt = DateTime.now();
       _error = snap.processes.isEmpty && snap.os == RemoteOsKind.unknown
           ? '无法识别远端系统（需 Linux 或 Windows OpenSSH）'
           : null;
       if (_selectedPid != null &&
           !snap.processes.any((p) => p.pid == _selectedPid)) {
         _selectedPid = null;
+      }
+      if (_detailOpen &&
+          (_detailPid == null ||
+              !snap.processes.any((p) => p.pid == _detailPid))) {
+        _detailOpen = false;
+        _detailPid = null;
+        _detailFuture = null;
       }
     });
   }
@@ -247,6 +262,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       if (snap != null) _snap = snap;
       if (gpu != null) _gpu = gpu;
       _loading = false;
+      _lastTickAt = DateTime.now();
       _error = null;
     });
   }
@@ -290,6 +306,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       _netPrev = prev;
       _netSnap = snap;
       _loading = false;
+      _lastTickAt = DateTime.now();
       _error = snap.interfaces.isEmpty && snap.listeners.isEmpty
           ? (_os == RemoteOsKind.windows
               ? '无网络数据（需 PowerShell / Get-NetAdapterStatistics）'
@@ -313,6 +330,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     setState(() {
       _services = snap.services;
       _loading = false;
+      _lastTickAt = DateTime.now();
       _error = snap.services.isEmpty
           ? (_os == RemoteOsKind.windows
               ? '无服务数据（需 PowerShell / Get-Service）'
@@ -462,6 +480,101 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     widget.wm.open(DesktopAppType.browser, args: {'url': target});
   }
 
+  void _viewProcessListeners(int pid) {
+    final q = '$pid';
+    setState(() {
+      _netFilter = q;
+      _netFilterCtrl.text = q;
+      _netFilterCtrl.selection = TextSelection.collapsed(offset: q.length);
+      _tabs.index = 2;
+    });
+  }
+
+  void _viewListenerProcess(int pid) {
+    final q = '$pid';
+    setState(() {
+      _selectedPid = pid;
+      _procFilter = q;
+      _procFilterCtrl.text = q;
+      _procFilterCtrl.selection = TextSelection.collapsed(offset: q.length);
+      _tabs.index = 0;
+    });
+  }
+
+  Future<void> _copyText(String label, String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已复制$label'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  Future<void> _copyPid(int pid) async {
+    await _copyText(' PID $pid', '$pid');
+  }
+
+  Future<void> _copyEndpoint(RemoteListenSocket sock) async {
+    await _copyText('端点', sock.endpoint);
+  }
+
+  Future<void> _showProcessDetail(RemoteProcess process) async {
+    final os = _os ?? RemoteOsKind.unknown;
+    setState(() {
+      _selectedPid = process.pid;
+      _detailOpen = true;
+      _detailPid = process.pid;
+      _detailFuture = fetchRemoteProcessDetail(
+        widget.controller,
+        pid: process.pid,
+        os: os,
+      );
+    });
+  }
+
+  void _closeProcessDetail() {
+    if (!_detailOpen) return;
+    setState(() {
+      _detailOpen = false;
+      _detailPid = null;
+      _detailFuture = null;
+    });
+  }
+
+  void _clearProcSelection() {
+    setState(() {
+      if (_detailOpen) {
+        _detailOpen = false;
+        _detailPid = null;
+        _detailFuture = null;
+      } else {
+        _selectedPid = null;
+      }
+    });
+  }
+
+  void _openProcessLogs(int pid) {
+    widget.wm.open(
+      DesktopAppType.logs,
+      args: {'source': 'journal', 'pid': '$pid'},
+    );
+  }
+
+  void _openProcessCwd(int pid) {
+    if (_os != RemoteOsKind.linux) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('仅 Linux 支持打开进程工作目录')),
+      );
+      return;
+    }
+    widget.wm.open(
+      DesktopAppType.files,
+      args: {'cwd': '/proc/$pid/cwd'},
+    );
+  }
+
   Future<void> _endTask({int? pidOverride}) async {
     final pid = pidOverride ?? _selectedPid;
     final os = _os;
@@ -474,34 +587,12 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       }
     }
     final name = proc?.name ?? 'PID $pid';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final wb = ctx.wb;
-        return AlertDialog(
-          backgroundColor: wb.panelElevated,
-          title: Text('结束进程', style: TextStyle(color: wb.primaryText)),
-          content: Text(
-            '确定结束「$name」(PID $pid)？\n未保存的数据可能丢失。',
-            style: TextStyle(color: wb.secondaryText, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFEF4444),
-              ),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('结束任务'),
-            ),
-          ],
-        );
-      },
+    final result = await confirmKillProcess(
+      context,
+      name: name,
+      pid: pid,
     );
-    if (ok != true || !mounted) return;
+    if (result == null || !mounted) return;
     setState(() {
       _killing = true;
       _selectedPid = pid;
@@ -511,10 +602,15 @@ class _TaskManagerAppState extends State<TaskManagerApp>
         widget.controller,
         os: os,
         pid: pid,
-        force: true,
+        force: result == true,
       );
       if (!mounted) return;
-      setState(() => _selectedPid = null);
+      setState(() {
+        _selectedPid = null;
+        _detailOpen = false;
+        _detailPid = null;
+        _detailFuture = null;
+      });
       await _loadProcesses();
     } finally {
       if (mounted) setState(() => _killing = false);
@@ -584,6 +680,20 @@ class _TaskManagerAppState extends State<TaskManagerApp>
         RemoteOsKind.unknown || null => '—',
       };
 
+  RemoteProcess? get _detailProcess {
+    final pid = _detailPid;
+    if (!_detailOpen || pid == null) return null;
+    for (final p in _processes) {
+      if (p.pid == pid) return p;
+    }
+    return null;
+  }
+
+  bool get _isWindows => _os == RemoteOsKind.windows;
+
+  bool get _windowsHasCpu =>
+      _isWindows && _processes.any((p) => p.cpuPercent != null);
+
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
@@ -596,6 +706,18 @@ class _TaskManagerAppState extends State<TaskManagerApp>
             osLabel: _osLabel,
             loading: _loading,
             connected: _connected,
+            paused: _userPaused,
+            interval: _interval,
+            lastTickAt: _lastTickAt,
+            live: !_paused && _connected,
+            onPausedChanged: (v) {
+              setState(() => _userPaused = v);
+              _armTimer();
+            },
+            onIntervalChanged: (d) {
+              setState(() => _interval = d);
+              _armTimer();
+            },
             onRefresh: () => unawaited(_tick()),
           ),
           Material(
@@ -631,6 +753,9 @@ class _TaskManagerAppState extends State<TaskManagerApp>
               children: [
                 _ProcessesPane(
                   filterCtrl: _procFilterCtrl,
+                  filterFocus: _procFilterFocus,
+                  listFocus: _procListFocus,
+                  listAutofocus: _tabs.index == 0,
                   filter: _procFilter,
                   onFilter: (v) => setState(() => _procFilter = v),
                   rows: _visibleProcs,
@@ -639,8 +764,11 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                   sortAsc: _procSortAsc,
                   onSort: _toggleProcSort,
                   selectedPid: _selectedPid,
-                  showUser: _os != RemoteOsKind.windows,
-                  showCpu: _os != RemoteOsKind.windows,
+                  showUser: true,
+                  showCpu: !_isWindows || _windowsHasCpu,
+                  showWindowsUnavailableBanner:
+                      _isWindows && !_windowsHasCpu,
+                  isLinux: _os == RemoteOsKind.linux,
                   connected: _connected,
                   canKill: _connected &&
                       _selectedPid != null &&
@@ -648,9 +776,19 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                       _os != RemoteOsKind.unknown &&
                       !_killing,
                   killing: _killing,
+                  detailOpen: _detailOpen,
+                  detailProcess: _detailProcess,
+                  detailFuture: _detailFuture,
                   onSelect: (pid) => setState(() => _selectedPid = pid),
+                  onClearSelection: _clearProcSelection,
+                  onCloseDetail: _closeProcessDetail,
+                  onOpenDetail: (p) => unawaited(_showProcessDetail(p)),
                   onEndTask: () => unawaited(_endTask()),
                   onEndTaskPid: (pid) => unawaited(_endTask(pidOverride: pid)),
+                  onCopyPid: (pid) => unawaited(_copyPid(pid)),
+                  onOpenLogs: _openProcessLogs,
+                  onOpenCwd: _openProcessCwd,
+                  onViewListeners: _viewProcessListeners,
                 ),
                 _PerformancePane(
                   snap: _snap,
@@ -676,6 +814,8 @@ class _TaskManagerAppState extends State<TaskManagerApp>
                   onHideLoopback: (v) => setState(() => _netHideLoopback = v),
                   connected: _connected,
                   onOpenInBrowser: _openListenerInBrowser,
+                  onCopyEndpoint: (sock) => unawaited(_copyEndpoint(sock)),
+                  onViewProcess: _viewListenerProcess,
                 ),
                 _ServicesPane(
                   filterCtrl: _svcFilterCtrl,
@@ -714,12 +854,24 @@ class _TitleBar extends StatelessWidget {
     required this.osLabel,
     required this.loading,
     required this.connected,
+    required this.paused,
+    required this.interval,
+    required this.lastTickAt,
+    required this.live,
+    required this.onPausedChanged,
+    required this.onIntervalChanged,
     required this.onRefresh,
   });
 
   final String osLabel;
   final bool loading;
   final bool connected;
+  final bool paused;
+  final Duration interval;
+  final DateTime? lastTickAt;
+  final bool live;
+  final ValueChanged<bool> onPausedChanged;
+  final ValueChanged<Duration> onIntervalChanged;
   final VoidCallback onRefresh;
 
   @override
@@ -752,6 +904,14 @@ class _TitleBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          LastUpdatedChip(lastTickAt: lastTickAt, live: live),
+          const SizedBox(width: 4),
+          PauseToggle(
+            paused: paused,
+            onPausedChanged: onPausedChanged,
+            interval: interval,
+            onIntervalChanged: onIntervalChanged,
+          ),
           if (loading)
             const SizedBox(
               width: 18,
@@ -778,6 +938,9 @@ class _TitleBar extends StatelessWidget {
 class _ProcessesPane extends StatelessWidget {
   const _ProcessesPane({
     required this.filterCtrl,
+    required this.filterFocus,
+    required this.listFocus,
+    required this.listAutofocus,
     required this.filter,
     required this.onFilter,
     required this.rows,
@@ -788,15 +951,30 @@ class _ProcessesPane extends StatelessWidget {
     required this.selectedPid,
     required this.showUser,
     required this.showCpu,
+    required this.showWindowsUnavailableBanner,
+    required this.isLinux,
     required this.connected,
     required this.canKill,
     required this.killing,
+    required this.detailOpen,
+    required this.detailProcess,
+    required this.detailFuture,
     required this.onSelect,
+    required this.onClearSelection,
+    required this.onCloseDetail,
+    required this.onOpenDetail,
     required this.onEndTask,
     required this.onEndTaskPid,
+    required this.onCopyPid,
+    required this.onOpenLogs,
+    required this.onOpenCwd,
+    required this.onViewListeners,
   });
 
   final TextEditingController filterCtrl;
+  final FocusNode filterFocus;
+  final FocusNode listFocus;
+  final bool listAutofocus;
   final String filter;
   final ValueChanged<String> onFilter;
   final List<RemoteProcess> rows;
@@ -807,12 +985,45 @@ class _ProcessesPane extends StatelessWidget {
   final int? selectedPid;
   final bool showUser;
   final bool showCpu;
+  final bool showWindowsUnavailableBanner;
+  final bool isLinux;
   final bool connected;
   final bool canKill;
   final bool killing;
+  final bool detailOpen;
+  final RemoteProcess? detailProcess;
+  final Future<RemoteProcessDetail?>? detailFuture;
   final ValueChanged<int> onSelect;
+  final VoidCallback onClearSelection;
+  final VoidCallback onCloseDetail;
+  final ValueChanged<RemoteProcess> onOpenDetail;
   final VoidCallback onEndTask;
   final ValueChanged<int> onEndTaskPid;
+  final ValueChanged<int> onCopyPid;
+  final ValueChanged<int> onOpenLogs;
+  final ValueChanged<int> onOpenCwd;
+  final ValueChanged<int> onViewListeners;
+
+  void _moveSelection(int delta) {
+    if (rows.isEmpty) return;
+    final cur = selectedPid == null
+        ? -1
+        : rows.indexWhere((p) => p.pid == selectedPid);
+    var next = cur < 0 ? (delta > 0 ? 0 : rows.length - 1) : cur + delta;
+    if (next < 0) next = 0;
+    if (next >= rows.length) next = rows.length - 1;
+    onSelect(rows[next].pid);
+  }
+
+  void _openSelectedDetail() {
+    if (selectedPid == null) return;
+    for (final p in rows) {
+      if (p.pid == selectedPid) {
+        onOpenDetail(p);
+        return;
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -833,6 +1044,7 @@ class _ProcessesPane extends StatelessWidget {
               Expanded(
                 child: _FilterField(
                   controller: filterCtrl,
+                  focusNode: filterFocus,
                   hint: '筛选名称 / PID / 用户',
                   onChanged: onFilter,
                 ),
@@ -855,54 +1067,206 @@ class _ProcessesPane extends StatelessWidget {
             ],
           ),
         ),
-        _ProcHeader(
-          sort: sort,
-          sortAsc: sortAsc,
-          showUser: showUser,
-          showCpu: showCpu,
-          onSort: onSort,
-        ),
+        if (totalCount >= 800)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '仅显示前 800 个进程，请用筛选缩小范围',
+                style: TextStyle(fontSize: 11, color: wb.textMuted),
+              ),
+            ),
+          ),
+        if (showWindowsUnavailableBanner)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Windows 下 CPU 列不可用（需 PowerShell Get-Process）',
+                style: TextStyle(fontSize: 11, color: wb.textMuted),
+              ),
+            ),
+          ),
         Expanded(
-          child: rows.isEmpty
-              ? Center(
-                  child: Text(
-                    connected ? '无匹配进程' : '未连接',
-                    style: TextStyle(color: wb.textMuted),
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: rows.length,
-                  itemBuilder: (context, i) {
-                    final p = rows[i];
-                    return _ProcRow(
-                      process: p,
-                      selected: p.pid == selectedPid,
-                      showUser: showUser,
-                      showCpu: showCpu,
-                      onTap: () => onSelect(p.pid),
-                      onDoubleTap: () => onEndTaskPid(p.pid),
-                      onSecondaryTapDown: (details) async {
-                        onSelect(p.pid);
-                        final action = await showMenu<String>(
-                          context: context,
-                          position: RelativeRect.fromLTRB(
-                            details.globalPosition.dx,
-                            details.globalPosition.dy,
-                            details.globalPosition.dx,
-                            details.globalPosition.dy,
-                          ),
-                          items: const [
-                            PopupMenuItem(
-                              value: 'kill',
-                              child: Text('结束任务'),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final table = Column(
+                      children: [
+                        _ProcHeader(
+                          sort: sort,
+                          sortAsc: sortAsc,
+                          showUser: showUser,
+                          showCpu: showCpu,
+                          onSort: onSort,
+                        ),
+                        Expanded(
+                          child: Focus(
+                            focusNode: listFocus,
+                            autofocus: listAutofocus,
+                            child: CallbackShortcuts(
+                              bindings: {
+                                const SingleActivator(
+                                  LogicalKeyboardKey.arrowUp,
+                                ): () => _moveSelection(-1),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.arrowDown,
+                                ): () => _moveSelection(1),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                ): _openSelectedDetail,
+                                const SingleActivator(
+                                  LogicalKeyboardKey.delete,
+                                ): () {
+                                  if (selectedPid != null) {
+                                    onEndTaskPid(selectedPid!);
+                                  }
+                                },
+                                const SingleActivator(
+                                  LogicalKeyboardKey.slash,
+                                ): () => filterFocus.requestFocus(),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.keyF,
+                                  control: true,
+                                ): () => filterFocus.requestFocus(),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.keyF,
+                                  meta: true,
+                                ): () => filterFocus.requestFocus(),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.escape,
+                                ): onClearSelection,
+                              },
+                              child: rows.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        connected ? '无匹配进程' : '未连接',
+                                        style: TextStyle(color: wb.textMuted),
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      itemCount: rows.length,
+                                      itemBuilder: (context, i) {
+                                        final p = rows[i];
+                                        return _ProcRow(
+                                          process: p,
+                                          selected: p.pid == selectedPid,
+                                          showUser: showUser,
+                                          showCpu: showCpu,
+                                          onTap: () {
+                                            onSelect(p.pid);
+                                            listFocus.requestFocus();
+                                          },
+                                          onDoubleTap: () => onOpenDetail(p),
+                                          onSecondaryTapDown: (details) async {
+                                            onSelect(p.pid);
+                                            final action =
+                                                await showMenu<String>(
+                                              context: context,
+                                              position: RelativeRect.fromLTRB(
+                                                details.globalPosition.dx,
+                                                details.globalPosition.dy,
+                                                details.globalPosition.dx,
+                                                details.globalPosition.dy,
+                                              ),
+                                              items: [
+                                                const PopupMenuItem(
+                                                  value: 'detail',
+                                                  child: Text('查看详情'),
+                                                ),
+                                                const PopupMenuItem(
+                                                  value: 'listeners',
+                                                  child: Text('查看监听端口'),
+                                                ),
+                                                PopupMenuItem(
+                                                  value: 'copyPid',
+                                                  child:
+                                                      Text('复制 PID ${p.pid}'),
+                                                ),
+                                                if (isLinux)
+                                                  const PopupMenuItem(
+                                                    value: 'logs',
+                                                    child: Text('查看日志'),
+                                                  ),
+                                                if (isLinux)
+                                                  const PopupMenuItem(
+                                                    value: 'cwd',
+                                                    child: Text('打开所在目录'),
+                                                  ),
+                                                const PopupMenuItem(
+                                                  value: 'kill',
+                                                  child: Text('结束任务'),
+                                                ),
+                                              ],
+                                            );
+                                            if (!context.mounted ||
+                                                action == null) {
+                                              return;
+                                            }
+                                            switch (action) {
+                                              case 'detail':
+                                                onOpenDetail(p);
+                                              case 'listeners':
+                                                onViewListeners(p.pid);
+                                              case 'copyPid':
+                                                onCopyPid(p.pid);
+                                              case 'logs':
+                                                onOpenLogs(p.pid);
+                                              case 'cwd':
+                                                onOpenCwd(p.pid);
+                                              case 'kill':
+                                                onEndTaskPid(p.pid);
+                                            }
+                                          },
+                                        );
+                                      },
+                                    ),
                             ),
-                          ],
-                        );
-                        if (action == 'kill') onEndTaskPid(p.pid);
-                      },
+                          ),
+                        ),
+                      ],
                     );
+                    if (constraints.maxWidth < 700) {
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minWidth: 700,
+                            maxHeight: constraints.maxHeight,
+                          ),
+                          child: SizedBox(
+                            width: 700,
+                            height: constraints.maxHeight,
+                            child: table,
+                          ),
+                        ),
+                      );
+                    }
+                    return table;
                   },
                 ),
+              ),
+              if (detailOpen && detailProcess != null)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  width: 280,
+                  child: _ProcessDetailPanel(
+                    process: detailProcess!,
+                    detailFuture: detailFuture,
+                    canKill: canKill,
+                    killing: killing,
+                    onClose: onCloseDetail,
+                    onEndTask: () => onEndTaskPid(detailProcess!.pid),
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );
@@ -1482,6 +1846,8 @@ class _NetworkPane extends StatelessWidget {
     required this.onHideLoopback,
     required this.connected,
     required this.onOpenInBrowser,
+    required this.onCopyEndpoint,
+    required this.onViewProcess,
   });
 
   final RemoteNetworkSnapshot? snap;
@@ -1501,15 +1867,27 @@ class _NetworkPane extends StatelessWidget {
   final ValueChanged<bool> onHideLoopback;
   final bool connected;
   final ValueChanged<RemoteListenSocket> onOpenInBrowser;
+  final ValueChanged<RemoteListenSocket> onCopyEndpoint;
+  final ValueChanged<int> onViewProcess;
 
-  List<double> _norm(List<double> hist) {
+  List<double> _norm(List<double> hist, [double? sharedMax]) {
     if (hist.isEmpty) return hist;
+    var max = sharedMax ?? 0.0;
+    if (sharedMax == null) {
+      for (final v in hist) {
+        if (v > max) max = v;
+      }
+    }
+    if (max <= 0) return List<double>.filled(hist.length, 0);
+    return [for (final v in hist) (v / max).clamp(0.0, 1.0)];
+  }
+
+  double _peak(List<double> hist) {
     var max = 0.0;
     for (final v in hist) {
       if (v > max) max = v;
     }
-    if (max <= 0) return List<double>.filled(hist.length, 0);
-    return [for (final v in hist) (v / max).clamp(0.0, 1.0)];
+    return max;
   }
 
   @override
@@ -1532,6 +1910,17 @@ class _NetworkPane extends StatelessWidget {
       }
     }
 
+    // Shared Y-scale so rx/tx sparklines are comparable.
+    var jointMax = 0.0;
+    for (final v in rxHist) {
+      if (v > jointMax) jointMax = v;
+    }
+    for (final v in txHist) {
+      if (v > jointMax) jointMax = v;
+    }
+    final rxPeak = _peak(rxHist);
+    final txPeak = _peak(txHist);
+
     // Two Expanded regions share leftover height after the fixed filter/chrome
     // so short TabBarView viewports never RenderFlex-overflow.
     return Column(
@@ -1551,12 +1940,18 @@ class _NetworkPane extends StatelessWidget {
                     _PerfCard(
                       label: '下行',
                       value: formatNetRate(rxSum),
-                      history: _norm(rxHist),
+                      history: _norm(rxHist, jointMax),
+                      subtitle: rxPeak > 0
+                          ? '峰值 ${formatNetRate(rxPeak)}'
+                          : null,
                     ),
                     _PerfCard(
                       label: '上行',
                       value: formatNetRate(txSum),
-                      history: _norm(txHist),
+                      history: _norm(txHist, jointMax),
+                      subtitle: txPeak > 0
+                          ? '峰值 ${formatNetRate(txPeak)}'
+                          : null,
                     ),
                     _PerfCard(
                       label: '已建立',
@@ -1656,156 +2051,202 @@ class _NetworkPane extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [
-              _NetHeader(
-                label: '协议',
-                width: 56,
-                active: sort == _NetSort.protocol,
-                asc: sortAsc,
-                onTap: () => onSort(_NetSort.protocol),
-              ),
-              _NetHeader(
-                label: '端口',
-                width: 64,
-                active: sort == _NetSort.port,
-                asc: sortAsc,
-                onTap: () => onSort(_NetSort.port),
-              ),
-              Expanded(
-                child: _NetHeader(
-                  label: '地址',
-                  active: sort == _NetSort.address,
-                  asc: sortAsc,
-                  onTap: () => onSort(_NetSort.address),
-                ),
-              ),
-              _NetHeader(
-                label: '进程',
-                width: 72,
-                alignEnd: true,
-                active: sort == _NetSort.process,
-                asc: sortAsc,
-                onTap: () => onSort(_NetSort.process),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
         Expanded(
           flex: 3,
-          child: !connected && s == null
-              ? Center(
-                  child: Text('未连接', style: TextStyle(color: wb.textMuted)),
-                )
-              : listeners.isEmpty
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final listBody = !connected && s == null
                   ? Center(
                       child: Text(
-                        connected ? '无匹配监听端口' : '未连接',
+                        '未连接',
                         style: TextStyle(color: wb.textMuted),
                       ),
                     )
-                  : ListView.builder(
-                      itemCount: listeners.length,
-                      itemBuilder: (context, i) {
-                        final sock = listeners[i];
-                        final canBrowse = sock.browserTarget != null;
-                        return Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onDoubleTap: canBrowse
-                                ? () => onOpenInBrowser(sock)
-                                : null,
-                            onSecondaryTapDown: canBrowse
-                                ? (d) async {
-                                    final selected = await showMenu<String>(
-                                      context: context,
-                                      position: RelativeRect.fromLTRB(
-                                        d.globalPosition.dx,
-                                        d.globalPosition.dy,
-                                        d.globalPosition.dx,
-                                        d.globalPosition.dy,
-                                      ),
-                                      items: const [
-                                        PopupMenuItem(
-                                          value: 'browser',
-                                          child: Text('在浏览器中打开'),
-                                        ),
-                                      ],
-                                    );
-                                    if (selected == 'browser') {
-                                      onOpenInBrowser(sock);
-                                    }
-                                  }
-                                : null,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 1,
-                              ),
-                              child: Row(
-                                children: [
-                                  SizedBox(
-                                    width: 56,
-                                    child: Text(
-                                      sock.protocol,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                        color: wb.secondaryText,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 64,
-                                    child: Text(
-                                      '${sock.port}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                        fontWeight: FontWeight.w600,
-                                        color: wb.primaryText,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(
-                                      sock.address,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                        color: wb.secondaryText,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 72,
-                                    child: Text(
-                                      sock.process ??
-                                          (sock.pid != null
-                                              ? '${sock.pid}'
-                                              : '—'),
-                                      textAlign: TextAlign.right,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                        color: wb.textMuted,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                  : listeners.isEmpty
+                      ? Center(
+                          child: Text(
+                            connected ? '无匹配监听端口' : '未连接',
+                            style: TextStyle(color: wb.textMuted),
                           ),
+                        )
+                      : ListView.builder(
+                          itemCount: listeners.length,
+                          itemBuilder: (context, i) {
+                            final sock = listeners[i];
+                            final canBrowse = sock.browserTarget != null;
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onDoubleTap: canBrowse
+                                    ? () => onOpenInBrowser(sock)
+                                    : null,
+                                onSecondaryTapDown: (d) async {
+                                  final selected = await showMenu<String>(
+                                    context: context,
+                                    position: RelativeRect.fromLTRB(
+                                      d.globalPosition.dx,
+                                      d.globalPosition.dy,
+                                      d.globalPosition.dx,
+                                      d.globalPosition.dy,
+                                    ),
+                                    items: [
+                                      const PopupMenuItem(
+                                        value: 'copy',
+                                        child: Text('复制端点'),
+                                      ),
+                                      if (sock.pid != null)
+                                        const PopupMenuItem(
+                                          value: 'process',
+                                          child: Text('查看进程'),
+                                        ),
+                                      if (canBrowse)
+                                        const PopupMenuItem(
+                                          value: 'browser',
+                                          child: Text('在浏览器打开'),
+                                        ),
+                                    ],
+                                  );
+                                  if (!context.mounted || selected == null) {
+                                    return;
+                                  }
+                                  switch (selected) {
+                                    case 'copy':
+                                      onCopyEndpoint(sock);
+                                    case 'process':
+                                      final pid = sock.pid;
+                                      if (pid != null) onViewProcess(pid);
+                                    case 'browser':
+                                      onOpenInBrowser(sock);
+                                  }
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 1,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 56,
+                                        child: Text(
+                                          sock.protocol,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontFamily: 'monospace',
+                                            color: wb.secondaryText,
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 64,
+                                        child: Text(
+                                          '${sock.port}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontFamily: 'monospace',
+                                            fontWeight: FontWeight.w600,
+                                            color: wb.primaryText,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          sock.address,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontFamily: 'monospace',
+                                            color: wb.secondaryText,
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 72,
+                                        child: Text(
+                                          sock.process ??
+                                              (sock.pid != null
+                                                  ? '${sock.pid}'
+                                                  : '—'),
+                                          textAlign: TextAlign.right,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontFamily: 'monospace',
+                                            color: wb.textMuted,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         );
-                      },
+              final table = Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        _NetHeader(
+                          label: '协议',
+                          width: 56,
+                          active: sort == _NetSort.protocol,
+                          asc: sortAsc,
+                          onTap: () => onSort(_NetSort.protocol),
+                        ),
+                        _NetHeader(
+                          label: '端口',
+                          width: 64,
+                          active: sort == _NetSort.port,
+                          asc: sortAsc,
+                          onTap: () => onSort(_NetSort.port),
+                        ),
+                        Expanded(
+                          child: _NetHeader(
+                            label: '地址',
+                            active: sort == _NetSort.address,
+                            asc: sortAsc,
+                            onTap: () => onSort(_NetSort.address),
+                          ),
+                        ),
+                        _NetHeader(
+                          label: '进程',
+                          width: 72,
+                          alignEnd: true,
+                          active: sort == _NetSort.process,
+                          asc: sortAsc,
+                          onTap: () => onSort(_NetSort.process),
+                        ),
+                      ],
                     ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(child: listBody),
+                ],
+              );
+              if (constraints.maxWidth < 700) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minWidth: 700,
+                      maxHeight: constraints.maxHeight,
+                    ),
+                    child: SizedBox(
+                      width: 700,
+                      height: constraints.maxHeight,
+                      child: table,
+                    ),
+                  ),
+                );
+              }
+              return table;
+            },
+          ),
         ),
       ],
     );
@@ -1975,20 +2416,26 @@ class _ServicesPane extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              _SvcActionBtn(
-                label: '启动',
-                onPressed: canControl ? onStart : null,
-              ),
-              const SizedBox(width: 4),
-              _SvcActionBtn(
-                label: '停止',
-                onPressed: canControl ? onStop : null,
-                danger: true,
-              ),
-              const SizedBox(width: 4),
-              _SvcActionBtn(
-                label: busy ? '…' : '重启',
-                onPressed: canControl ? onRestart : null,
+              Flexible(
+                child: DesktopScrollableActions(
+                  children: [
+                    _SvcActionBtn(
+                      label: '启动',
+                      onPressed: canControl ? onStart : null,
+                    ),
+                    const SizedBox(width: 4),
+                    _SvcActionBtn(
+                      label: '停止',
+                      onPressed: canControl ? onStop : null,
+                      danger: true,
+                    ),
+                    const SizedBox(width: 4),
+                    _SvcActionBtn(
+                      label: busy ? '…' : '重启',
+                      onPressed: canControl ? onRestart : null,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -2177,16 +2624,250 @@ class _SvcActionBtn extends StatelessWidget {
 // Shared
 // ---------------------------------------------------------------------------
 
+class _ProcessDetailPanel extends StatelessWidget {
+  const _ProcessDetailPanel({
+    required this.process,
+    required this.detailFuture,
+    required this.canKill,
+    required this.killing,
+    required this.onClose,
+    required this.onEndTask,
+  });
+
+  final RemoteProcess process;
+  final Future<RemoteProcessDetail?>? detailFuture;
+  final bool canKill;
+  final bool killing;
+  final VoidCallback onClose;
+  final VoidCallback onEndTask;
+
+  Future<void> _copy(BuildContext context, String label, String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已复制$label'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Material(
+      color: wb.panel,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: wb.border)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      process.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: wb.primaryText,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: onClose,
+                    icon: Icon(Icons.close_rounded, size: 18, color: wb.textMuted),
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+              child: Text(
+                'PID ${process.pid}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: wb.textMuted,
+                ),
+              ),
+            ),
+            Divider(height: 1, color: wb.border),
+            Expanded(
+              child: FutureBuilder<RemoteProcessDetail?>(
+                future: detailFuture,
+                builder: (context, snap) {
+                  if (detailFuture == null ||
+                      snap.connectionState != ConnectionState.done) {
+                    return const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  }
+                  final d = snap.data;
+                  final cmdline = d?.cmdline ?? process.cmdline;
+                  final ppid = d?.ppid ?? process.ppid;
+                  final start = d?.startTime ?? process.startTime;
+                  final message = d?.message;
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                    children: [
+                      if (message != null && message.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            message,
+                            style:
+                                TextStyle(color: wb.textMuted, fontSize: 12),
+                          ),
+                        ),
+                      _DetailRow(
+                        label: '命令行',
+                        value: (cmdline == null || cmdline.isEmpty)
+                            ? '—'
+                            : cmdline,
+                        onCopy: cmdline == null || cmdline.isEmpty
+                            ? null
+                            : () => unawaited(_copy(context, '命令行', cmdline)),
+                      ),
+                      const SizedBox(height: 12),
+                      _DetailRow(
+                        label: 'PPID',
+                        value: ppid == null ? '—' : '$ppid',
+                        onCopy: ppid == null
+                            ? null
+                            : () => unawaited(_copy(context, 'PPID', '$ppid')),
+                      ),
+                      const SizedBox(height: 12),
+                      _DetailRow(
+                        label: '启动时间',
+                        value: (start == null || start.isEmpty) ? '—' : start,
+                        onCopy: start == null || start.isEmpty
+                            ? null
+                            : () => unawaited(_copy(context, '启动时间', start)),
+                      ),
+                      const SizedBox(height: 12),
+                      _DetailRow(
+                        label: 'PID',
+                        value: '${process.pid}',
+                        onCopy: () => unawaited(
+                          _copy(context, 'PID', '${process.pid}'),
+                        ),
+                      ),
+                      if (process.user != null) ...[
+                        const SizedBox(height: 12),
+                        _DetailRow(
+                          label: '用户',
+                          value: process.user!,
+                          onCopy: () =>
+                              unawaited(_copy(context, '用户', process.user!)),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: FilledButton.tonal(
+                onPressed: canKill ? onEndTask : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: canKill
+                      ? const Color(0xFFEF4444).withValues(alpha: 0.18)
+                      : null,
+                  foregroundColor:
+                      canKill ? const Color(0xFFEF4444) : wb.textMuted,
+                  minimumSize: const Size(double.infinity, 36),
+                ),
+                child: Text(killing ? '结束中…' : '结束任务'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.onCopy,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback? onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: wb.textMuted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const Spacer(),
+            if (onCopy != null)
+              IconButton(
+                tooltip: '复制',
+                onPressed: onCopy,
+                icon: Icon(Icons.copy_rounded, size: 16, color: wb.textMuted),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                padding: EdgeInsets.zero,
+              ),
+          ],
+        ),
+        SelectableText(
+          value,
+          style: TextStyle(
+            fontSize: 12,
+            fontFamily: 'monospace',
+            color: wb.primaryText,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _FilterField extends StatelessWidget {
   const _FilterField({
     required this.controller,
     required this.hint,
     required this.onChanged,
+    this.focusNode,
   });
 
   final TextEditingController controller;
   final String hint;
   final ValueChanged<String> onChanged;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -2195,6 +2876,7 @@ class _FilterField extends StatelessWidget {
       height: 32,
       child: TextField(
         controller: controller,
+        focusNode: focusNode,
         onChanged: onChanged,
         style: TextStyle(fontSize: 13, color: wb.primaryText),
         decoration: InputDecoration(

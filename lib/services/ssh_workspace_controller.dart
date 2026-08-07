@@ -25,6 +25,7 @@ import 'browser_gateway.dart';
 import 'local_port_forwarder.dart';
 import 'remote_command_queue.dart';
 import 'remote_host_metrics.dart';
+import 'remote_process_list.dart';
 import 'remote_session.dart';
 import 'remote_shell.dart';
 import 'remote_stream.dart';
@@ -274,7 +275,44 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   String? get privateKeyPem => _privateKeyPem;
 
   /// 本会话缓存的远端 sudo 密码（仅内存，不落盘）；用于包管理 / 防火墙等特权操作。
-  String? cachedSudoPassword;
+  /// 空闲超过 [sudoPasswordIdleTimeout] 后自动失效，下次特权操作需重新输入。
+  String? _cachedSudoPassword;
+  DateTime? _cachedSudoPasswordUsedAt;
+
+  /// sudo 密码空闲超时（默认 15 分钟）。
+  static const Duration sudoPasswordIdleTimeout = Duration(minutes: 15);
+
+  String? get cachedSudoPassword {
+    final pwd = _cachedSudoPassword;
+    if (pwd == null) return null;
+    final used = _cachedSudoPasswordUsedAt;
+    if (used != null &&
+        DateTime.now().difference(used) > sudoPasswordIdleTimeout) {
+      _cachedSudoPassword = null;
+      _cachedSudoPasswordUsedAt = null;
+      return null;
+    }
+    return pwd;
+  }
+
+  set cachedSudoPassword(String? value) {
+    _cachedSudoPassword = value;
+    _cachedSudoPasswordUsedAt =
+        value == null || value.isEmpty ? null : DateTime.now();
+  }
+
+  /// 立即清除缓存的 sudo 密码（托盘「锁定 sudo」）。
+  void lockSudoPassword() {
+    _cachedSudoPassword = null;
+    _cachedSudoPasswordUsedAt = null;
+  }
+
+  /// 标记 sudo 密码刚被成功使用（延长空闲计时）。
+  void touchSudoPassword() {
+    if (_cachedSudoPassword != null) {
+      _cachedSudoPasswordUsedAt = DateTime.now();
+    }
+  }
 
   final RemoteSession _remoteSession = RemoteSession();
 
@@ -354,6 +392,12 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   String _remoteCwd = '/';
   bool _loadingDir = false;
   List<SftpName> _entries = [];
+  String? _loadError;
+  bool _showHidden = false;
+  SftpSortColumn _sortColumn = SftpSortColumn.name;
+  bool _sortAscending = true;
+  final List<String> _cwdHistoryBack = [];
+  final List<String> _cwdHistoryForward = [];
   String? _error;
   bool _connecting = false;
   bool _connected = false;
@@ -370,6 +414,49 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   String? get error => _error;
   @override
   bool get loadingDir => _loadingDir;
+  @override
+  String? get loadError => _loadError;
+  @override
+  bool get showHidden => _showHidden;
+  @override
+  set showHidden(bool value) {
+    if (_showHidden == value) return;
+    _showHidden = value;
+    unawaited(refreshDirectory());
+  }
+
+  @override
+  SftpSortColumn get sortColumn => _sortColumn;
+
+  @override
+  bool get sortAscending => _sortAscending;
+
+  @override
+  void setSort(SftpSortColumn col) {
+    if (_sortColumn == col) {
+      _sortAscending = !_sortAscending;
+    } else {
+      _sortColumn = col;
+      _sortAscending = true;
+    }
+    if (_entries.isNotEmpty) {
+      final next = List<SftpName>.of(_entries);
+      sortSftpEntries(
+        next,
+        column: _sortColumn,
+        ascending: _sortAscending,
+      );
+      _entries = next;
+    }
+    notifyListeners();
+  }
+
+  @override
+  bool get canGoBack => _cwdHistoryBack.isNotEmpty;
+  @override
+  bool get canGoForward => _cwdHistoryForward.isNotEmpty;
+  @override
+  bool get canGoUp => _remoteCwd.isNotEmpty && _remoteCwd != '/';
   bool get connecting => _connecting;
   bool get connected => _connected;
   bool get dropped => _dropped;
@@ -671,21 +758,50 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     notifyListeners();
     try {
       final list = await client.listdir(_remoteCwd);
-      list.sort((a, b) {
-        if (a.attr.isDirectory != b.attr.isDirectory) {
-          return a.attr.isDirectory ? -1 : 1;
-        }
-        return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
-      });
-      _entries = list
-          .where((e) => e.filename != '.' && e.filename != '..')
-          .toList();
+      final next = list.where((e) {
+        if (e.filename == '.' || e.filename == '..') return false;
+        if (!_showHidden && e.filename.startsWith('.')) return false;
+        return true;
+      }).toList();
+      sortSftpEntries(
+        next,
+        column: _sortColumn,
+        ascending: _sortAscending,
+      );
+      _entries = next;
+      _loadError = null;
     } catch (e) {
+      _loadError = '$e';
       _setError('SFTP: $e');
     } finally {
       _loadingDir = false;
       notifyListeners();
     }
+  }
+
+  void _pushCwdHistory() {
+    _cwdHistoryBack.add(_remoteCwd);
+    if (_cwdHistoryBack.length > 64) _cwdHistoryBack.removeAt(0);
+    // 标准浏览器行为：从历史中点开新路径时丢弃前进栈。
+    _cwdHistoryForward.clear();
+  }
+
+  @override
+  Future<void> goBack() async {
+    if (_cwdHistoryBack.isEmpty) return;
+    _cwdHistoryForward.add(_remoteCwd);
+    if (_cwdHistoryForward.length > 64) _cwdHistoryForward.removeAt(0);
+    _remoteCwd = _cwdHistoryBack.removeLast();
+    await refreshDirectory();
+  }
+
+  @override
+  Future<void> goForward() async {
+    if (_cwdHistoryForward.isEmpty) return;
+    _cwdHistoryBack.add(_remoteCwd);
+    if (_cwdHistoryBack.length > 64) _cwdHistoryBack.removeAt(0);
+    _remoteCwd = _cwdHistoryForward.removeLast();
+    await refreshDirectory();
   }
 
   @override
@@ -696,6 +812,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     try {
       final attrs = await client.stat(path);
       if (attrs.isDirectory) {
+        _pushCwdHistory();
         _remoteCwd = path;
         await refreshDirectory();
       }
@@ -705,9 +822,11 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     }
   }
 
+  @override
   Future<void> navigateUp() async {
     final parent = remoteDirname(_remoteCwd);
     if (parent == _remoteCwd) return;
+    _pushCwdHistory();
     _remoteCwd = parent;
     await refreshDirectory();
   }
@@ -735,6 +854,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
         notifyListeners();
         return;
       }
+      if (path != _remoteCwd) _pushCwdHistory();
       _remoteCwd = path;
       await refreshDirectory();
     } catch (e) {
@@ -913,6 +1033,12 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
                 label: e.displayLabel,
                 totalBytes: e.sizeBytes,
                 direction: SftpTransferDirection.upload,
+                localPath: e.localPath,
+                remotePath: remoteJoin(
+                  e.remoteParentDir,
+                  p.basename(e.localPath),
+                ),
+                remoteCwd: _remoteCwd,
               ),
             )
             .toList(),
@@ -957,6 +1083,12 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
             label: e.displayLabel,
             totalBytes: e.sizeBytes,
             direction: SftpTransferDirection.upload,
+            localPath: e.localPath,
+            remotePath: remoteJoin(
+              e.remoteParentDir,
+              p.basename(e.localPath),
+            ),
+            remoteCwd: _remoteCwd,
           ),
         );
       }
@@ -984,6 +1116,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   SftpUploadProgressHooks _uploadHooks(Set<String> taskIds) {
     return SftpUploadProgressHooks(
       shouldCancelUpload: uploadTasks.isCancellationRequested,
+      shouldPauseUpload: uploadTasks.isPauseRequested,
+      preferredUploadOrder: uploadTasks.preferredUploadOrder,
       onFileStart: (path, String displayLabel, int totalBytes) =>
           uploadTasks.setUploading(path),
       onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
@@ -1082,6 +1216,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
               label: e.displayLabel,
               totalBytes: e.sizeBytes,
               direction: SftpTransferDirection.download,
+              localPath: e.localPath,
+              remotePath: e.remotePath,
             ),
           )
           .toList(),
@@ -1314,6 +1450,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
               label: entry.displayLabel,
               totalBytes: entry.sizeBytes,
               direction: SftpTransferDirection.download,
+              localPath: entry.localPath,
+              remotePath: entry.remotePath,
             ),
           ]);
         },
@@ -1489,6 +1627,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
               label: e.displayLabel,
               totalBytes: e.sizeBytes,
               direction: SftpTransferDirection.download,
+              localPath: e.localPath,
+              remotePath: e.remotePath,
             ),
           )
           .toList(),
@@ -1507,6 +1647,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   SftpUploadProgressHooks _downloadHooks(Set<String> taskIds) {
     return SftpUploadProgressHooks(
       shouldCancelUpload: uploadTasks.isCancellationRequested,
+      shouldPauseUpload: uploadTasks.isPauseRequested,
+      preferredUploadOrder: uploadTasks.preferredUploadOrder,
       onFileStart: (path, String displayLabel, int totalBytes) =>
           uploadTasks.setUploading(path),
       onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
@@ -1522,6 +1664,117 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
         }
       },
     );
+  }
+
+  /// 重试失败的传输任务：出列后按保存的路径重新入队执行。
+  Future<void> retryTransferTask(SftpUploadTaskView task) async {
+    if (!task.canRetry) return;
+    final client = _sftp;
+    if (client == null) return;
+
+    final local = task.localPath!;
+    uploadTasks.removeById(task.id);
+
+    if (task.direction == SftpTransferDirection.upload) {
+      final parent = task.remotePath != null && task.remotePath!.isNotEmpty
+          ? remoteDirname(task.remotePath!)
+          : (task.remoteCwd ?? _remoteCwd);
+      final remoteFile = remoteJoin(parent, p.basename(local));
+      final plan = [
+        SftpPlannedUploadFile(
+          localPath: local,
+          displayLabel: task.label,
+          remoteParentDir: parent,
+          sizeBytes: task.totalBytes,
+        ),
+      ];
+      final ids = {local};
+      uploadTasks.appendTasks([
+        SftpUploadTaskView(
+          id: local,
+          label: task.label,
+          totalBytes: task.totalBytes,
+          direction: SftpTransferDirection.upload,
+          localPath: local,
+          remotePath: remoteFile,
+          remoteCwd: task.remoteCwd ?? parent,
+        ),
+      ]);
+      try {
+        await sftp_transfer.uploadPlannedFiles(
+          sftp: client,
+          remoteCwd: parent,
+          localPath: local,
+          plan: plan,
+          hooks: _uploadHooks(ids),
+        );
+      } catch (e) {
+        _failRemainingTasks(ids, e);
+      }
+      await refreshDirectory();
+      return;
+    }
+
+    // download
+    final remote = task.remotePath!;
+    try {
+      final plan = await sftp_transfer.planDownloadSingleFile(
+        sftp: client,
+        remotePath: remote,
+        localPath: local,
+        displayLabel: task.label,
+      );
+      final ids = plan.map((e) => e.taskId).toSet();
+      uploadTasks.appendTasks(
+        plan
+            .map(
+              (e) => SftpUploadTaskView(
+                id: e.taskId,
+                label: e.displayLabel,
+                totalBytes: e.sizeBytes,
+                direction: SftpTransferDirection.download,
+                localPath: e.localPath,
+                remotePath: e.remotePath,
+              ),
+            )
+            .toList(),
+      );
+      try {
+        await sftp_transfer.executeDownloadPlan(
+          sftp: client,
+          plan: plan,
+          hooks: _downloadHooks(ids),
+        );
+      } catch (e) {
+        _failRemainingTasks(ids, e);
+      }
+    } catch (e) {
+      // 规划失败：重新挂回一条失败行，避免任务「消失」。
+      final fallbackId =
+          'retry_${DateTime.now().microsecondsSinceEpoch}_${task.label.hashCode}';
+      uploadTasks.appendTasks([
+        SftpUploadTaskView(
+          id: fallbackId,
+          label: task.label,
+          totalBytes: task.totalBytes,
+          direction: SftpTransferDirection.download,
+          localPath: local,
+          remotePath: remote,
+          state: SftpUploadRowState.failed,
+          error: e,
+        ),
+      ]);
+    }
+  }
+
+  /// 依次重试队列中全部失败任务。
+  Future<void> retryAllFailedTransfers() async {
+    final failed = uploadTasks.failedItems;
+    for (final t in failed) {
+      if (t.canRetry) {
+        await retryTransferTask(t);
+      }
+    }
   }
 
   @override
@@ -1612,6 +1865,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   /// 共享主机采样：短时间内复用缓存，降低监控/任务/托盘重复 exec。
   Future<RemoteHostSnapshot?> snapshot({
     Duration maxAge = const Duration(seconds: 3),
+    RemoteOsKind? osHint,
   }) async {
     final now = DateTime.now();
     final cached = _lastSnapshot;
@@ -1621,7 +1875,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
         now.difference(at) <= maxAge) {
       return cached;
     }
-    final snap = await fetchRemoteHostSnapshot(this);
+    final snap = await fetchRemoteHostSnapshot(this, osHint: osHint);
     if (snap != null) {
       _lastSnapshot = snap;
       _lastSnapshotAt = DateTime.now();

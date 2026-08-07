@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/remote_host_metrics.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 import '../widgets/desktop_settings_dialog.dart';
+import '../widgets/desktop_shortcuts_cheatsheet.dart';
+import 'desktop_app_registry.dart';
 import 'desktop_window_manager.dart';
 
 /// 底部任务栏：启动器 + 窗口按钮 + 工作区 + 系统托盘。
@@ -39,14 +42,13 @@ class DesktopTaskbar extends StatelessWidget {
               child: ListenableBuilder(
                 listenable: wm,
                 builder: (context, _) {
-                  final wins = wm.windows;
-                  return ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: wins.length,
+                  final groups = _groupTaskbarWindows(wm.windows);
+                  return _TaskbarWindowStrip(
+                    itemCount: groups.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 4),
                     itemBuilder: (context, i) {
-                      final w = wins[i];
-                      return _TaskbarWindowButton(window: w, wm: wm);
+                      final g = groups[i];
+                      return _TaskbarWindowButton(group: g, wm: wm);
                     },
                   );
                 },
@@ -79,19 +81,26 @@ class _WorkspaceIndicator extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               for (var i = 0; i < wm.workspaces.length; i++)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                Tooltip(
+                  message:
+                      '桌面 ${i + 1} · ${wm.workspaces[i].windows.length} 窗口',
                   child: InkWell(
                     onTap: () => wm.switchWorkspace(i),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: i == wm.activeWorkspaceIndex
-                            ? wb.accentBlue
-                            : wb.textMuted.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: Center(
+                        child: Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i == wm.activeWorkspaceIndex
+                                ? wb.accentBlue
+                                : wb.textMuted.withValues(alpha: 0.45),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -270,29 +279,97 @@ class _TrayAreaState extends State<_TrayArea> {
               ),
             ),
           ),
-        Tooltip(
-          message: widget.wm.showingDesktop ? '还原窗口' : '显示桌面',
-          child: IconButton(
-            iconSize: 16,
-            visualDensity: VisualDensity.compact,
-            onPressed: () => widget.wm.toggleShowDesktop(),
-            icon: Icon(Icons.desktop_windows_rounded, color: wb.textMuted),
-          ),
+        ListenableBuilder(
+          listenable: widget.wm,
+          builder: (context, _) {
+            final showing = widget.wm.showingDesktop;
+            return Tooltip(
+              message: showing ? '还原窗口' : '显示桌面',
+              child: IconButton(
+                iconSize: 16,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => widget.wm.toggleShowDesktop(),
+                icon: Icon(
+                  showing
+                      ? Icons.desktop_access_disabled_rounded
+                      : Icons.desktop_windows_rounded,
+                  color: showing ? wb.accentBlue : wb.textMuted,
+                ),
+              ),
+            );
+          },
         ),
-        Tooltip(
-          message: '桌面设置',
-          child: IconButton(
-            iconSize: 16,
-            visualDensity: VisualDensity.compact,
-            onPressed: () =>
-                showDesktopSettingsDialog(context, wm: widget.wm),
-            icon: Icon(Icons.settings_outlined, color: wb.textMuted),
+        PopupMenuButton<_TrayAction>(
+          tooltip: '快速设置',
+          offset: const Offset(0, -8),
+          position: PopupMenuPosition.over,
+          color: wb.panelElevated,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: wb.border),
+          ),
+          onSelected: (action) {
+            switch (action) {
+              case _TrayAction.settings:
+                showDesktopSettingsDialog(context, wm: widget.wm);
+              case _TrayAction.shortcuts:
+                showDesktopShortcutsCheatsheet(context);
+              case _TrayAction.lockSudo:
+                widget.controller.lockSudoPassword();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      AppLocalizations.of(context)?.sudoLockedSnack ??
+                          '已锁定 sudo 密码',
+                    ),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+            }
+          },
+          itemBuilder: (context) => [
+            PopupMenuItem(
+              value: _TrayAction.settings,
+              child: Row(
+                children: [
+                  Icon(Icons.settings_rounded, size: 16, color: wb.textMuted),
+                  const SizedBox(width: 10),
+                  Text('桌面设置', style: TextStyle(color: wb.primaryText)),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: _TrayAction.shortcuts,
+              child: Row(
+                children: [
+                  Icon(Icons.keyboard_rounded, size: 16, color: wb.textMuted),
+                  const SizedBox(width: 10),
+                  Text('键盘快捷键', style: TextStyle(color: wb.primaryText)),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: _TrayAction.lockSudo,
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline_rounded, size: 16, color: wb.textMuted),
+                  const SizedBox(width: 10),
+                  Text('锁定 sudo', style: TextStyle(color: wb.primaryText)),
+                ],
+              ),
+            ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Icon(Icons.settings_outlined, size: 16, color: wb.textMuted),
           ),
         ),
       ],
     );
   }
 }
+
+enum _TrayAction { settings, shortcuts, lockSudo }
 
 class _LauncherButton extends StatelessWidget {
   const _LauncherButton({required this.wm});
@@ -350,24 +427,27 @@ class _LauncherButton extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
-        _item(context, value: _LaunchAction.terminal, icon: Icons.terminal_rounded, label: '终端'),
-        _item(context, value: _LaunchAction.files, icon: Icons.folder_rounded, label: '文件'),
-        _item(context, value: _LaunchAction.browser, icon: Icons.language_rounded, label: '浏览器'),
-        _item(context, value: _LaunchAction.monitor, icon: Icons.monitor_heart_rounded, label: '监控'),
-        _item(context, value: _LaunchAction.tasks, icon: Icons.memory_rounded, label: '任务管理器'),
-        _item(context, value: _LaunchAction.logs, icon: Icons.article_rounded, label: '日志'),
-        _item(context, value: _LaunchAction.containers, icon: Icons.view_in_ar_rounded, label: '容器'),
-        _item(context, value: _LaunchAction.diskUsage, icon: Icons.pie_chart_rounded, label: '磁盘占用'),
-        _item(context, value: _LaunchAction.transfers, icon: Icons.swap_vert_rounded, label: '传输'),
-        _item(context, value: _LaunchAction.forwards, icon: Icons.alt_route_rounded, label: '端口转发'),
-        _item(context, value: _LaunchAction.runCommand, icon: Icons.play_circle_outline_rounded, label: '运行命令'),
-        _item(context, value: _LaunchAction.cron, icon: Icons.schedule_rounded, label: '计划任务'),
-        _item(context, value: _LaunchAction.users, icon: Icons.groups_rounded, label: '用户与组'),
-        _item(context, value: _LaunchAction.packages, icon: Icons.inventory_2_rounded, label: '包管理器'),
-        _item(context, value: _LaunchAction.firewall, icon: Icons.security_rounded, label: '防火墙'),
-        _item(context, value: _LaunchAction.editor, icon: Icons.folder_open_rounded, label: '打开文件…'),
+        for (final app in kAllApps)
+          if (app.id != DesktopAppType.editor)
+            _item(
+              context,
+              value: _launchActionFor(app.id),
+              icon: app.icon,
+              label: app.label,
+            ),
+        _item(
+          context,
+          value: _LaunchAction.editor,
+          icon: Icons.folder_open_rounded,
+          label: '打开文件…',
+        ),
         const PopupMenuDivider(),
-        _item(context, value: _LaunchAction.settings, icon: Icons.settings_rounded, label: '桌面设置'),
+        _item(
+          context,
+          value: _LaunchAction.settings,
+          icon: Icons.settings_rounded,
+          label: '桌面设置',
+        ),
       ],
       child: Container(
         width: 36,
@@ -402,6 +482,25 @@ class _LauncherButton extends StatelessWidget {
       ),
     );
   }
+
+  static _LaunchAction _launchActionFor(DesktopAppType id) => switch (id) {
+        DesktopAppType.terminal => _LaunchAction.terminal,
+        DesktopAppType.files => _LaunchAction.files,
+        DesktopAppType.browser => _LaunchAction.browser,
+        DesktopAppType.monitor => _LaunchAction.monitor,
+        DesktopAppType.tasks => _LaunchAction.tasks,
+        DesktopAppType.logs => _LaunchAction.logs,
+        DesktopAppType.containers => _LaunchAction.containers,
+        DesktopAppType.diskUsage => _LaunchAction.diskUsage,
+        DesktopAppType.transfers => _LaunchAction.transfers,
+        DesktopAppType.editor => _LaunchAction.editor,
+        DesktopAppType.forwards => _LaunchAction.forwards,
+        DesktopAppType.runCommand => _LaunchAction.runCommand,
+        DesktopAppType.cron => _LaunchAction.cron,
+        DesktopAppType.users => _LaunchAction.users,
+        DesktopAppType.packages => _LaunchAction.packages,
+        DesktopAppType.firewall => _LaunchAction.firewall,
+      };
 }
 
 enum _LaunchAction {
@@ -424,10 +523,43 @@ enum _LaunchAction {
   settings,
 }
 
-class _TaskbarWindowButton extends StatefulWidget {
-  const _TaskbarWindowButton({required this.window, required this.wm});
+/// 按 [DesktopAppType] 分组：保留首次出现顺序。
+List<_TaskbarGroup> _groupTaskbarWindows(List<DesktopWindow> wins) {
+  final order = <DesktopAppType>[];
+  final map = <DesktopAppType, List<DesktopWindow>>{};
+  for (final w in wins) {
+    map.putIfAbsent(w.type, () {
+      order.add(w.type);
+      return <DesktopWindow>[];
+    }).add(w);
+  }
+  return [
+    for (final t in order) _TaskbarGroup(type: t, windows: map[t]!),
+  ];
+}
 
-  final DesktopWindow window;
+class _TaskbarGroup {
+  const _TaskbarGroup({required this.type, required this.windows});
+
+  final DesktopAppType type;
+  final List<DesktopWindow> windows;
+
+  DesktopWindow get mostRecent {
+    var best = windows.first;
+    for (var i = 1; i < windows.length; i++) {
+      if (windows[i].z > best.z) best = windows[i];
+    }
+    return best;
+  }
+
+  bool get anyFocused =>
+      windows.any((w) => w.focused && w.state != WindowState.minimized);
+}
+
+class _TaskbarWindowButton extends StatefulWidget {
+  const _TaskbarWindowButton({required this.group, required this.wm});
+
+  final _TaskbarGroup group;
   final DesktopWindowManager wm;
 
   @override
@@ -437,41 +569,12 @@ class _TaskbarWindowButton extends StatefulWidget {
 class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
   Timer? _hoverFocus;
 
-  IconData _icon() {
-    switch (widget.window.type) {
-      case DesktopAppType.terminal:
-        return Icons.terminal_rounded;
-      case DesktopAppType.files:
-        return Icons.folder_rounded;
-      case DesktopAppType.browser:
-        return Icons.language_rounded;
-      case DesktopAppType.monitor:
-        return Icons.monitor_heart_rounded;
-      case DesktopAppType.tasks:
-        return Icons.memory_rounded;
-      case DesktopAppType.logs:
-        return Icons.article_rounded;
-      case DesktopAppType.containers:
-        return Icons.view_in_ar_rounded;
-      case DesktopAppType.diskUsage:
-        return Icons.pie_chart_rounded;
-      case DesktopAppType.transfers:
-        return Icons.swap_vert_rounded;
-      case DesktopAppType.editor:
-        return Icons.edit_note_rounded;
-      case DesktopAppType.forwards:
-        return Icons.alt_route_rounded;
-      case DesktopAppType.runCommand:
-        return Icons.play_circle_outline_rounded;
-      case DesktopAppType.cron:
-        return Icons.schedule_rounded;
-      case DesktopAppType.users:
-        return Icons.groups_rounded;
-      case DesktopAppType.packages:
-        return Icons.inventory_2_rounded;
-      case DesktopAppType.firewall:
-        return Icons.security_rounded;
-    }
+  IconData _icon() => iconForApp(widget.group.type);
+
+  String get _label {
+    final g = widget.group;
+    if (g.windows.length == 1) return g.windows.first.title;
+    return metaFor(g.type).label;
   }
 
   @override
@@ -480,11 +583,61 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
     super.dispose();
   }
 
-  Future<void> _showMenu(BuildContext context, Offset global) async {
+  void _onPrimaryTap() {
+    final g = widget.group;
+    final target = g.mostRecent;
+    widget.wm.taskbarActivate(target.id);
+  }
+
+  Future<void> _showContextMenu(BuildContext context, Offset global) async {
+    final g = widget.group;
+    if (g.windows.length > 1) {
+      await _showInstanceMenu(context, global);
+    } else {
+      await _showWindowMenu(context, global, g.windows.first);
+    }
+  }
+
+  Future<void> _showInstanceMenu(BuildContext context, Offset global) async {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
-    final window = widget.window;
+    final wm = widget.wm;
+    final items = <PopupMenuEntry<String>>[
+      for (final w in widget.group.windows)
+        PopupMenuItem(
+          value: w.id,
+          child: Text(
+            w.title,
+            style: TextStyle(
+              fontWeight: w.focused ? FontWeight.w600 : FontWeight.normal,
+              decoration: w.state == WindowState.minimized
+                  ? TextDecoration.lineThrough
+                  : null,
+            ),
+          ),
+        ),
+    ];
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(global.dx, global.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: items,
+    );
+    if (selected == null) return;
+    wm.restore(selected);
+  }
+
+  Future<void> _showWindowMenu(
+    BuildContext context,
+    Offset global,
+    DesktopWindow window,
+  ) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
     final wm = widget.wm;
     final items = <PopupMenuEntry<Object>>[
       PopupMenuItem(
@@ -533,25 +686,37 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    final window = widget.window;
+    final g = widget.group;
     final wm = widget.wm;
-    final active = window.focused && window.state != WindowState.minimized;
+    final active = g.anyFocused;
+    final count = g.windows.length;
+    final pinned = g.windows.any((w) => w.alwaysOnTop);
+    final allMinimized =
+        g.windows.every((w) => w.state == WindowState.minimized);
     return Tooltip(
-      message: window.title,
+      message: count > 1
+          ? '${metaFor(g.type).label} · $count 个窗口'
+          : g.windows.first.title,
       waitDuration: const Duration(milliseconds: 400),
       child: DropTarget(
         onDragEntered: (_) {
           _hoverFocus?.cancel();
           _hoverFocus = Timer(const Duration(milliseconds: 300), () {
-            wm.focus(window.id);
+            wm.focus(g.mostRecent.id);
           });
         },
         onDragExited: (_) => _hoverFocus?.cancel(),
         onDragDone: (_) => _hoverFocus?.cancel(),
         child: InkWell(
-          onTap: () => wm.taskbarActivate(window.id),
+          onTap: _onPrimaryTap,
           onSecondaryTapUp: (d) =>
-              unawaited(_showMenu(context, d.globalPosition)),
+              unawaited(_showContextMenu(context, d.globalPosition)),
+          onLongPress: () {
+            final box = context.findRenderObject() as RenderBox?;
+            if (box == null) return;
+            final global = box.localToGlobal(Offset(box.size.width / 2, 0));
+            unawaited(_showContextMenu(context, global));
+          },
           borderRadius: BorderRadius.circular(6),
           child: Container(
             constraints: const BoxConstraints(minWidth: 96, maxWidth: 160),
@@ -568,7 +733,7 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (window.alwaysOnTop)
+                if (pinned)
                   Padding(
                     padding: const EdgeInsets.only(right: 4),
                     child:
@@ -582,24 +747,154 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
-                    window.title,
+                    _label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12,
                       color: active ? wb.primaryText : wb.secondaryText,
-                      decoration: window.state == WindowState.minimized
+                      decoration: allMinimized
                           ? TextDecoration.lineThrough
                           : null,
                       decorationColor: wb.textMuted,
                     ),
                   ),
                 ),
+                if (count > 1) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    constraints: const BoxConstraints(minWidth: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    height: 16,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: wb.accentBlue.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      '$count',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: wb.accentBlue,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 任务栏窗口按钮横条：可横滚，两端软渐隐提示溢出。
+class _TaskbarWindowStrip extends StatefulWidget {
+  const _TaskbarWindowStrip({
+    required this.itemCount,
+    required this.itemBuilder,
+    required this.separatorBuilder,
+  });
+
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+  final IndexedWidgetBuilder separatorBuilder;
+
+  @override
+  State<_TaskbarWindowStrip> createState() => _TaskbarWindowStripState();
+}
+
+class _TaskbarWindowStripState extends State<_TaskbarWindowStrip> {
+  final _scroll = ScrollController();
+  var _showLeft = false;
+  var _showRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_updateFades);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFades());
+  }
+
+  @override
+  void didUpdateWidget(covariant _TaskbarWindowStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFades());
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_updateFades);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _updateFades() {
+    if (!mounted || !_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final left = pos.pixels > 2;
+    final right = pos.pixels < pos.maxScrollExtent - 2;
+    if (left != _showLeft || right != _showRight) {
+      setState(() {
+        _showLeft = left;
+        _showRight = right;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Stack(
+      children: [
+        ListView.separated(
+          controller: _scroll,
+          scrollDirection: Axis.horizontal,
+          itemCount: widget.itemCount,
+          separatorBuilder: widget.separatorBuilder,
+          itemBuilder: widget.itemBuilder,
+        ),
+        if (_showLeft)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 16,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      wb.topBar,
+                      wb.topBar.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_showRight)
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: 16,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      wb.topBar.withValues(alpha: 0),
+                      wb.topBar,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

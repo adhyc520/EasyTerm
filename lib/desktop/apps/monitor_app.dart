@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/remote_network.dart';
+import '../../services/remote_process_list.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_monitor_widgets.dart';
 
 /// 主机资源 + 网络监控：每 5s 拉取；窗口最小化时暂停。
 class MonitorApp extends StatefulWidget {
@@ -36,8 +40,22 @@ class _MonitorAppState extends State<MonitorApp>
   List<RemoteNetIfaceRate> _rates = const [];
   bool _loading = false;
   String? _error;
+  RemoteOsKind? _os;
   final List<double> _cpuHist = [];
   final List<double> _memHist = [];
+  final Map<int, List<double>> _gpuHist = {};
+  final _netFilterCtrl = TextEditingController();
+  final _netFilterFocus = FocusNode();
+  final _netListFocus = FocusNode();
+  int? _selectedListenerIndex;
+  String _netFilter = '';
+  bool _hideLoopback = true;
+  bool _showAllIfaces = false;
+  bool _showAllListeners = false;
+  bool _showAllMounts = false;
+  bool _userPaused = false;
+  Duration _interval = const Duration(seconds: 5);
+  DateTime? _lastTickAt;
 
   static const int _histMax = 24;
 
@@ -56,10 +74,31 @@ class _MonitorAppState extends State<MonitorApp>
   void dispose() {
     _timer?.cancel();
     _tabs.dispose();
+    _netFilterCtrl.dispose();
+    _netFilterFocus.dispose();
+    _netListFocus.dispose();
     widget.window.onConnectionRestored = null;
     widget.wm.removeListener(_onWm);
     widget.controller.removeListener(_onController);
     super.dispose();
+  }
+
+  void _moveListenerSelection(int delta, int length) {
+    if (length == 0) return;
+    final cur = _selectedListenerIndex ?? (delta > 0 ? -1 : length);
+    var next = cur + delta;
+    if (next < 0) next = 0;
+    if (next >= length) next = length - 1;
+    setState(() => _selectedListenerIndex = next);
+    _netListFocus.requestFocus();
+  }
+
+  void _openSelectedListener(List<RemoteListenSocket> listeners) {
+    final i = _selectedListenerIndex;
+    if (i == null || i < 0 || i >= listeners.length) return;
+    final target = listeners[i].browserTarget;
+    if (target == null) return;
+    widget.wm.open(DesktopAppType.browser, args: {'url': target});
   }
 
   void _onConnectionRestored() {
@@ -77,7 +116,8 @@ class _MonitorAppState extends State<MonitorApp>
     if (mounted) setState(() {});
   }
 
-  bool get _paused => widget.window.state == WindowState.minimized;
+  bool get _paused =>
+      widget.window.state == WindowState.minimized || _userPaused;
 
   void _armTimer() {
     _timer?.cancel();
@@ -85,7 +125,7 @@ class _MonitorAppState extends State<MonitorApp>
       _timer = null;
       return;
     }
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _timer = Timer.periodic(_interval, (_) {
       unawaited(_tick());
     });
   }
@@ -106,9 +146,9 @@ class _MonitorAppState extends State<MonitorApp>
     });
     try {
       final results = await Future.wait([
-        widget.controller.snapshot(),
-        fetchRemoteNetworkSnapshot(c),
-        fetchRemoteGpuSnapshot(c),
+        widget.controller.snapshot(osHint: _os),
+        fetchRemoteNetworkSnapshot(c, osHint: _os),
+        fetchRemoteGpuSnapshot(c, osHint: _os),
       ]);
       if (!mounted) return;
       final snap = results[0] as RemoteHostSnapshot?;
@@ -122,6 +162,11 @@ class _MonitorAppState extends State<MonitorApp>
         });
         return;
       }
+      if (net != null && net.os != RemoteOsKind.unknown) {
+        _os = net.os;
+      } else if (gpu != null && gpu.os != RemoteOsKind.unknown) {
+        _os = gpu.os;
+      }
       if (snap != null) {
         if (snap.cpuUsed01 != null) {
           _cpuHist.add(snap.cpuUsed01!);
@@ -130,6 +175,14 @@ class _MonitorAppState extends State<MonitorApp>
         if (snap.memUsed01 != null) {
           _memHist.add(snap.memUsed01!);
           if (_memHist.length > _histMax) _memHist.removeAt(0);
+        }
+      }
+      if (gpu != null && gpu.available) {
+        for (final g in gpu.gpus) {
+          if (g.util01 == null) continue;
+          final hist = _gpuHist.putIfAbsent(g.index, () => <double>[]);
+          hist.add(g.util01!);
+          if (hist.length > _histMax) hist.removeAt(0);
         }
       }
       // 用上一帧 `_net` 算吞吐。
@@ -142,6 +195,7 @@ class _MonitorAppState extends State<MonitorApp>
         }
         if (gpu != null) _gpu = gpu;
         _loading = false;
+        _lastTickAt = DateTime.now();
         _error = null;
       });
     } catch (e) {
@@ -182,6 +236,30 @@ class _MonitorAppState extends State<MonitorApp>
                   ),
                 ),
                 const Spacer(),
+                LastUpdatedChip(
+                  lastTickAt: _lastTickAt,
+                  live: !_paused && connected,
+                ),
+                const SizedBox(width: 4),
+                PauseToggle(
+                  paused: _userPaused,
+                  onPausedChanged: (v) {
+                    setState(() => _userPaused = v);
+                    _armTimer();
+                  },
+                  interval: _interval,
+                  onIntervalChanged: (d) {
+                    setState(() => _interval = d);
+                    _armTimer();
+                  },
+                  intervals: const [
+                    Duration(seconds: 1),
+                    Duration(seconds: 3),
+                    Duration(seconds: 5),
+                    Duration(seconds: 10),
+                    Duration(seconds: 30),
+                  ],
+                ),
                 if (_loading)
                   SizedBox(
                     width: 14,
@@ -235,6 +313,14 @@ class _MonitorAppState extends State<MonitorApp>
 
   Widget _buildResources(WorkbenchColors wb) {
     final s = _snap;
+    if (s == null && _error == null && !_loading) {
+      return RemoteStateView(
+        state: RemoteState.empty,
+        message: '暂无资源数据',
+        onRetry: () => unawaited(_tick()),
+        data: const SizedBox.shrink(),
+      );
+    }
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
@@ -242,17 +328,23 @@ class _MonitorAppState extends State<MonitorApp>
           spacing: 10,
           runSpacing: 10,
           children: [
-            _GaugeCard(
-              label: 'CPU',
-              value: _pct(s?.cpuUsed01),
-              tone: s?.cpuUsed01,
-              history: _cpuHist,
+            SizedBox(
+              width: 160,
+              child: SparklineCard(
+                title: 'CPU',
+                valueLabel: _pct(s?.cpuUsed01),
+                history: List<double>.from(_cpuHist),
+                height: 28,
+              ),
             ),
-            _GaugeCard(
-              label: '内存',
-              value: _pct(s?.memUsed01),
-              tone: s?.memUsed01,
-              history: _memHist,
+            SizedBox(
+              width: 160,
+              child: SparklineCard(
+                title: '内存',
+                valueLabel: _pct(s?.memUsed01),
+                history: List<double>.from(_memHist),
+                height: 28,
+              ),
             ),
             _GaugeCard(
               label: '磁盘',
@@ -280,17 +372,27 @@ class _MonitorAppState extends State<MonitorApp>
             runSpacing: 10,
             children: [
               for (final g in _gpu!.gpus)
-                _GaugeCard(
-                  label: 'GPU${g.index} · ${g.name}',
-                  value: g.util01 == null
-                      ? '—'
-                      : '${(g.util01! * 100).toStringAsFixed(0)}%',
-                  tone: g.util01,
-                  subtitle: [
-                    if (g.memUsedMiB != null && g.memTotalMiB != null)
-                      '${g.memUsedMiB!.toStringAsFixed(0)}/${g.memTotalMiB!.toStringAsFixed(0)} MiB',
-                    if (g.tempC != null) '${g.tempC!.toStringAsFixed(0)}°C',
-                  ].join(' · '),
+                Builder(
+                  builder: (context) {
+                    final sub = [
+                      if (g.memUsedMiB != null && g.memTotalMiB != null)
+                        '${g.memUsedMiB!.toStringAsFixed(0)}/${g.memTotalMiB!.toStringAsFixed(0)} MiB',
+                      if (g.tempC != null) '${g.tempC!.toStringAsFixed(0)}°C',
+                    ].join(' · ');
+                    return SizedBox(
+                      width: 200,
+                      child: SparklineCard(
+                        title: 'GPU${g.index} · ${g.name}',
+                        valueLabel: g.util01 == null
+                            ? '—'
+                            : '${(g.util01! * 100).toStringAsFixed(0)}%',
+                        history:
+                            List<double>.from(_gpuHist[g.index] ?? const []),
+                        height: 28,
+                        peakLabel: sub.isEmpty ? null : sub,
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -331,9 +433,26 @@ class _MonitorAppState extends State<MonitorApp>
         ],
         if (s != null && s.mounts.isNotEmpty) ...[
           const SizedBox(height: 14),
-          Text('磁盘挂载', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+          Row(
+            children: [
+              Text('磁盘挂载', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+              const Spacer(),
+              if (s.mounts.length > 10)
+                TextButton(
+                  onPressed: () =>
+                      setState(() => _showAllMounts = !_showAllMounts),
+                  child: Text(
+                    _showAllMounts
+                        ? '收起'
+                        : '显示前 10（共 ${s.mounts.length}）',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 8),
-          for (final m in s.mounts.take(10)) _MonitorMountBar(mount: m),
+          for (final m in (_showAllMounts ? s.mounts : s.mounts.take(10)))
+            _MonitorMountBar(mount: m),
         ] else if (s?.dfSpaceLine != null) ...[
           const SizedBox(height: 10),
           Text('磁盘', style: TextStyle(fontSize: 11, color: wb.textMuted)),
@@ -372,12 +491,59 @@ class _MonitorAppState extends State<MonitorApp>
                 txBytesPerSec: null,
               ),
           ];
-    final shown = rates.where((r) => !r.iface.isLoopback).toList();
-    final use = shown.isNotEmpty ? shown : rates;
+    final noLoop = rates.where((r) => !r.iface.isLoopback).toList();
+    final base = _hideLoopback && noLoop.isNotEmpty ? noLoop : rates;
+    final q = _netFilter.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? base
+        : [
+            for (final r in base)
+              if (r.iface.name.toLowerCase().contains(q)) r,
+          ];
+    final ifaceLimit = 8;
+    final shownIfaces =
+        _showAllIfaces ? filtered : filtered.take(ifaceLimit).toList();
+    final listeners = q.isEmpty
+        ? net.listeners
+        : [
+            for (final s in net.listeners)
+              if (s.endpoint.toLowerCase().contains(q) ||
+                  (s.pid?.toString().contains(q) ?? false) ||
+                  s.protocol.toLowerCase().contains(q))
+                s,
+          ];
+    final listenerLimit = 40;
+    final shownListeners = _showAllListeners
+        ? listeners
+        : listeners.take(listenerLimit).toList();
 
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
+        Row(
+          children: [
+            Expanded(
+              child: FilterField(
+                controller: _netFilterCtrl,
+                focusNode: _netFilterFocus,
+                hintText: '筛选网卡 / 端口 / PID…',
+                onChanged: (v) => setState(() {
+                  _netFilter = v;
+                  _selectedListenerIndex = null;
+                }),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilterChip(
+              label: const Text('隐藏回环'),
+              selected: _hideLoopback,
+              onSelected: (v) => setState(() => _hideLoopback = v),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Wrap(
           spacing: 10,
           runSpacing: 10,
@@ -412,9 +578,25 @@ class _MonitorAppState extends State<MonitorApp>
           ),
         ],
         const SizedBox(height: 14),
-        Text('网卡吞吐', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+        Row(
+          children: [
+            Text('网卡吞吐', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+            const Spacer(),
+            if (filtered.length > ifaceLimit)
+              TextButton(
+                onPressed: () =>
+                    setState(() => _showAllIfaces = !_showAllIfaces),
+                child: Text(
+                  _showAllIfaces
+                      ? '收起'
+                      : '显示前 $ifaceLimit（共 ${filtered.length}）',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+          ],
+        ),
         const SizedBox(height: 6),
-        for (final r in use.take(8)) ...[
+        for (final r in shownIfaces) ...[
           Container(
             margin: const EdgeInsets.only(bottom: 6),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -470,68 +652,130 @@ class _MonitorAppState extends State<MonitorApp>
           ),
         ],
         const SizedBox(height: 10),
-        Text('监听中', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+        Row(
+          children: [
+            Text('监听中', style: TextStyle(fontSize: 11, color: wb.textMuted)),
+            const Spacer(),
+            if (listeners.length > listenerLimit)
+              TextButton(
+                onPressed: () =>
+                    setState(() => _showAllListeners = !_showAllListeners),
+                child: Text(
+                  _showAllListeners
+                      ? '收起'
+                      : '显示前 $listenerLimit（共 ${listeners.length}）',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+          ],
+        ),
         const SizedBox(height: 6),
-        if (net.listeners.isEmpty)
+        if (listeners.isEmpty)
           Text(
-            '无监听端口',
+            q.isEmpty ? '无监听端口' : '无匹配监听',
             style: TextStyle(color: wb.textMuted, fontSize: 12),
           )
         else
-          for (final s in net.listeners.take(40))
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onDoubleTap: s.browserTarget == null
-                    ? null
-                    : () {
-                        final target = s.browserTarget;
-                        if (target == null) return;
-                        widget.wm.open(
-                          DesktopAppType.browser,
-                          args: {'url': target},
+          Focus(
+            focusNode: _netListFocus,
+            child: CallbackShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                    _moveListenerSelection(1, shownListeners.length),
+                const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                    _moveListenerSelection(-1, shownListeners.length),
+                const SingleActivator(LogicalKeyboardKey.enter): () =>
+                    _openSelectedListener(shownListeners),
+                const SingleActivator(LogicalKeyboardKey.slash): () =>
+                    _netFilterFocus.requestFocus(),
+                const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+                    () => _netFilterFocus.requestFocus(),
+                const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () =>
+                    _netFilterFocus.requestFocus(),
+              },
+              child: Column(
+                children: [
+                  for (var i = 0; i < shownListeners.length; i++)
+                    Builder(
+                      builder: (context) {
+                        final s = shownListeners[i];
+                        final selected = _selectedListenerIndex == i;
+                        return Material(
+                          color: selected
+                              ? wb.accentBlue.withValues(alpha: 0.16)
+                              : Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              setState(() => _selectedListenerIndex = i);
+                              _netListFocus.requestFocus();
+                            },
+                            onDoubleTap: s.browserTarget == null
+                                ? null
+                                : () {
+                                    final target = s.browserTarget;
+                                    if (target == null) return;
+                                    widget.wm.open(
+                                      DesktopAppType.browser,
+                                      args: {'url': target},
+                                    );
+                                  },
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 4,
+                                horizontal: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 52,
+                                    child: Text(
+                                      s.protocol.toUpperCase(),
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        color: wb.textMuted,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      s.endpoint,
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 12,
+                                        color: wb.secondaryText,
+                                      ),
+                                    ),
+                                  ),
+                                  if (s.pid != null)
+                                    Text(
+                                      'pid ${s.pid}',
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 10,
+                                        color: wb.textMuted,
+                                      ),
+                                    ),
+                                  if (s.browserTarget != null) ...[
+                                    const SizedBox(width: 6),
+                                    Icon(
+                                      Icons.open_in_browser_rounded,
+                                      size: 14,
+                                      color: wb.textMuted,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
                         );
                       },
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 52,
-                        child: Text(
-                          s.protocol.toUpperCase(),
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 11,
-                            color: wb.textMuted,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          s.endpoint,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            color: wb.secondaryText,
-                          ),
-                        ),
-                      ),
-                      if (s.pid != null)
-                        Text(
-                          'pid ${s.pid}',
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 10,
-                            color: wb.textMuted,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                    ),
+                ],
               ),
             ),
+          ),
       ],
     );
   }
@@ -608,15 +852,11 @@ class _GaugeCard extends StatelessWidget {
     required this.label,
     required this.value,
     this.tone,
-    this.history,
-    this.subtitle,
   });
 
   final String label;
   final String value;
   final double? tone;
-  final List<double>? history;
-  final String? subtitle;
 
   Color _toneColor(BuildContext context) {
     final t = tone;
@@ -629,10 +869,8 @@ class _GaugeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    final hist = history;
-    final sub = subtitle?.trim();
     return Container(
-      width: sub == null || sub.isEmpty ? 148 : 200,
+      width: 148,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: wb.panel,
@@ -660,28 +898,6 @@ class _GaugeCard extends StatelessWidget {
               fontFamily: 'monospace',
             ),
           ),
-          if (sub != null && sub.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              sub,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10, color: wb.textMuted),
-            ),
-          ],
-          if (hist != null && hist.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 28,
-              width: double.infinity,
-              child: CustomPaint(
-                painter: _SparklinePainter(
-                  values: List<double>.from(hist),
-                  color: wb.accentBlue,
-                ),
-              ),
-            ),
-          ],
           if (tone != null) ...[
             const SizedBox(height: 8),
             ClipRRect(
@@ -698,37 +914,4 @@ class _GaugeCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SparklinePainter extends CustomPainter {
-  _SparklinePainter({required this.values, required this.color});
-
-  final List<double> values;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (values.isEmpty) return;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final path = Path();
-    final n = values.length;
-    for (var i = 0; i < n; i++) {
-      final x = n == 1 ? 0.0 : size.width * i / (n - 1);
-      final y = size.height * (1 - values[i].clamp(0.0, 1.0));
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SparklinePainter oldDelegate) =>
-      oldDelegate.values != values || oldDelegate.color != color;
 }

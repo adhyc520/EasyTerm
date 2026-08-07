@@ -35,6 +35,19 @@ const int _kSftpDownloadMaxPendingRequests = 8;
 /// 真正吃紧。
 const int _kSftpDownloadDefaultConcurrency = 4;
 
+/// 在 chunk 边界尊重暂停：自旋等待直至恢复或取消。
+/// 返回 `true` 表示应取消（调用方走 [SftpUserCancelled]）。
+Future<bool> _waitWhilePaused(
+  SftpUploadProgressHooks? hooks,
+  String id,
+) async {
+  while (hooks?.shouldPauseUpload?.call(id) == true) {
+    if (hooks?.shouldCancelUpload?.call(id) == true) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+  }
+  return hooks?.shouldCancelUpload?.call(id) == true;
+}
+
 // ─── 通用工具 ────────────────────────────────────────────────────────────────
 
 String _labelAnchor(String localPath) {
@@ -278,7 +291,23 @@ Future<void> uploadPlannedFiles({
     }
     return;
   }
-  for (final entry in plan) {
+  final remaining = List<SftpPlannedUploadFile>.of(plan);
+  while (remaining.isNotEmpty) {
+    final order = hooks?.preferredUploadOrder?.call();
+    if (order != null && order.isNotEmpty) {
+      remaining.sort((a, b) {
+        final ia = order.indexOf(a.localPath);
+        final ib = order.indexOf(b.localPath);
+        final sa = ia < 0 ? 1 << 30 : ia;
+        final sb = ib < 0 ? 1 << 30 : ib;
+        return sa.compareTo(sb);
+      });
+    }
+    final entry = remaining.removeAt(0);
+    if (await _waitWhilePaused(hooks, entry.localPath)) {
+      hooks?.onFileEnd?.call(entry.localPath, const SftpUserCancelled());
+      continue;
+    }
     if (hooks?.shouldCancelUpload?.call(entry.localPath) == true) {
       // 必须主动 emit onFileEnd(SftpUserCancelled)，否则 `_cancelledIds` 里
       // 「全部取消」时为 pending 行写入的 id 会变成孤儿（`removeCancelled` 没人
@@ -304,6 +333,10 @@ Future<void> _uploadOneFile(
   required String displayLabel,
   SftpUploadProgressHooks? hooks,
 }) async {
+  if (await _waitWhilePaused(hooks, localFilePath)) {
+    hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
+    return;
+  }
   if (hooks?.shouldCancelUpload?.call(localFilePath) == true) {
     hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
     return;
@@ -315,6 +348,10 @@ Future<void> _uploadOneFile(
   final total = await file.length();
   hooks?.onFileStart?.call(localFilePath, displayLabel, total);
 
+  if (await _waitWhilePaused(hooks, localFilePath)) {
+    hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
+    return;
+  }
   if (hooks?.shouldCancelUpload?.call(localFilePath) == true) {
     hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
     return;
@@ -338,7 +375,8 @@ Future<void> _uploadOneFile(
   try {
     if (total == 0) {
       hooks?.onFileProgress?.call(localFilePath, 0, 0);
-      if (hooks?.shouldCancelUpload?.call(localFilePath) == true) {
+      if (await _waitWhilePaused(hooks, localFilePath) ||
+          hooks?.shouldCancelUpload?.call(localFilePath) == true) {
         stripRemoteIncomplete = true;
         hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
         return;
@@ -346,7 +384,8 @@ Future<void> _uploadOneFile(
     } else {
       var uploaded = 0;
       await for (final chunk in file.openRead(0, total)) {
-        if (hooks?.shouldCancelUpload?.call(localFilePath) == true) {
+        if (await _waitWhilePaused(hooks, localFilePath) ||
+            hooks?.shouldCancelUpload?.call(localFilePath) == true) {
           stripRemoteIncomplete = true;
           hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
           return;
@@ -357,7 +396,8 @@ Future<void> _uploadOneFile(
         hooks?.onFileProgress?.call(localFilePath, uploaded, total);
       }
     }
-    if (hooks?.shouldCancelUpload?.call(localFilePath) == true) {
+    if (await _waitWhilePaused(hooks, localFilePath) ||
+        hooks?.shouldCancelUpload?.call(localFilePath) == true) {
       stripRemoteIncomplete = true;
       hooks?.onFileEnd?.call(localFilePath, const SftpUserCancelled());
       return;
@@ -499,6 +539,10 @@ Future<void> executeDownloadPlan({
       final i = nextIndex++;
       if (i >= plan.length) return;
       final entry = plan[i];
+      if (await _waitWhilePaused(hooks, entry.taskId)) {
+        hooks?.onFileEnd?.call(entry.taskId, const SftpUserCancelled());
+        continue;
+      }
       if (hooks?.shouldCancelUpload?.call(entry.taskId) == true) {
         hooks?.onFileEnd?.call(entry.taskId, const SftpUserCancelled());
         continue;
@@ -534,6 +578,10 @@ Future<void> _downloadOneFileWithHooks({
   required int plannedSize,
   SftpUploadProgressHooks? hooks,
 }) async {
+  if (await _waitWhilePaused(hooks, taskId)) {
+    hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
+    return;
+  }
   if (hooks?.shouldCancelUpload?.call(taskId) == true) {
     hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
     return;
@@ -565,7 +613,8 @@ Future<void> _downloadOneFileWithHooks({
 
   try {
     hooks?.onFileStart?.call(taskId, displayLabel, total);
-    if (hooks?.shouldCancelUpload?.call(taskId) == true) {
+    if (await _waitWhilePaused(hooks, taskId) ||
+        hooks?.shouldCancelUpload?.call(taskId) == true) {
       hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
       return;
     }
@@ -576,7 +625,8 @@ Future<void> _downloadOneFileWithHooks({
       outSink = File(localPath).openWrite();
       if (total <= 0) {
         hooks?.onFileProgress?.call(taskId, 0, 0);
-        if (hooks?.shouldCancelUpload?.call(taskId) == true) {
+        if (await _waitWhilePaused(hooks, taskId) ||
+            hooks?.shouldCancelUpload?.call(taskId) == true) {
           userCancelled = true;
           hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
         }
@@ -588,7 +638,8 @@ Future<void> _downloadOneFileWithHooks({
           chunkSize: _kSftpChunkBytes,
           maxPendingRequests: _kSftpDownloadMaxPendingRequests,
         )) {
-          if (hooks?.shouldCancelUpload?.call(taskId) == true) {
+          if (await _waitWhilePaused(hooks, taskId) ||
+              hooks?.shouldCancelUpload?.call(taskId) == true) {
             userCancelled = true;
             hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
             break;
@@ -597,7 +648,9 @@ Future<void> _downloadOneFileWithHooks({
           done += chunk.length;
           hooks?.onFileProgress?.call(taskId, done, total);
         }
-        if (!userCancelled && hooks?.shouldCancelUpload?.call(taskId) == true) {
+        if (!userCancelled &&
+            (await _waitWhilePaused(hooks, taskId) ||
+                hooks?.shouldCancelUpload?.call(taskId) == true)) {
           userCancelled = true;
           hooks?.onFileEnd?.call(taskId, const SftpUserCancelled());
         }

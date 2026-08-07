@@ -1,5 +1,6 @@
 import 'dart:async' show unawaited;
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -17,6 +18,7 @@ import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import '../l10n/app_localizations.dart';
 import '../screens/remote_editor_screen.dart';
 import '../services/desktop_sftp_controller.dart';
+import '../services/sftp_bookmarks_store.dart';
 import '../services/sftp_browser_host.dart';
 import '../services/sftp_fs_transfer.dart' as sftp_transfer;
 import '../services/sftp_planned_upload.dart';
@@ -28,11 +30,39 @@ import '../services/workbench_desktop_shortcuts.dart';
 import '../theme/workbench_theme.dart';
 import '../util/desktop_drop_paths.dart';
 import '../util/remote_paths.dart';
+import 'remote_state_view.dart';
 import 'sftp_folder_delayed_draggable.dart';
 
 String _formatRemoteBytes(int? bytes) {
   if (bytes == null) return '—';
   return _formatByteCount(bytes);
+}
+
+String _formatSftpMode(SftpFileMode? mode) {
+  if (mode == null) return '—';
+  String tri(bool r, bool w, bool x) =>
+      '${r ? 'r' : '-'}${w ? 'w' : '-'}${x ? 'x' : '-'}';
+  final type = switch (mode.type) {
+    SftpFileType.directory => 'd',
+    SftpFileType.symbolicLink => 'l',
+    SftpFileType.pipe => 'p',
+    SftpFileType.socket => 's',
+    SftpFileType.blockDevice => 'b',
+    SftpFileType.characterDevice => 'c',
+    _ => '-',
+  };
+  return '$type'
+      '${tri(mode.userRead, mode.userWrite, mode.userExecute)}'
+      '${tri(mode.groupRead, mode.groupWrite, mode.groupExecute)}'
+      '${tri(mode.otherRead, mode.otherWrite, mode.otherExecute)}';
+}
+
+String _formatSftpOwner(SftpFileAttrs attr) {
+  final uid = attr.userID;
+  final gid = attr.groupID;
+  if (uid == null && gid == null) return '—';
+  if (uid != null && gid != null) return '$uid:$gid';
+  return '${uid ?? '—'}';
 }
 
 String _formatByteCount(int bytes) {
@@ -137,6 +167,7 @@ void _showEntryContextMenu(
   VoidCallback? onCopy,
   VoidCallback? onCut,
   Future<void> Function()? onPaste,
+  Future<void> Function()? onCopyPath,
   VoidCallback? onAnalyzeDiskUsage,
   VoidCallback? onOpenTerminal,
   Future<void> Function()? onProperties,
@@ -168,6 +199,8 @@ void _showEntryContextMenu(
         PopupMenuItem(value: 'cut', child: Text(l.sftpCutMenu)),
       if (onPaste != null)
         PopupMenuItem(value: 'paste', child: Text(l.sftpPasteMenu)),
+      if (onCopyPath != null)
+        const PopupMenuItem(value: 'copypath', child: Text('复制路径')),
       if (onRename != null)
         PopupMenuItem(value: 'rename', child: Text(l.sftpRenameMenu)),
       if (onAnalyzeDiskUsage != null)
@@ -193,6 +226,7 @@ void _showEntryContextMenu(
     if (v == 'copy' && onCopy != null) onCopy();
     if (v == 'cut' && onCut != null) onCut();
     if (v == 'paste' && onPaste != null) await onPaste();
+    if (v == 'copypath' && onCopyPath != null) await onCopyPath();
     if (v == 'rename' && onRename != null) await onRename();
     if (v == 'du' && onAnalyzeDiskUsage != null) onAnalyzeDiskUsage();
     if (v == 'props' && onProperties != null) await onProperties();
@@ -287,6 +321,10 @@ class _CutSelectionIntent extends Intent {
 
 class _PasteClipboardIntent extends Intent {
   const _PasteClipboardIntent();
+}
+
+class _GoToPathIntent extends Intent {
+  const _GoToPathIntent();
 }
 
 /// 将系统剪贴板中的 `file://` URI 转成本地路径；非 file scheme 返回 null。
@@ -597,6 +635,7 @@ class SftpBrowserState extends State<SftpBrowser> {
   final GlobalKey _listStackKey = GlobalKey();
   final Map<String, GlobalKey> _rowKeys = {};
   _SftpLayoutMode _layoutMode = _SftpLayoutMode.list;
+  bool _detailColumns = false;
 
   /// 框选：空白处按下并拖动后激活。
   int? _marqueePointer;
@@ -617,19 +656,71 @@ class SftpBrowserState extends State<SftpBrowser> {
   bool _searching = false;
   List<String> _searchHits = const [];
   String? _searchError;
+  bool _searchTruncated = false;
+  int _searchGen = 0;
+  int _searchMaxDepth = 4;
+  bool _searchContent = false;
+
+  bool _pathBarEditing = false;
+  final _pathCtrl = TextEditingController();
+  final FocusNode _pathFocus = FocusNode(debugLabel: 'sftpPathBar');
+
+  SftpBookmarksStore? _bookmarks;
+  SftpRecentStore? _recent;
+  List<String> _bookmarkList = const [];
+  List<String> _recentList = const [];
+  String? _lastTouchedCwd;
 
   SftpBrowserHost get _c => widget.controller;
+
+  String? get _hostKey {
+    final ws = _workspace;
+    if (ws == null) return null;
+    return '${ws.username}@${ws.host}:${ws.port}';
+  }
 
   @override
   void initState() {
     super.initState();
     _selectionCwd = _c.remoteCwd;
     _c.addListener(_onHostChanged);
+    _initBookmarksStores();
     if (widget.autofocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) requestKeyboardFocus();
       });
     }
+  }
+
+  void _initBookmarksStores() {
+    final key = _hostKey;
+    if (key == null) {
+      _bookmarks = null;
+      _recent = null;
+      _bookmarkList = const [];
+      _recentList = const [];
+      _lastTouchedCwd = null;
+      return;
+    }
+    if (_bookmarks?.hostKey == key && _recent?.hostKey == key) return;
+    _bookmarks = SftpBookmarksStore(key);
+    _recent = SftpRecentStore(key);
+    _lastTouchedCwd = null;
+    unawaited(_loadBookmarkLists());
+  }
+
+  Future<void> _loadBookmarkLists() async {
+    final bookmarks = _bookmarks;
+    final recent = _recent;
+    if (bookmarks == null || recent == null) return;
+    final marks = await bookmarks.load();
+    final recents = await recent.load();
+    if (!mounted) return;
+    if (_bookmarks != bookmarks || _recent != recent) return;
+    setState(() {
+      _bookmarkList = marks;
+      _recentList = recents;
+    });
   }
 
   /// 请求快捷键焦点（桌面窗口激活时调用）。
@@ -664,16 +755,20 @@ class SftpBrowserState extends State<SftpBrowser> {
       _resetMarquee(notify: false);
       _rowKeys.clear();
       _c.addListener(_onHostChanged);
+      _initBookmarksStores();
     }
   }
 
   @override
   void dispose() {
     _clipboardWriteGeneration++;
+    _searchGen++;
     _c.removeListener(_onHostChanged);
     _focusNode.dispose();
     _scrollController.dispose();
     _searchCtrl.dispose();
+    _pathCtrl.dispose();
+    _pathFocus.dispose();
     super.dispose();
   }
 
@@ -700,7 +795,37 @@ class SftpBrowserState extends State<SftpBrowser> {
       if (_selectedNames.length != before) dirty = true;
       _rowKeys.removeWhere((k, _) => !names.contains(k));
     }
+    if (!_c.loadingDir && _c.loadError == null) {
+      final cwd = _c.remoteCwd.trim();
+      if (cwd.isNotEmpty && cwd != _lastTouchedCwd) {
+        _lastTouchedCwd = cwd;
+        unawaited(_touchRecent(cwd));
+      }
+    }
     if (dirty) setState(() {});
+  }
+
+  Future<void> _touchRecent(String path) async {
+    final recent = _recent;
+    if (recent == null) return;
+    final list = await recent.touch(path);
+    if (!mounted || _recent != recent) return;
+    setState(() => _recentList = list);
+  }
+
+  Future<void> _toggleBookmarkCurrent() async {
+    final bookmarks = _bookmarks;
+    final cwd = _c.remoteCwd.trim();
+    if (bookmarks == null || cwd.isEmpty) return;
+    final list = await bookmarks.toggle(cwd);
+    if (!mounted || _bookmarks != bookmarks) return;
+    setState(() => _bookmarkList = list);
+  }
+
+  Future<void> _navigateQuickAccess(String path) async {
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) return;
+    await _c.navigateToAbsolutePath(trimmed);
   }
 
   GlobalKey _rowKeyFor(String name) =>
@@ -1275,6 +1400,7 @@ class SftpBrowserState extends State<SftpBrowser> {
       setState(() {
         _searchHits = const [];
         _searchError = null;
+        _searchTruncated = false;
       });
       return;
     }
@@ -1283,23 +1409,36 @@ class SftpBrowserState extends State<SftpBrowser> {
       setState(() => _searchError = '非法搜索模式');
       return;
     }
+    final gen = ++_searchGen;
     setState(() {
       _searching = true;
       _searchError = null;
+      _searchTruncated = false;
     });
     try {
       final cwd = _c.remoteCwd;
       final quoted = q.replaceAll("'", "'\\''");
-      final cmd =
-          "cd '${cwd.replaceAll("'", "'\\''")}' && "
-          "find . -maxdepth 4 -iname '*$quoted*' 2>/dev/null | head -n 80";
+      final depth = _searchMaxDepth;
+      final cwdQ = cwd.replaceAll("'", "'\\''");
+      final String cmd;
+      if (_searchContent) {
+        cmd =
+            "cd '$cwdQ' && "
+            "find . -maxdepth $depth -type f "
+            "-exec grep -l -- '$quoted' {} + 2>/dev/null | head -n 80";
+      } else {
+        cmd =
+            "cd '$cwdQ' && "
+            "find . -maxdepth $depth -iname '*$quoted*' 2>/dev/null | head -n 80";
+      }
       final raw = await ws.runQueued(cmd);
-      if (!mounted) return;
+      if (!mounted || gen != _searchGen) return;
       if (raw == null) {
         setState(() {
           _searching = false;
           _searchError = '搜索失败';
           _searchHits = const [];
+          _searchTruncated = false;
         });
         return;
       }
@@ -1312,14 +1451,22 @@ class SftpBrowserState extends State<SftpBrowser> {
       setState(() {
         _searching = false;
         _searchHits = hits;
+        _searchTruncated = hits.length >= 80;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || gen != _searchGen) return;
       setState(() {
         _searching = false;
         _searchError = '$e';
+        _searchTruncated = false;
       });
     }
+  }
+
+  void _cancelSearch() {
+    _searchGen++;
+    if (!_searching) return;
+    setState(() => _searching = false);
   }
 
   Future<void> _openSearchHit(String relative) async {
@@ -1336,6 +1483,7 @@ class SftpBrowserState extends State<SftpBrowser> {
     if (!mounted) return;
     setState(() {
       _searchHits = const [];
+      _searchTruncated = false;
       _searchCtrl.clear();
     });
     final entry = _entryByName(fileName);
@@ -1982,6 +2130,78 @@ class SftpBrowserState extends State<SftpBrowser> {
     });
   }
 
+  Future<void> _copySelectedPaths(BuildContext context) async {
+    final names = _selectedInListOrder();
+    if (names.isEmpty) return;
+    final text = names.map((n) => remoteJoin(_c.remoteCwd, n)).join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(names.length == 1 ? '已复制路径' : '已复制 ${names.length} 条路径')),
+    );
+  }
+
+  void _beginPathBarEdit() {
+    setState(() {
+      _pathBarEditing = true;
+      _pathCtrl.text = _c.remoteCwd;
+      _pathCtrl.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _pathCtrl.text.length,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _pathFocus.requestFocus();
+    });
+  }
+
+  void _cancelPathBarEdit() {
+    if (!_pathBarEditing) return;
+    setState(() => _pathBarEditing = false);
+    _requestFocus();
+  }
+
+  Future<void> _submitPathBar() async {
+    final path = _pathCtrl.text.trim();
+    setState(() => _pathBarEditing = false);
+    if (path.isNotEmpty) {
+      await _c.navigateToAbsolutePath(path);
+    }
+    if (mounted) _requestFocus();
+  }
+
+  Widget _sortHeaderCell({
+    required String label,
+    required SftpSortColumn column,
+    TextAlign textAlign = TextAlign.start,
+    required int? flex,
+    double? width,
+  }) {
+    final active = _c.sortColumn == column;
+    final arrow = !active
+        ? ''
+        : (_c.sortAscending ? ' ↑' : ' ↓');
+    final style = TextStyle(
+      fontSize: 10,
+      color: active ? context.wb.accentBlue : context.wb.textMuted,
+      fontWeight: FontWeight.w600,
+    );
+    final child = InkWell(
+      onTap: () => _c.setSort(column),
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Text(
+          '$label$arrow',
+          textAlign: textAlign,
+          style: style,
+        ),
+      ),
+    );
+    if (flex != null) return Expanded(flex: flex, child: child);
+    return SizedBox(width: width, child: child);
+  }
+
   Widget _toolbarIconButton({
     required String tooltip,
     required IconData icon,
@@ -1993,13 +2213,324 @@ class SftpBrowserState extends State<SftpBrowser> {
       tooltip: tooltip,
       iconSize: 18,
       visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(30, 30),
+        maximumSize: const Size(30, 30),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      ),
+      constraints: const BoxConstraints.tightFor(width: 30, height: 30),
       padding: EdgeInsets.zero,
       onPressed: onPressed,
       icon: Icon(
         icon,
         size: 18,
         color: selected ? wb.accentBlue : wb.textMuted,
+      ),
+    );
+  }
+
+  List<Widget> _toolbarTrailingActions(AppLocalizations l) {
+    return [
+      if (_selectedNames.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Text(
+            l.sftpSelectionCount(_selectedNames.length),
+            style: TextStyle(fontSize: 11, color: context.wb.textMuted),
+          ),
+        ),
+      if (_selectedNames.isNotEmpty) ...[
+        _toolbarIconButton(
+          tooltip: l.sftpDownloadMenu,
+          icon: Icons.download_rounded,
+          onPressed: () => unawaited(_downloadSelected(context)),
+        ),
+        _toolbarIconButton(
+          tooltip: l.sftpCopyMenu,
+          icon: Icons.copy_rounded,
+          onPressed: () => unawaited(_copySelected(context)),
+        ),
+        _toolbarIconButton(
+          tooltip: l.sftpCutMenu,
+          icon: Icons.content_cut_rounded,
+          onPressed: () => unawaited(_cutSelected(context)),
+        ),
+        if (_selectedNames.length == 1)
+          _toolbarIconButton(
+            tooltip: l.sftpRenameMenu,
+            icon: Icons.drive_file_rename_outline_rounded,
+            onPressed: () => unawaited(_renameSelected(context)),
+          ),
+        if (widget.onAnalyzeDiskUsage != null &&
+            _selectedNames.length == 1 &&
+            (_entryByName(_selectedNames.first)?.attr.isDirectory ?? false))
+          _toolbarIconButton(
+            tooltip: l.sftpAnalyzeDiskUsageMenu,
+            icon: Icons.pie_chart_outline_rounded,
+            onPressed: () =>
+                widget.onAnalyzeDiskUsage!(_selectedNames.first),
+          ),
+        _toolbarIconButton(
+          tooltip: l.sftpDeleteMenu,
+          icon: Icons.delete_outline_rounded,
+          onPressed: () => unawaited(_confirmDeleteSelected(context)),
+        ),
+      ],
+      if (_canPaste)
+        _toolbarIconButton(
+          tooltip: l.sftpPasteMenu,
+          icon: Icons.content_paste_rounded,
+          onPressed: () => unawaited(_pasteClipboard(context)),
+        ),
+      if (!kIsWeb) ...[
+        _toolbarIconButton(
+          tooltip: l.sftpUploadFilesMenu,
+          icon: Icons.upload_file_outlined,
+          onPressed: _c.loadingDir
+              ? null
+              : () => unawaited(_pickAndUploadFiles(context)),
+        ),
+        _toolbarIconButton(
+          tooltip: l.sftpUploadFolderMenu,
+          icon: Icons.drive_folder_upload_outlined,
+          onPressed: _c.loadingDir
+              ? null
+              : () => unawaited(_pickAndUploadFolder(context)),
+        ),
+      ],
+      _toolbarIconButton(
+        tooltip: l.sftpNewFolderTooltip,
+        icon: Icons.create_new_folder_outlined,
+        onPressed: _c.loadingDir
+            ? null
+            : () => unawaited(_createNewFolder(context)),
+      ),
+      _toolbarIconButton(
+        tooltip: l.sftpViewListTooltip,
+        icon: Icons.view_list_rounded,
+        selected: _layoutMode == _SftpLayoutMode.list,
+        onPressed: () => _setLayoutMode(_SftpLayoutMode.list),
+      ),
+      _toolbarIconButton(
+        tooltip: l.sftpViewGridTooltip,
+        icon: Icons.grid_view_rounded,
+        selected: _layoutMode == _SftpLayoutMode.grid,
+        onPressed: () => _setLayoutMode(_SftpLayoutMode.grid),
+      ),
+      _toolbarIconButton(
+        tooltip: '详情',
+        icon: Icons.view_column_outlined,
+        selected: _detailColumns,
+        onPressed: () => setState(() => _detailColumns = !_detailColumns),
+      ),
+      _toolbarIconButton(
+        tooltip: _c.showHidden ? '隐藏点文件' : '显示隐藏文件',
+        icon: _c.showHidden
+            ? Icons.visibility_rounded
+            : Icons.visibility_off_outlined,
+        selected: _c.showHidden,
+        onPressed: () => _c.showHidden = !_c.showHidden,
+      ),
+      _toolbarIconButton(
+        tooltip: l.sftpRefreshTooltip,
+        icon: Icons.refresh_rounded,
+        onPressed: _c.loadingDir ? null : () => _c.refreshDirectory(),
+      ),
+    ];
+  }
+
+  Widget _bookmarkStarButton() {
+    final cwd = _c.remoteCwd.trim();
+    final bookmarked = cwd.isNotEmpty && _bookmarkList.contains(cwd);
+    return _toolbarIconButton(
+      tooltip: bookmarked ? '取消书签' : '添加书签',
+      icon: bookmarked ? Icons.star_rounded : Icons.star_outline_rounded,
+      selected: bookmarked,
+      onPressed: _bookmarks == null || cwd.isEmpty
+          ? null
+          : () => unawaited(_toggleBookmarkCurrent()),
+    );
+  }
+
+  Widget _quickAccessButton() {
+    final wb = context.wb;
+    final bookmarks = _bookmarkList;
+    final recent = _recentList
+        .where((p) => !bookmarks.contains(p))
+        .toList(growable: false);
+    return PopupMenuButton<String>(
+      tooltip: '快速访问',
+      enabled: !_c.loadingDir,
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 32),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(30, 30),
+        maximumSize: const Size(30, 30),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(Icons.bookmarks_outlined, size: 18, color: wb.textMuted),
+      onSelected: (path) => unawaited(_navigateQuickAccess(path)),
+      itemBuilder: (context) {
+        if (bookmarks.isEmpty && recent.isEmpty) {
+          return [
+            PopupMenuItem<String>(
+              enabled: false,
+              child: Text(
+                '暂无书签或最近路径',
+                style: TextStyle(fontSize: 12, color: wb.textMuted),
+              ),
+            ),
+          ];
+        }
+        return [
+          if (bookmarks.isNotEmpty) ...[
+            PopupMenuItem<String>(
+              enabled: false,
+              height: 28,
+              child: Text(
+                '书签',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: wb.textMuted,
+                ),
+              ),
+            ),
+            for (final path in bookmarks)
+              PopupMenuItem<String>(
+                value: path,
+                child: Text(
+                  path,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: wb.primaryText,
+                  ),
+                ),
+              ),
+          ],
+          if (bookmarks.isNotEmpty && recent.isNotEmpty)
+            const PopupMenuDivider(height: 8),
+          if (recent.isNotEmpty) ...[
+            PopupMenuItem<String>(
+              enabled: false,
+              height: 28,
+              child: Text(
+                '最近',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: wb.textMuted,
+                ),
+              ),
+            ),
+            for (final path in recent)
+              PopupMenuItem<String>(
+                value: path,
+                child: Text(
+                  path,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: wb.primaryText,
+                  ),
+                ),
+              ),
+          ],
+        ];
+      },
+    );
+  }
+
+  Widget _toolbarPathBar(List<({String label, String path})> segs) {
+    if (_pathBarEditing) {
+      return SizedBox(
+        height: 28,
+        child: TextField(
+          controller: _pathCtrl,
+          focusNode: _pathFocus,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12,
+            color: context.wb.primaryText,
+          ),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 6,
+            ),
+            hintText: '绝对路径',
+            hintStyle: TextStyle(
+              color: context.wb.textMuted,
+              fontSize: 12,
+            ),
+            filled: true,
+            fillColor: context.wb.panelElevated,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(4),
+              borderSide: BorderSide(color: context.wb.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(4),
+              borderSide: BorderSide(color: context.wb.border),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(4),
+              borderSide: BorderSide(color: context.wb.accentBlue),
+            ),
+          ),
+          onSubmitted: (_) => unawaited(_submitPathBar()),
+        ),
+      );
+    }
+    return GestureDetector(
+      onDoubleTap: _beginPathBarEdit,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < segs.length; i++) ...[
+              if (i > 0)
+                Text(
+                  ' / ',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: context.wb.textMuted,
+                  ),
+                ),
+              InkWell(
+                onTap: _c.loadingDir
+                    ? null
+                    : () => _c.navigateToAbsolutePath(segs[i].path),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 2,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    segs[i].label,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: context.wb.accentBlue,
+                      decoration: TextDecoration.underline,
+                      decorationColor: context.wb.accentBlue,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2043,6 +2574,7 @@ class SftpBrowserState extends State<SftpBrowser> {
             onCopy: () => unawaited(_copySelected(ctx2)),
             onCut: () => unawaited(_cutSelected(ctx2)),
             onPaste: _canPaste ? () => _pasteClipboard(ctx2) : null,
+            onCopyPath: () => _copySelectedPaths(ctx2),
             onAnalyzeDiskUsage: widget.onAnalyzeDiskUsage != null && isDir
                 ? () => widget.onAnalyzeDiskUsage!(entry.filename)
                 : null,
@@ -2149,6 +2681,33 @@ class SftpBrowserState extends State<SftpBrowser> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (_detailColumns) ...[
+            SizedBox(
+              width: 82,
+              child: Text(
+                _formatSftpMode(entry.attr.mode),
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  color: context.wb.textMuted,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 72,
+              child: Text(
+                _formatSftpOwner(entry.attr),
+                textAlign: TextAlign.end,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  color: context.wb.textMuted,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           SizedBox(
             width: 64,
             child: Text(
@@ -2371,6 +2930,8 @@ class SftpBrowserState extends State<SftpBrowser> {
         a: const _CutSelectionIntent(),
       for (final a in workbenchMetaOrControl(LogicalKeyboardKey.keyV))
         a: const _PasteClipboardIntent(),
+      for (final a in workbenchMetaOrControl(LogicalKeyboardKey.keyL))
+        a: const _GoToPathIntent(),
       const SingleActivator(LogicalKeyboardKey.escape):
           const _ClearSelectionIntent(),
       const SingleActivator(LogicalKeyboardKey.delete):
@@ -2403,6 +2964,10 @@ class SftpBrowserState extends State<SftpBrowser> {
               ),
               _ClearSelectionIntent: CallbackAction<_ClearSelectionIntent>(
                 onInvoke: (_) {
+                  if (_pathBarEditing) {
+                    _cancelPathBarEdit();
+                    return null;
+                  }
                   _clearSelection();
                   return null;
                 },
@@ -2451,6 +3016,20 @@ class SftpBrowserState extends State<SftpBrowser> {
                   return null;
                 },
               ),
+              _GoToPathIntent: CallbackAction<_GoToPathIntent>(
+                onInvoke: (_) {
+                  if (_pathBarEditing) {
+                    _pathFocus.requestFocus();
+                    _pathCtrl.selection = TextSelection(
+                      baseOffset: 0,
+                      extentOffset: _pathCtrl.text.length,
+                    );
+                  } else {
+                    _beginPathBarEdit();
+                  }
+                  return null;
+                },
+              ),
             },
             child: Focus(
               focusNode: _focusNode,
@@ -2464,175 +3043,67 @@ class SftpBrowserState extends State<SftpBrowser> {
                       children: [
                         Padding(
                           padding: const EdgeInsets.fromLTRB(8, 10, 4, 4),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Row(
-                                    children: [
-                                      for (var i = 0; i < segs.length; i++) ...[
-                                        if (i > 0)
-                                          Text(
-                                            ' / ',
-                                            style: TextStyle(
-                                              fontFamily: 'monospace',
-                                              fontSize: 11,
-                                              color: context.wb.textMuted,
-                                            ),
-                                          ),
-                                        InkWell(
-                                          onTap: _c.loadingDir
-                                              ? null
-                                              : () {
-                                                  _c.navigateToAbsolutePath(
-                                                    segs[i].path,
-                                                  );
-                                                },
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 2,
-                                              vertical: 2,
-                                            ),
-                                            child: Text(
-                                              segs[i].label,
-                                              style: TextStyle(
-                                                fontFamily: 'monospace',
-                                                fontSize: 11,
-                                                color: context.wb.accentBlue,
-                                                decoration:
-                                                    TextDecoration.underline,
-                                                decorationColor:
-                                                    context.wb.accentBlue,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              // Path expands; bookmark / quick-access / trailing
+                              // actions share one capped horizontal strip so the
+                              // outer Row never overflows (plan 2.7 — narrow
+                              // file-manager windows, e.g. ~288px content width).
+                              const navWidth = 30.0 * 3;
+                              const pathMinWidth = 72.0;
+                              final actionsMax = math.max(
+                                0.0,
+                                constraints.maxWidth - navWidth - pathMinWidth,
+                              );
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  _toolbarIconButton(
+                                    tooltip: '返回',
+                                    icon: Icons.arrow_back_rounded,
+                                    onPressed:
+                                        !_c.canGoBack || _c.loadingDir
+                                        ? null
+                                        : () => unawaited(_c.goBack()),
                                   ),
-                                ),
-                              ),
-                              if (_selectedNames.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 4),
-                                  child: Text(
-                                    l.sftpSelectionCount(_selectedNames.length),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: context.wb.textMuted,
+                                  _toolbarIconButton(
+                                    tooltip: '前进',
+                                    icon: Icons.arrow_forward_rounded,
+                                    onPressed:
+                                        !_c.canGoForward || _c.loadingDir
+                                        ? null
+                                        : () => unawaited(_c.goForward()),
+                                  ),
+                                  _toolbarIconButton(
+                                    tooltip: '上级',
+                                    icon: Icons.arrow_upward_rounded,
+                                    onPressed: !_c.canGoUp || _c.loadingDir
+                                        ? null
+                                        : () => unawaited(_c.navigateUp()),
+                                  ),
+                                  Expanded(child: _toolbarPathBar(segs)),
+                                  SizedBox(
+                                    height: 34,
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: actionsMax,
+                                      ),
+                                      child: ListView(
+                                        scrollDirection: Axis.horizontal,
+                                        shrinkWrap: true,
+                                        primary: false,
+                                        padding: EdgeInsets.zero,
+                                        children: [
+                                          _bookmarkStarButton(),
+                                          _quickAccessButton(),
+                                          ..._toolbarTrailingActions(l),
+                                        ],
+                                      ),
                                     ),
                                   ),
-                                ),
-                              if (_selectedNames.isNotEmpty) ...[
-                                _toolbarIconButton(
-                                  tooltip: l.sftpDownloadMenu,
-                                  icon: Icons.download_rounded,
-                                  onPressed: () =>
-                                      unawaited(_downloadSelected(context)),
-                                ),
-                                _toolbarIconButton(
-                                  tooltip: l.sftpCopyMenu,
-                                  icon: Icons.copy_rounded,
-                                  onPressed: () =>
-                                      unawaited(_copySelected(context)),
-                                ),
-                                _toolbarIconButton(
-                                  tooltip: l.sftpCutMenu,
-                                  icon: Icons.content_cut_rounded,
-                                  onPressed: () =>
-                                      unawaited(_cutSelected(context)),
-                                ),
-                                if (_selectedNames.length == 1)
-                                  _toolbarIconButton(
-                                    tooltip: l.sftpRenameMenu,
-                                    icon:
-                                        Icons.drive_file_rename_outline_rounded,
-                                    onPressed: () =>
-                                        unawaited(_renameSelected(context)),
-                                  ),
-                                if (widget.onAnalyzeDiskUsage != null &&
-                                    _selectedNames.length == 1 &&
-                                    (_entryByName(
-                                          _selectedNames.first,
-                                        )?.attr.isDirectory ??
-                                        false))
-                                  _toolbarIconButton(
-                                    tooltip: l.sftpAnalyzeDiskUsageMenu,
-                                    icon: Icons.pie_chart_outline_rounded,
-                                    onPressed: () => widget.onAnalyzeDiskUsage!(
-                                      _selectedNames.first,
-                                    ),
-                                  ),
-                                _toolbarIconButton(
-                                  tooltip: l.sftpDeleteMenu,
-                                  icon: Icons.delete_outline_rounded,
-                                  onPressed: () => unawaited(
-                                    _confirmDeleteSelected(context),
-                                  ),
-                                ),
-                              ],
-                              if (_canPaste)
-                                _toolbarIconButton(
-                                  tooltip: l.sftpPasteMenu,
-                                  icon: Icons.content_paste_rounded,
-                                  onPressed: () =>
-                                      unawaited(_pasteClipboard(context)),
-                                ),
-                              if (!kIsWeb) ...[
-                                _toolbarIconButton(
-                                  tooltip: l.sftpUploadFilesMenu,
-                                  icon: Icons.upload_file_outlined,
-                                  onPressed: _c.loadingDir
-                                      ? null
-                                      : () => unawaited(
-                                          _pickAndUploadFiles(context),
-                                        ),
-                                ),
-                                _toolbarIconButton(
-                                  tooltip: l.sftpUploadFolderMenu,
-                                  icon: Icons.drive_folder_upload_outlined,
-                                  onPressed: _c.loadingDir
-                                      ? null
-                                      : () => unawaited(
-                                          _pickAndUploadFolder(context),
-                                        ),
-                                ),
-                              ],
-                              _toolbarIconButton(
-                                tooltip: l.sftpNewFolderTooltip,
-                                icon: Icons.create_new_folder_outlined,
-                                onPressed: _c.loadingDir
-                                    ? null
-                                    : () =>
-                                          unawaited(_createNewFolder(context)),
-                              ),
-                              _toolbarIconButton(
-                                tooltip: l.sftpViewListTooltip,
-                                icon: Icons.view_list_rounded,
-                                selected: _layoutMode == _SftpLayoutMode.list,
-                                onPressed: () =>
-                                    _setLayoutMode(_SftpLayoutMode.list),
-                              ),
-                              _toolbarIconButton(
-                                tooltip: l.sftpViewGridTooltip,
-                                icon: Icons.grid_view_rounded,
-                                selected: _layoutMode == _SftpLayoutMode.grid,
-                                onPressed: () =>
-                                    _setLayoutMode(_SftpLayoutMode.grid),
-                              ),
-                              _toolbarIconButton(
-                                tooltip: l.sftpRefreshTooltip,
-                                icon: Icons.refresh_rounded,
-                                onPressed: _c.loadingDir
-                                    ? null
-                                    : () => _c.refreshDirectory(),
-                              ),
-                            ],
+                                ],
+                              );
+                            },
                           ),
                         ),
                         Divider(height: 1, color: context.wb.border),
@@ -2650,7 +3121,9 @@ class SftpBrowserState extends State<SftpBrowser> {
                                   ),
                                   decoration: InputDecoration(
                                     isDense: true,
-                                    hintText: '搜索文件名（find）',
+                                    hintText: _searchContent
+                                        ? '搜索文件内容（grep）'
+                                        : '搜索文件名（find）',
                                     hintStyle: TextStyle(
                                       color: context.wb.textMuted,
                                       fontSize: 12,
@@ -2675,16 +3148,69 @@ class SftpBrowserState extends State<SftpBrowser> {
                                   onSubmitted: (_) => unawaited(_runSearch()),
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              if (_searching)
+                              const SizedBox(width: 4),
+                              SizedBox(
+                                height: 30,
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<int>(
+                                    value: _searchMaxDepth,
+                                    isDense: true,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: context.wb.primaryText,
+                                    ),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: 2,
+                                        child: Text('深2'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 4,
+                                        child: Text('深4'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 6,
+                                        child: Text('深6'),
+                                      ),
+                                    ],
+                                    onChanged: _searching
+                                        ? null
+                                        : (v) {
+                                            if (v == null) return;
+                                            setState(() => _searchMaxDepth = v);
+                                          },
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              FilterChip(
+                                label: const Text(
+                                  '搜内容',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                                selected: _searchContent,
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onSelected: _searching
+                                    ? null
+                                    : (v) =>
+                                        setState(() => _searchContent = v),
+                              ),
+                              const SizedBox(width: 4),
+                              if (_searching) ...[
                                 const SizedBox(
                                   width: 18,
                                   height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
                                   ),
-                                )
-                              else
+                                ),
+                                TextButton(
+                                  onPressed: _cancelSearch,
+                                  child: const Text('取消'),
+                                ),
+                              ] else
                                 TextButton(
                                   onPressed: () => unawaited(_runSearch()),
                                   child: const Text('搜索'),
@@ -2695,6 +3221,7 @@ class SftpBrowserState extends State<SftpBrowser> {
                                   onPressed: () => setState(() {
                                     _searchHits = const [];
                                     _searchError = null;
+                                    _searchTruncated = false;
                                     _searchCtrl.clear();
                                   }),
                                   child: const Text('清除'),
@@ -2710,6 +3237,17 @@ class SftpBrowserState extends State<SftpBrowser> {
                               style: TextStyle(
                                 color: context.wb.offline,
                                 fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        if (_searchTruncated && _searchHits.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                            child: Text(
+                              '已截断，仅前 80 项',
+                              style: TextStyle(
+                                color: context.wb.textMuted,
+                                fontSize: 11,
                               ),
                             ),
                           ),
@@ -2810,14 +3348,19 @@ class SftpBrowserState extends State<SftpBrowser> {
                                       )
                                     : Colors.transparent,
                               ),
-                              // 仅在尚无列表时整页 loading；刷新时保留旧项，等内容变了再替换。
-                              child: _c.loadingDir && _c.entries.isEmpty
-                                  ? Center(
-                                      child: CircularProgressIndicator(
-                                        color: context.wb.accentBlue,
-                                      ),
-                                    )
-                                  : Column(
+                              // 仅在尚无列表时整页 loading / error；刷新时保留旧项。
+                              child: RemoteStateView(
+                                state: _c.loadingDir && _c.entries.isEmpty
+                                    ? RemoteState.loading
+                                    : (_c.loadError != null &&
+                                            _c.entries.isEmpty)
+                                        ? RemoteState.error
+                                        : RemoteState.data,
+                                message: _c.loadError,
+                                onRetry: _c.loadError != null
+                                    ? () => unawaited(_c.refreshDirectory())
+                                    : null,
+                                data: Column(
                                       children: [
                                         if (_layoutMode ==
                                             _SftpLayoutMode.list) ...[
@@ -2832,46 +3375,56 @@ class SftpBrowserState extends State<SftpBrowser> {
                                               children: [
                                                 const SizedBox(width: 22),
                                                 const SizedBox(width: 4),
-                                                Expanded(
+                                                _sortHeaderCell(
+                                                  label: l.sftpColumnName,
+                                                  column: SftpSortColumn.name,
                                                   flex: 5,
-                                                  child: Text(
-                                                    l.sftpColumnName,
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      color:
-                                                          context.wb.textMuted,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
                                                 ),
-                                                SizedBox(
-                                                  width: 64,
-                                                  child: Text(
-                                                    l.sftpColumnSize,
-                                                    textAlign: TextAlign.end,
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      color:
-                                                          context.wb.textMuted,
-                                                      fontWeight:
-                                                          FontWeight.w600,
+                                                if (_detailColumns) ...[
+                                                  SizedBox(
+                                                    width: 82,
+                                                    child: Text(
+                                                      '权限',
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        color: context
+                                                            .wb.textMuted,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
                                                     ),
                                                   ),
+                                                  const SizedBox(width: 6),
+                                                  SizedBox(
+                                                    width: 72,
+                                                    child: Text(
+                                                      '所有者',
+                                                      textAlign:
+                                                          TextAlign.end,
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        color: context
+                                                            .wb.textMuted,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                ],
+                                                _sortHeaderCell(
+                                                  label: l.sftpColumnSize,
+                                                  column: SftpSortColumn.size,
+                                                  textAlign: TextAlign.end,
+                                                  flex: null,
+                                                  width: 64,
                                                 ),
                                                 const SizedBox(width: 6),
-                                                SizedBox(
+                                                _sortHeaderCell(
+                                                  label: l.sftpColumnModified,
+                                                  column: SftpSortColumn.mtime,
+                                                  flex: null,
                                                   width: 108,
-                                                  child: Text(
-                                                    l.sftpColumnModified,
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      color:
-                                                          context.wb.textMuted,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                  ),
                                                 ),
                                               ],
                                             ),
@@ -2926,6 +3479,7 @@ class SftpBrowserState extends State<SftpBrowser> {
                                         ),
                                       ],
                                     ),
+                              ),
                             ),
                           ),
                         ),

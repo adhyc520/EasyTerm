@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/remote_sudo.dart';
 import '../services/ssh_workspace_controller.dart';
 
@@ -44,7 +45,10 @@ Future<String?> runWithSudoPasswordPrompt(
     if (!context.mounted) return RemoteSudo.cancelled;
     final next = await promptSudoPassword(
       context,
-      errorText: RemoteSudo.isAuthFailed(err) ? '密码不正确，请重试' : null,
+      errorText: RemoteSudo.isAuthFailed(err)
+          ? (AppLocalizations.of(context)?.sudoPasswordIncorrect ??
+              '密码不正确，请重试')
+          : null,
       offerSshPassword: controller.password.isNotEmpty,
       sshPassword: controller.password.isNotEmpty ? controller.password : null,
     );
@@ -54,6 +58,7 @@ Future<String?> runWithSudoPasswordPrompt(
     err = await attempt(pwd);
     if (err == null) {
       controller.cachedSudoPassword = pwd;
+      controller.touchSudoPassword();
       return null;
     }
     if (RemoteSudo.isAuthFailed(err)) {
@@ -71,6 +76,9 @@ Future<String?> runWithSudoPasswordPrompt(
 
   if (err == null && pwd != null && pwd.isNotEmpty) {
     controller.cachedSudoPassword = pwd;
+    controller.touchSudoPassword();
+  } else if (err == null && controller.cachedSudoPassword != null) {
+    controller.touchSudoPassword();
   }
   return err;
 }
@@ -118,17 +126,19 @@ class _SudoPasswordDialogState extends State<_SudoPasswordDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('需要 sudo 授权'),
+      title: Text(l?.sudoNeedAuthTitle ?? '需要 sudo 授权'),
       content: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              '远端执行特权命令需要 sudo 密码。密码仅用于本次 SSH 会话，不会保存到本地。',
-              style: TextStyle(fontSize: 13),
+            Text(
+              l?.sudoAuthBody ??
+                  '远端执行特权命令需要 sudo 密码。密码将在本次会话内复用（15 分钟空闲后失效），不会保存到本地。',
+              style: const TextStyle(fontSize: 13),
             ),
             if (widget.errorText != null) ...[
               const SizedBox(height: 10),
@@ -145,11 +155,13 @@ class _SudoPasswordDialogState extends State<_SudoPasswordDialog> {
               enabled: !_useSshPassword,
               onSubmitted: (_) => _submit(),
               decoration: InputDecoration(
-                labelText: 'sudo 密码',
+                labelText: l?.sudoPasswordLabel ?? 'sudo 密码',
                 isDense: true,
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
-                  tooltip: _obscure ? '显示' : '隐藏',
+                  tooltip: _obscure
+                      ? (l?.sudoShowPassword ?? '显示')
+                      : (l?.sudoHidePassword ?? '隐藏'),
                   onPressed: () => setState(() => _obscure = !_obscure),
                   icon: Icon(
                     _obscure
@@ -166,9 +178,9 @@ class _SudoPasswordDialogState extends State<_SudoPasswordDialog> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 value: _useSshPassword,
-                title: const Text(
-                  '使用 SSH 登录密码',
-                  style: TextStyle(fontSize: 13),
+                title: Text(
+                  l?.sudoUseSshPassword ?? '使用 SSH 登录密码',
+                  style: const TextStyle(fontSize: 13),
                 ),
                 controlAffinity: ListTileControlAffinity.leading,
                 onChanged: (v) {
@@ -190,11 +202,11 @@ class _SudoPasswordDialogState extends State<_SudoPasswordDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: Text(l?.sudoCancel ?? '取消'),
         ),
         FilledButton(
           onPressed: _submit,
-          child: const Text('授权'),
+          child: Text(l?.sudoAuthorize ?? '授权'),
         ),
       ],
     );

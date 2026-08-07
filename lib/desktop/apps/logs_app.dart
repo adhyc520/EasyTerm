@@ -28,6 +28,15 @@ class LogsApp extends StatefulWidget {
 }
 
 class _LogsAppState extends State<LogsApp> {
+  static const _lineChoices = [100, 300, 1000, 2000];
+  static const _priorityChoices = <String?>[
+    null,
+    'err',
+    'warning',
+    'info',
+    'debug',
+  ];
+
   Timer? _timer;
   RemoteOsKind? _os;
   RemoteLogSource _source = RemoteLogSource.journal;
@@ -35,17 +44,25 @@ class _LogsAppState extends State<LogsApp> {
   bool _loading = false;
   bool _autoRefresh = true;
   bool _liveFollow = true;
+  bool _wrap = true;
   String? _error;
   String _filter = '';
+  int _lineLimit = 300;
+  String? _priority;
+  int? _pidFilter;
   final _filterCtrl = TextEditingController();
   final _unitCtrl = TextEditingController();
   final _pathCtrl = TextEditingController(text: '/var/log/syslog');
   final _scroll = ScrollController();
   bool _stickBottom = true;
+  int? _jumpHighlightIndex;
+  Timer? _jumpHighlightClear;
 
   RemoteStream? _stream;
   List<RemoteLogLine> _liveLines = const [];
   bool _wantLive = true;
+
+  static const _estimatedLineExtent = 22.0;
 
   @override
   void initState() {
@@ -56,11 +73,17 @@ class _LogsAppState extends State<LogsApp> {
       _source = RemoteLogSource.file;
     } else if (src == 'docker') {
       _source = RemoteLogSource.docker;
+    } else if (src == 'journal') {
+      _source = RemoteLogSource.journal;
     }
     final unit = args['unit']?.toString();
     if (unit != null && unit.isNotEmpty) _unitCtrl.text = unit;
     final path = args['path']?.toString();
     if (path != null && path.isNotEmpty) _pathCtrl.text = path;
+    final pidRaw = args['pid']?.toString();
+    if (pidRaw != null && pidRaw.isNotEmpty) {
+      _pidFilter = int.tryParse(pidRaw);
+    }
     _liveFollow = widget.wm.desktopSettings.liveLogsDefault;
     _wantLive = _liveFollow;
     widget.wm.addListener(_onWm);
@@ -92,6 +115,7 @@ class _LogsAppState extends State<LogsApp> {
   @override
   void dispose() {
     _timer?.cancel();
+    _jumpHighlightClear?.cancel();
     unawaited(_stopStream());
     _filterCtrl.dispose();
     _unitCtrl.dispose();
@@ -148,7 +172,9 @@ class _LogsAppState extends State<LogsApp> {
           source: _source,
           unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
           path: _pathCtrl.text.trim(),
-          lines: 300,
+          lines: _lineLimit,
+          priority: _priority,
+          pid: _pidFilter,
         ) !=
         null;
   }
@@ -193,7 +219,9 @@ class _LogsAppState extends State<LogsApp> {
       source: _source,
       unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
       path: _pathCtrl.text.trim(),
-      lines: 300,
+      lines: _lineLimit,
+      priority: _priority,
+      pid: _pidFilter,
     );
     if (cmd == null) {
       setState(() {
@@ -266,7 +294,9 @@ class _LogsAppState extends State<LogsApp> {
         source: _source,
         unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),
         path: _pathCtrl.text.trim(),
-        lines: 300,
+        lines: _lineLimit,
+        priority: _priority,
+        pid: _pidFilter,
       );
       if (!mounted) return;
       if (snap == null) {
@@ -295,10 +325,14 @@ class _LogsAppState extends State<LogsApp> {
     }
   }
 
-  List<RemoteLogLine> get _filtered {
-    final all = (_liveFollow && _canLive && _stream != null)
+  List<RemoteLogLine> get _allLines {
+    return (_liveFollow && _canLive && _stream != null)
         ? _liveLines
         : (_snap?.lines ?? const []);
+  }
+
+  List<RemoteLogLine> get _filtered {
+    final all = _allLines;
     final q = _filter.trim().toLowerCase();
     if (q.isEmpty) return all;
     return [for (final l in all) if (l.text.toLowerCase().contains(q)) l];
@@ -308,6 +342,102 @@ class _LogsAppState extends State<LogsApp> {
     if (_liveFollow && _canLive && _stream != null) return '实时跟随';
     if (_autoRefresh) return '快照 4s';
     return '已暂停';
+  }
+
+  void _clearDisplayed() {
+    setState(() {
+      _liveLines = const [];
+      _jumpHighlightIndex = null;
+      if (_snap != null) {
+        _snap = RemoteLogSnapshot(
+          os: _snap!.os,
+          source: _snap!.source,
+          label: _snap!.label,
+          lines: const [],
+          error: _snap!.error,
+        );
+      }
+    });
+  }
+
+  Future<void> _jumpToTime() async {
+    final wb = context.wb;
+    final ctrl = TextEditingController();
+    final query = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: wb.panelElevated,
+        title: Text('跳到时间', style: TextStyle(color: wb.primaryText)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            color: wb.primaryText,
+          ),
+          decoration: InputDecoration(
+            hintText: '如 14:30 或 ISO 片段',
+            hintStyle: TextStyle(color: wb.textMuted, fontSize: 12),
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('跳转'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (!mounted || query == null || query.isEmpty) return;
+
+    final buffer = _allLines;
+    final bufferIdx = buffer.indexWhere((l) {
+      final ts = l.timestamp ?? '';
+      return ts.contains(query) || l.text.contains(query);
+    });
+    if (bufferIdx < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('未找到含「$query」的日志行')),
+      );
+      return;
+    }
+
+    // ListView 渲染的是筛选后列表，用同一行在可见列表中的下标滚动。
+    final visible = _filtered;
+    var idx = visible.indexWhere((l) => identical(l, buffer[bufferIdx]));
+    if (idx < 0) {
+      idx = visible.indexWhere(
+        (l) => l.text == buffer[bufferIdx].text,
+      );
+    }
+    if (idx < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('匹配行被当前筛选隐藏，请清空筛选后再试')),
+      );
+      return;
+    }
+
+    _stickBottom = false;
+    _jumpHighlightClear?.cancel();
+    setState(() => _jumpHighlightIndex = idx);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      final max = _scroll.position.maxScrollExtent;
+      _scroll.jumpTo((idx * _estimatedLineExtent).clamp(0.0, max));
+    });
+    _jumpHighlightClear = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() => _jumpHighlightIndex = null);
+    });
   }
 
   @override
@@ -325,45 +455,124 @@ class _LogsAppState extends State<LogsApp> {
             padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
             child: Row(
               children: [
-                Icon(Icons.article_rounded, size: 18, color: wb.accentBlue),
-                const SizedBox(width: 8),
-                Text(
-                  '日志',
-                  style: TextStyle(
-                    color: wb.primaryText,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.article_rounded,
+                          size: 18,
+                          color: wb.accentBlue,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '日志',
+                          style: TextStyle(
+                            color: wb.primaryText,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        SegmentedButton<RemoteLogSource>(
+                          style: const ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          segments: [
+                            ButtonSegment(
+                              value: RemoteLogSource.journal,
+                              label: Text(isWin ? '事件' : 'Journal'),
+                              icon: const Icon(
+                                Icons.receipt_long_rounded,
+                                size: 16,
+                              ),
+                            ),
+                            const ButtonSegment(
+                              value: RemoteLogSource.file,
+                              label: Text('文件'),
+                              icon: Icon(Icons.description_outlined, size: 16),
+                            ),
+                            const ButtonSegment(
+                              value: RemoteLogSource.docker,
+                              label: Text('Docker'),
+                              icon: Icon(Icons.view_in_ar_rounded, size: 16),
+                            ),
+                          ],
+                          selected: {_source},
+                          onSelectionChanged: (s) {
+                            setState(() => _source = s.first);
+                            unawaited(_restartMode());
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        PopupMenuButton<int>(
+                          tooltip: '行数',
+                          initialValue: _lineLimit,
+                          onSelected: (n) {
+                            setState(() => _lineLimit = n);
+                            unawaited(_restartMode());
+                          },
+                          itemBuilder: (ctx) => [
+                            for (final n in _lineChoices)
+                              PopupMenuItem(value: n, child: Text('$n 行')),
+                          ],
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              '$_lineLimit 行',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: wb.secondaryText,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_source == RemoteLogSource.journal && !isWin)
+                          PopupMenuButton<String?>(
+                            tooltip: '级别',
+                            initialValue: _priority,
+                            onSelected: (p) {
+                              setState(() => _priority = p);
+                              unawaited(_restartMode());
+                            },
+                            itemBuilder: (ctx) => [
+                              for (final p in _priorityChoices)
+                                PopupMenuItem(
+                                  value: p,
+                                  child: Text(p ?? '全部级别'),
+                                ),
+                            ],
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 6),
+                              child: Text(
+                                _priority ?? '级别',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: wb.secondaryText,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_pidFilter != null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: InputChip(
+                              label: Text('PID $_pidFilter'),
+                              onDeleted: () {
+                                setState(() => _pidFilter = null);
+                                unawaited(_restartMode());
+                              },
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                SegmentedButton<RemoteLogSource>(
-                  style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  segments: [
-                    ButtonSegment(
-                      value: RemoteLogSource.journal,
-                      label: Text(isWin ? '事件' : 'Journal'),
-                      icon: const Icon(Icons.receipt_long_rounded, size: 16),
-                    ),
-                    const ButtonSegment(
-                      value: RemoteLogSource.file,
-                      label: Text('文件'),
-                      icon: Icon(Icons.description_outlined, size: 16),
-                    ),
-                    const ButtonSegment(
-                      value: RemoteLogSource.docker,
-                      label: Text('Docker'),
-                      icon: Icon(Icons.view_in_ar_rounded, size: 16),
-                    ),
-                  ],
-                  selected: {_source},
-                  onSelectionChanged: (s) {
-                    setState(() => _source = s.first);
-                    unawaited(_restartMode());
-                  },
-                ),
-                const Spacer(),
                 if (!isWin)
                   Tooltip(
                     message: _liveFollow ? '切换为快照轮询' : '切换为实时跟随',
@@ -400,11 +609,48 @@ class _LogsAppState extends State<LogsApp> {
                     ),
                   ),
                 ),
+                Tooltip(
+                  message: _wrap ? '取消换行' : '自动换行',
+                  child: IconButton(
+                    iconSize: 18,
+                    onPressed: () => setState(() => _wrap = !_wrap),
+                    icon: Icon(
+                      _wrap
+                          ? Icons.wrap_text_rounded
+                          : Icons.notes_rounded,
+                      color: _wrap ? wb.accentBlue : wb.textMuted,
+                    ),
+                  ),
+                ),
+                Tooltip(
+                  message: '清空显示',
+                  child: IconButton(
+                    iconSize: 18,
+                    onPressed: () => _clearDisplayed(),
+                    icon: Icon(Icons.clear_all_rounded, color: wb.textMuted),
+                  ),
+                ),
+                Tooltip(
+                  message: '跳到时间',
+                  child: IconButton(
+                    iconSize: 18,
+                    onPressed: lines.isEmpty
+                        ? null
+                        : () => unawaited(_jumpToTime()),
+                    icon: Icon(
+                      Icons.schedule_rounded,
+                      color: wb.textMuted,
+                    ),
+                  ),
+                ),
                 if (_loading)
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 10),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   )
                 else
                   IconButton(
@@ -430,8 +676,7 @@ class _LogsAppState extends State<LogsApp> {
               children: [
                 if (_source == RemoteLogSource.journal ||
                     _source == RemoteLogSource.docker) ...[
-                  SizedBox(
-                    width: 180,
+                  Expanded(
                     child: TextField(
                       controller: _unitCtrl,
                       style: TextStyle(
@@ -482,8 +727,7 @@ class _LogsAppState extends State<LogsApp> {
                   ),
                 ],
                 const SizedBox(width: 8),
-                SizedBox(
-                  width: _source == RemoteLogSource.journal ? 160 : 140,
+                Expanded(
                   child: TextField(
                     controller: _filterCtrl,
                     autofocus: true,
@@ -580,15 +824,62 @@ class _LogsAppState extends State<LogsApp> {
                             : line.isWarn
                                 ? const Color(0xFFFBBF24)
                                 : wb.secondaryText;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: SelectableText(
-                            line.text,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                              height: 1.35,
-                              color: color,
+                        final ts = line.timestamp;
+                        final msg = ts != null && line.text.startsWith(ts)
+                            ? line.text.substring(ts.length).trimLeft()
+                            : line.text;
+                        final highlighted = i == _jumpHighlightIndex;
+                        return ColoredBox(
+                          color: highlighted
+                              ? wb.accentBlue.withValues(alpha: 0.22)
+                              : Colors.transparent,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (ts != null) ...[
+                                  SizedBox(
+                                    width: 168,
+                                    child: SelectableText(
+                                      ts,
+                                      maxLines: _wrap ? null : 1,
+                                      style: TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        height: 1.35,
+                                        color: wb.textMuted,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                                Expanded(
+                                  child: _wrap
+                                      ? SelectableText(
+                                          msg,
+                                          style: TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 12,
+                                            height: 1.35,
+                                            color: color,
+                                          ),
+                                        )
+                                      : SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: SelectableText(
+                                            msg,
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontSize: 12,
+                                              height: 1.35,
+                                              color: color,
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -616,6 +907,24 @@ class _LogsAppState extends State<LogsApp> {
                         },
                   icon: const Icon(Icons.copy_rounded, size: 16),
                   label: const Text('复制'),
+                ),
+                TextButton.icon(
+                  onPressed: _allLines.isEmpty
+                      ? null
+                      : () async {
+                          final all = _allLines;
+                          final text = all.map((e) => e.text).join('\n');
+                          await Clipboard.setData(ClipboardData(text: text));
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('已复制全部 ${all.length} 行'),
+                              duration: const Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.copy_all_rounded, size: 16),
+                  label: const Text('导出全部'),
                 ),
                 const Spacer(),
                 Text(

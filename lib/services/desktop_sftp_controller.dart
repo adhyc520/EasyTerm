@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
@@ -33,6 +32,12 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   String _remoteCwd = '/';
   List<SftpName> _entries = [];
   bool _loadingDir = false;
+  String? _loadError;
+  bool _showHidden = false;
+  SftpSortColumn _sortColumn = SftpSortColumn.name;
+  bool _sortAscending = true;
+  final List<String> _historyBack = [];
+  final List<String> _historyForward = [];
 
   /// 与主会话共用，便于桌面「传输」面板统一展示。
   @override
@@ -49,6 +54,54 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
 
   @override
   bool get loadingDir => _loadingDir;
+
+  @override
+  String? get loadError => _loadError;
+
+  @override
+  bool get showHidden => _showHidden;
+
+  @override
+  set showHidden(bool value) {
+    if (_showHidden == value) return;
+    _showHidden = value;
+    unawaited(refreshDirectory());
+  }
+
+  @override
+  SftpSortColumn get sortColumn => _sortColumn;
+
+  @override
+  bool get sortAscending => _sortAscending;
+
+  @override
+  void setSort(SftpSortColumn col) {
+    if (_sortColumn == col) {
+      _sortAscending = !_sortAscending;
+    } else {
+      _sortColumn = col;
+      _sortAscending = true;
+    }
+    if (_entries.isNotEmpty) {
+      final next = List<SftpName>.of(_entries);
+      sortSftpEntries(
+        next,
+        column: _sortColumn,
+        ascending: _sortAscending,
+      );
+      _entries = next;
+    }
+    notifyListeners();
+  }
+
+  @override
+  bool get canGoBack => _historyBack.isNotEmpty;
+
+  @override
+  bool get canGoForward => _historyForward.isNotEmpty;
+
+  @override
+  bool get canGoUp => _remoteCwd.isNotEmpty && _remoteCwd != '/';
 
   void _onWorkspace() {
     final nowConnected = _workspace.connected && !_workspace.dropped;
@@ -98,21 +151,28 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     }
     try {
       final list = await client.listdir(_remoteCwd);
-      list.sort((a, b) {
-        if (a.attr.isDirectory != b.attr.isDirectory) {
-          return a.attr.isDirectory ? -1 : 1;
-        }
-        return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
-      });
-      final next = list
-          .where((e) => e.filename != '.' && e.filename != '..')
-          .toList();
+      final next = list.where((e) {
+        if (e.filename == '.' || e.filename == '..') return false;
+        if (!_showHidden && e.filename.startsWith('.')) return false;
+        return true;
+      }).toList();
+      sortSftpEntries(
+        next,
+        column: _sortColumn,
+        ascending: _sortAscending,
+      );
+      final clearedError = _loadError != null;
+      _loadError = null;
       if (!_sameDirectoryEntries(_entries, next)) {
         _entries = next;
+        if (!showLoading) notifyListeners();
+      } else if (clearedError) {
         if (!showLoading) notifyListeners();
       }
     } catch (e) {
       debugPrint('DesktopSftpController.refreshDirectory: $e');
+      _loadError = '$e';
+      if (!showLoading) notifyListeners();
     } finally {
       if (showLoading) {
         _loadingDir = false;
@@ -122,9 +182,44 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   }
 
   /// 切到新路径：清空当前项，让 UI 走 loading，避免短暂显示旧目录内容。
-  void _beginNavigate(String path) {
+  void _beginNavigate(String path, {bool pushHistory = true}) {
+    if (pushHistory && path != _remoteCwd) {
+      _historyBack.add(_remoteCwd);
+      if (_historyBack.length > 64) _historyBack.removeAt(0);
+      // 标准浏览器行为：从历史中点开新路径时丢弃前进栈。
+      _historyForward.clear();
+    }
     _remoteCwd = path;
     _entries = [];
+    _loadError = null;
+  }
+
+  @override
+  Future<void> goBack() async {
+    if (_historyBack.isEmpty) return;
+    _historyForward.add(_remoteCwd);
+    if (_historyForward.length > 64) _historyForward.removeAt(0);
+    final prev = _historyBack.removeLast();
+    _beginNavigate(prev, pushHistory: false);
+    await refreshDirectory();
+  }
+
+  @override
+  Future<void> goForward() async {
+    if (_historyForward.isEmpty) return;
+    _historyBack.add(_remoteCwd);
+    if (_historyBack.length > 64) _historyBack.removeAt(0);
+    final next = _historyForward.removeLast();
+    _beginNavigate(next, pushHistory: false);
+    await refreshDirectory();
+  }
+
+  @override
+  Future<void> navigateUp() async {
+    final parent = remoteDirname(_remoteCwd);
+    if (parent == _remoteCwd) return;
+    _beginNavigate(parent);
+    await refreshDirectory();
   }
 
   static bool _sameDirectoryEntries(List<SftpName> a, List<SftpName> b) {
@@ -154,6 +249,7 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
       }
     } catch (e) {
       debugPrint('DesktopSftpController.navigateInto: $e');
+      _loadError = '$e';
       notifyListeners();
     }
   }
@@ -179,6 +275,7 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
       await refreshDirectory();
     } catch (e) {
       debugPrint('DesktopSftpController.navigateToAbsolutePath: $e');
+      _loadError = '$e';
       notifyListeners();
     }
   }
@@ -359,6 +456,8 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   SftpUploadProgressHooks _hooks() {
     return SftpUploadProgressHooks(
       shouldCancelUpload: uploadTasks.isCancellationRequested,
+      shouldPauseUpload: uploadTasks.isPauseRequested,
+      preferredUploadOrder: uploadTasks.preferredUploadOrder,
       onFileStart: (path, label, total) => uploadTasks.setUploading(path),
       onFileProgress: (path, up, _) => uploadTasks.progress(path, up),
       onFileEnd: (path, err) {
@@ -406,6 +505,8 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
               label: e.displayLabel,
               totalBytes: e.sizeBytes,
               direction: SftpTransferDirection.download,
+              localPath: e.localPath,
+              remotePath: e.remotePath,
             ),
           )
           .toList(),
@@ -446,6 +547,8 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
               label: entry.displayLabel,
               totalBytes: entry.sizeBytes,
               direction: SftpTransferDirection.download,
+              localPath: entry.localPath,
+              remotePath: entry.remotePath,
             ),
           ]);
         },
@@ -509,6 +612,12 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
             label: e.displayLabel,
             totalBytes: e.sizeBytes,
             direction: SftpTransferDirection.upload,
+            localPath: e.localPath,
+            remotePath: remoteJoin(
+              e.remoteParentDir,
+              p.basename(e.localPath),
+            ),
+            remoteCwd: _remoteCwd,
           ),
         );
       }

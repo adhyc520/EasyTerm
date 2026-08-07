@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -12,6 +13,10 @@ import 'local_port_forwarder.dart';
 export 'browser_gateway_rewrite.dart' show kGatewaySchemeQueryKey;
 
 const int _kMaxRewriteBodyBytes = 8 * 1024 * 1024;
+/// Bodies larger than this are rewritten on a worker isolate so the Flutter UI
+/// isolate is not blocked by regex URL rewriting (which freezes the whole app).
+const int _kRewriteIsolateThresholdBytes = 4 * 1024;
+const int _kMaxConcurrentRewrites = 2;
 const Duration _kUpstreamIoTimeout = Duration(seconds: 60);
 
 const _hopByHopExact = {
@@ -25,16 +30,14 @@ const _hopByHopExact = {
   'upgrade',
 };
 
-/// Process-local HTTP reverse proxy over SSH `forwardLocal`.
+/// Process-local HTTP reverse proxy over SSH local forwards.
 ///
 /// Webview navigates:
 /// `http://127.0.0.1:{gatewayPort}/{token}/{remoteHost}/{remotePort}/{path}?…`
 ///
-/// **Important (dartssh2):** [SSHClient.forwardLocal] is a **single** direct-tcpip
-/// channel, not a local listener. Each proxied HTTP request opens one channel.
-/// For HTTPS upstream we instead use [LocalPortForwarder] (real `ssh -L` style
-/// ServerSocket) + [SecureSocket.secure] (SNI = remote host) so TLS wraps a
-/// normal TCP socket to loopback.
+/// Upstream TCP (HTTP and HTTPS) goes through a cached [LocalPortForwarder]
+/// (`ssh -L` style ServerSocket). HTTPS then wraps the loopback socket with
+/// [SecureSocket.secure] (SNI = remote host).
 class BrowserGateway {
   BrowserGateway(this.client);
 
@@ -43,8 +46,15 @@ class BrowserGateway {
   final String token = _generateToken();
 
   HttpServer? _server;
-  final Map<String, LocalPortForwarder> _httpsForwarders = {};
+  /// Shared `ssh -L` style listeners keyed by `host:port` (HTTP and HTTPS).
+  final Map<String, LocalPortForwarder> _forwarders = {};
+  /// In-flight [LocalPortForwarder.start] futures — coalesce concurrent cache misses.
+  final Map<String, Future<LocalPortForwarder>> _forwarderInflight = {};
   bool _stopping = false;
+
+  /// Limits concurrent [Isolate.run] rewrites (spawn storms also jank the UI).
+  static int _rewriteInFlight = 0;
+  static final List<Completer<void>> _rewriteWaiters = [];
 
   bool get isRunning => _server != null && !_stopping;
 
@@ -78,8 +88,9 @@ class BrowserGateway {
     try {
       await server?.close(force: true);
     } catch (_) {}
-    final fwd = List<LocalPortForwarder>.from(_httpsForwarders.values);
-    _httpsForwarders.clear();
+    _forwarderInflight.clear();
+    final fwd = List<LocalPortForwarder>.from(_forwarders.values);
+    _forwarders.clear();
     for (final f in fwd) {
       try {
         await f.stop();
@@ -284,6 +295,10 @@ class BrowserGateway {
       if (needsRewrite) {
         final clRaw = _headerValue(headers, 'content-length');
         final cl = clRaw == null ? null : int.tryParse(clRaw.trim());
+        final te = _headerValue(headers, 'transfer-encoding')?.toLowerCase();
+        final isChunked = te != null && te.contains('chunked');
+        final isHtml = contentType.toLowerCase().contains('text/html');
+
         // 超大 HTML/CSS：不整包改写，直接流式转发（相对 URL 仍可用）。
         if (cl != null && cl > _kMaxRewriteBodyBytes) {
           copyHeaders(stripLengthAndEncoding: true);
@@ -295,30 +310,46 @@ class BrowserGateway {
             timeout: _kUpstreamIoTimeout,
           );
           await response.close();
-        } else {
-          var body = await _readHttpBody(
-                reader,
-                headers,
-                maxBytes: _kMaxRewriteBodyBytes,
-              ) ??
-              Uint8List(0);
-          final isHtml = contentType.toLowerCase().contains('text/html');
-          if (body.length <= _kMaxRewriteBodyBytes) {
-            final text = utf8.decode(body, allowMalformed: true);
-            final rewritten = rewriteGatewayResponseBody(
-              text,
-              gatewayPort: port!,
-              token: token,
-              currentRemoteHost: target.host,
-              currentRemotePort: target.port,
-              currentHttps: target.https,
-              isHtml: isHtml,
-            );
-            body = Uint8List.fromList(utf8.encode(rewritten));
-          }
+        } else if (cl != null && cl >= 0) {
+          var body = cl == 0 ? Uint8List(0) : await reader.readExact(cl);
+          body = await _rewriteResponseBodyBytes(
+            body,
+            gatewayPort: port!,
+            token: token,
+            currentRemoteHost: target.host,
+            currentRemotePort: target.port,
+            currentHttps: target.https,
+            isHtml: isHtml,
+          );
           copyHeaders(stripLengthAndEncoding: true, rewrittenBody: body);
           response.add(body);
           await response.close();
+        } else if (isChunked) {
+          // Buffer up to limit; on overflow stream the buffered prefix + rest
+          // without rewrite (never serve a silently truncated rewritten body).
+          await _rewriteOrStreamChunked(
+            reader,
+            response,
+            copyHeaders: copyHeaders,
+            gatewayPort: port!,
+            token: token,
+            currentRemoteHost: target.host,
+            currentRemotePort: target.port,
+            currentHttps: target.https,
+            isHtml: isHtml,
+          );
+        } else {
+          await _rewriteOrStreamUntilEnd(
+            reader,
+            response,
+            copyHeaders: copyHeaders,
+            gatewayPort: port!,
+            token: token,
+            currentRemoteHost: target.host,
+            currentRemotePort: target.port,
+            currentHttps: target.https,
+            isHtml: isHtml,
+          );
         }
       } else {
         // Stream body; dechunk if needed so we can drop Transfer-Encoding.
@@ -327,11 +358,15 @@ class BrowserGateway {
         final cl = clRaw == null ? null : int.tryParse(clRaw.trim());
 
         if (te != null && te.contains('chunked')) {
-          final body = await reader
-              .readChunkedBody()
-              .timeout(_kUpstreamIoTimeout);
-          copyHeaders(stripLengthAndEncoding: true, rewrittenBody: body);
-          response.add(body);
+          // Do NOT buffer entire JS/image responses — that freezes the UI on
+          // large SPA navigations. Stream-dechunk into the client response.
+          copyHeaders(stripLengthAndEncoding: true);
+          response.headers.chunkedTransferEncoding = true;
+          await _pipeChunked(
+            reader,
+            response,
+            timeout: _kUpstreamIoTimeout,
+          );
           await response.close();
         } else if (cl != null && cl >= 0) {
           copyHeaders(stripLengthAndEncoding: true);
@@ -500,47 +535,189 @@ class BrowserGateway {
 
   Future<_UpstreamConn> _openUpstream(_GatewayTarget target) async {
     const connectTimeout = Duration(seconds: 15);
-    if (target.https) {
-      final fwd = await _cachedHttpsForwarder(target.host, target.port)
-          .timeout(connectTimeout);
-      final localPort = fwd.localPort;
-      if (localPort == null) {
-        throw StateError('HTTPS forwarder has no local port');
-      }
-      // Connect to loopback forwarder, then TLS with the *remote* hostname as
-      // SNI. SecureSocket.connect('127.0.0.1', …) would send SNI=127.0.0.1 and
-      // break virtually all public / multi-vhost HTTPS sites.
-      final raw = await Socket.connect(
-        '127.0.0.1',
-        localPort,
-        timeout: connectTimeout,
-      );
-      final sock = await SecureSocket.secure(
-        raw,
-        host: target.host,
-        onBadCertificate: (_) => true,
-      );
-      return _UpstreamConn.socket(sock);
-    }
-
-    // Plain HTTP: one forwardLocal channel per request (not a listener).
-    final ch = await client
-        .forwardLocal(target.host, target.port)
+    // Both HTTP and HTTPS use a cached LocalPortForwarder. Plain HTTP used to
+    // open one dartssh2 forwardLocal channel per request; SPA navigations fire
+    // dozens of assets at once and that channel storm freezes the UI isolate.
+    final fwd = await _cachedForwarder(target.host, target.port)
         .timeout(connectTimeout);
-    return _UpstreamConn.channel(ch);
+    final localPort = fwd.localPort;
+    if (localPort == null) {
+      throw StateError('Forwarder has no local port');
+    }
+    final raw = await Socket.connect(
+      '127.0.0.1',
+      localPort,
+      timeout: connectTimeout,
+    );
+    if (!target.https) {
+      return _UpstreamConn.socket(raw);
+    }
+    // TLS with the *remote* hostname as SNI. SecureSocket.connect('127.0.0.1', …)
+    // would send SNI=127.0.0.1 and break virtually all multi-vhost HTTPS sites.
+    final sock = await SecureSocket.secure(
+      raw,
+      host: target.host,
+      onBadCertificate: (_) => true,
+    );
+    return _UpstreamConn.socket(sock);
   }
 
-  Future<LocalPortForwarder> _cachedHttpsForwarder(
-    String host,
-    int port,
-  ) async {
+  Future<LocalPortForwarder> _cachedForwarder(String host, int port) async {
     final key = '$host:$port';
-    final existing = _httpsForwarders[key];
+    final existing = _forwarders[key];
     if (existing != null && existing.isRunning) return existing;
-    final fwd = LocalPortForwarder(client, host, port);
-    await fwd.start();
-    _httpsForwarders[key] = fwd;
-    return fwd;
+
+    final inflight = _forwarderInflight[key];
+    if (inflight != null) return inflight;
+
+    final future = () async {
+      try {
+        final again = _forwarders[key];
+        if (again != null && again.isRunning) return again;
+        final fwd = LocalPortForwarder(client, host, port);
+        await fwd.start();
+        if (_stopping) {
+          try {
+            await fwd.stop();
+          } catch (_) {}
+          throw StateError('Gateway stopping');
+        }
+        final raced = _forwarders[key];
+        if (raced != null && raced.isRunning && !identical(raced, fwd)) {
+          // Another completer won; discard ours.
+          try {
+            await fwd.stop();
+          } catch (_) {}
+          return raced;
+        }
+        _forwarders[key] = fwd;
+        return fwd;
+      } finally {
+        _forwarderInflight.remove(key);
+      }
+    }();
+    _forwarderInflight[key] = future;
+    return future;
+  }
+
+  /// Chunked HTML/CSS: rewrite if ≤ [_kMaxRewriteBodyBytes]; otherwise stream
+  /// the already-buffered prefix plus remaining chunks without rewrite.
+  Future<void> _rewriteOrStreamChunked(
+    _ByteStreamReader reader,
+    HttpResponse response, {
+    required void Function({
+      required bool stripLengthAndEncoding,
+      Uint8List? rewrittenBody,
+    }) copyHeaders,
+    required int gatewayPort,
+    required String token,
+    required String currentRemoteHost,
+    required int currentRemotePort,
+    required bool currentHttps,
+    required bool isHtml,
+  }) async {
+    final accumulated = BytesBuilder(copy: false);
+    final timeout = _kUpstreamIoTimeout;
+
+    Future<void> drainChunkTrailer() async {
+      while (true) {
+        final t = await reader.readLine().timeout(timeout);
+        if (t == null || t.isEmpty) break;
+      }
+    }
+
+    while (true) {
+      final sizeLine = await reader.readLine().timeout(timeout);
+      if (sizeLine == null) break;
+      final hex = sizeLine.split(';').first.trim();
+      final size = int.tryParse(hex, radix: 16);
+      if (size == null) {
+        throw FormatException('Bad chunk size: $sizeLine');
+      }
+      if (size == 0) {
+        await drainChunkTrailer();
+        break;
+      }
+      final chunk = await reader.readExact(size).timeout(timeout);
+      await reader.readExact(2).timeout(timeout); // CRLF
+
+      if (accumulated.length + chunk.length > _kMaxRewriteBodyBytes) {
+        copyHeaders(stripLengthAndEncoding: true);
+        response.headers.chunkedTransferEncoding = true;
+        final prefix = accumulated.takeBytes();
+        if (prefix.isNotEmpty) response.add(prefix);
+        if (chunk.isNotEmpty) response.add(chunk);
+        // Remaining chunks (already consumed CRLF for current).
+        await _pipeChunked(reader, response, timeout: timeout);
+        await response.close();
+        return;
+      }
+      if (chunk.isNotEmpty) accumulated.add(chunk);
+    }
+
+    var body = accumulated.takeBytes();
+    body = await _rewriteResponseBodyBytes(
+      body,
+      gatewayPort: gatewayPort,
+      token: token,
+      currentRemoteHost: currentRemoteHost,
+      currentRemotePort: currentRemotePort,
+      currentHttps: currentHttps,
+      isHtml: isHtml,
+    );
+    copyHeaders(stripLengthAndEncoding: true, rewrittenBody: body);
+    response.add(body);
+    await response.close();
+  }
+
+  /// Connection-close / no CL: same overflow policy as chunked.
+  Future<void> _rewriteOrStreamUntilEnd(
+    _ByteStreamReader reader,
+    HttpResponse response, {
+    required void Function({
+      required bool stripLengthAndEncoding,
+      Uint8List? rewrittenBody,
+    }) copyHeaders,
+    required int gatewayPort,
+    required String token,
+    required String currentRemoteHost,
+    required int currentRemotePort,
+    required bool currentHttps,
+    required bool isHtml,
+  }) async {
+    final accumulated = BytesBuilder(copy: false);
+    final timeout = _kUpstreamIoTimeout;
+
+    while (true) {
+      final chunk = await reader.readSome().timeout(timeout);
+      if (chunk == null) break;
+      if (chunk.isEmpty) continue;
+
+      if (accumulated.length + chunk.length > _kMaxRewriteBodyBytes) {
+        copyHeaders(stripLengthAndEncoding: true);
+        final prefix = accumulated.takeBytes();
+        if (prefix.isNotEmpty) response.add(prefix);
+        response.add(chunk);
+        await _pipeUntilEnd(reader, response, timeout: timeout);
+        await response.close();
+        return;
+      }
+      accumulated.add(chunk);
+    }
+
+    var body = accumulated.takeBytes();
+    body = await _rewriteResponseBodyBytes(
+      body,
+      gatewayPort: gatewayPort,
+      token: token,
+      currentRemoteHost: currentRemoteHost,
+      currentRemotePort: currentRemotePort,
+      currentHttps: currentHttps,
+      isHtml: isHtml,
+    );
+    copyHeaders(stripLengthAndEncoding: true, rewrittenBody: body);
+    response.add(body);
+    await response.close();
   }
 
   Future<Uint8List> _buildForwardRequestBytes(
@@ -681,11 +858,91 @@ class BrowserGateway {
 
   static bool _shouldRewriteBody(String contentType) {
     final ct = contentType.toLowerCase();
-    return ct.contains('text/html') ||
-        ct.contains('text/css') ||
-        ct.contains('application/javascript') ||
-        ct.contains('text/javascript');
+    // HTML (attrs + fetch shim) and CSS (url()) need rewrite.
+    // Skip JS bundles: href/src/url() regexes almost never match minified JS,
+    // while multi‑MB SPA scripts would block the UI isolate for seconds.
+    // Absolute fetch/XHR URLs are handled by the HTML-injected shim instead.
+    return ct.contains('text/html') || ct.contains('text/css');
   }
+
+  /// Decode → [rewriteGatewayResponseBody] → encode, off the UI isolate when large.
+  static Future<Uint8List> _rewriteResponseBodyBytes(
+    Uint8List body, {
+    required int gatewayPort,
+    required String token,
+    required String currentRemoteHost,
+    required int currentRemotePort,
+    required bool currentHttps,
+    required bool isHtml,
+  }) async {
+    // CSS with only relative urls: skip expensive regex entirely.
+    if (!isHtml && !_bytesLikelyNeedCssRewrite(body)) {
+      return body;
+    }
+
+    Uint8List rewrite() {
+      final text = utf8.decode(body, allowMalformed: true);
+      final rewritten = rewriteGatewayResponseBody(
+        text,
+        gatewayPort: gatewayPort,
+        token: token,
+        currentRemoteHost: currentRemoteHost,
+        currentRemotePort: currentRemotePort,
+        currentHttps: currentHttps,
+        isHtml: isHtml,
+      );
+      return Uint8List.fromList(utf8.encode(rewritten));
+    }
+
+    if (body.length < _kRewriteIsolateThresholdBytes) {
+      return rewrite();
+    }
+
+    while (_rewriteInFlight >= _kMaxConcurrentRewrites) {
+      final c = Completer<void>();
+      _rewriteWaiters.add(c);
+      await c.future;
+    }
+    _rewriteInFlight++;
+    try {
+      return await Isolate.run(rewrite);
+    } finally {
+      _rewriteInFlight--;
+      if (_rewriteWaiters.isNotEmpty) {
+        _rewriteWaiters.removeAt(0).complete();
+      }
+    }
+  }
+
+  /// Cheap ASCII scan — avoid decoding/rewriting inert stylesheets.
+  static bool _bytesLikelyNeedCssRewrite(Uint8List body) {
+    // Look for "url(" or "http" (covers http:// and https://).
+    for (var i = 0; i < body.length; i++) {
+      final b = body[i];
+      if (b == 0x75 || b == 0x55) {
+        // u/U
+        if (i + 3 < body.length &&
+            _asciiLetter(body[i + 1], 0x72) &&
+            _asciiLetter(body[i + 2], 0x6c) &&
+            body[i + 3] == 0x28) {
+          return true;
+        }
+      } else if (b == 0x68 || b == 0x48) {
+        // h/H
+        if (i + 3 < body.length &&
+            _asciiLetter(body[i + 1], 0x74) &&
+            _asciiLetter(body[i + 2], 0x74) &&
+            _asciiLetter(body[i + 3], 0x70)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool _asciiLetter(int actual, int lower) =>
+      actual == lower || actual == (lower & 0x5f); // rough A/a fold for ASCII
+
 
   static bool _isWebSocketUpgrade(HttpRequest request) {
     final upgrade = request.headers.value('upgrade')?.toLowerCase();
@@ -837,18 +1094,6 @@ class _UpstreamConn {
     required this.close,
   });
 
-  factory _UpstreamConn.channel(SSHForwardChannel ch) {
-    return _UpstreamConn._(
-      stream: ch.stream,
-      sink: ch.sink,
-      close: () {
-        try {
-          ch.destroy();
-        } catch (_) {}
-      },
-    );
-  }
-
   factory _UpstreamConn.socket(Socket sock) {
     return _UpstreamConn._(
       stream: sock,
@@ -917,12 +1162,10 @@ Future<Uint8List?> _readHttpBody(
 }) async {
   final te = _headerValue(headers, 'transfer-encoding')?.toLowerCase();
   if (te != null && te.contains('chunked')) {
-    final body = await reader.readChunkedBody();
-    if (maxBytes != null && body.length > maxBytes) {
-      // 已读完；调用方决定是否改写。超大则原样返回。
-      return body;
+    if (maxBytes != null) {
+      return reader.readChunkedBodyCapped(maxBytes);
     }
-    return body;
+    return reader.readChunkedBody();
   }
   final cl = _headerValue(headers, 'content-length');
   if (cl != null) {
@@ -965,6 +1208,33 @@ Future<void> _pipeUntilEnd(
     final chunk = await reader.readSome().timeout(timeout);
     if (chunk == null) break;
     if (chunk.isNotEmpty) response.add(chunk);
+  }
+}
+
+/// Stream-dechunk upstream → client without buffering the whole body.
+Future<void> _pipeChunked(
+  _ByteStreamReader reader,
+  HttpResponse response, {
+  required Duration timeout,
+}) async {
+  while (true) {
+    final sizeLine = await reader.readLine().timeout(timeout);
+    if (sizeLine == null) break;
+    final hex = sizeLine.split(';').first.trim();
+    final size = int.tryParse(hex, radix: 16);
+    if (size == null) {
+      throw FormatException('Bad chunk size: $sizeLine');
+    }
+    if (size == 0) {
+      while (true) {
+        final t = await reader.readLine().timeout(timeout);
+        if (t == null || t.isEmpty) break;
+      }
+      break;
+    }
+    final chunk = await reader.readExact(size).timeout(timeout);
+    if (chunk.isNotEmpty) response.add(chunk);
+    await reader.readExact(2).timeout(timeout); // CRLF after chunk
   }
 }
 
@@ -1130,6 +1400,34 @@ class _ByteStreamReader {
       final chunk = await readExact(size);
       out.add(chunk);
       await readExact(2); // CRLF after chunk
+    }
+    return out.takeBytes();
+  }
+
+  /// Like [readChunkedBody] but stops copying past [maxBytes] (still drains).
+  Future<Uint8List> readChunkedBodyCapped(int maxBytes) async {
+    final out = BytesBuilder(copy: false);
+    while (true) {
+      final sizeLine = await readLine();
+      if (sizeLine == null) break;
+      final hex = sizeLine.split(';').first.trim();
+      final size = int.tryParse(hex, radix: 16);
+      if (size == null) {
+        throw FormatException('Bad chunk size: $sizeLine');
+      }
+      if (size == 0) {
+        while (true) {
+          final t = await readLine();
+          if (t == null || t.isEmpty) break;
+        }
+        break;
+      }
+      final chunk = await readExact(size);
+      final room = maxBytes - out.length;
+      if (room > 0) {
+        out.add(chunk.length <= room ? chunk : chunk.sublist(0, room));
+      }
+      await readExact(2);
     }
     return out.takeBytes();
   }

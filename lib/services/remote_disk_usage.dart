@@ -1,5 +1,13 @@
 import 'remote_process_list.dart';
+import 'remote_sudo.dart';
 import 'ssh_workspace_controller.dart';
+
+/// 目录占用失败原因（权限 vs 不存在）。
+enum RemoteDiskUsageErrorKind {
+  permission,
+  notFound,
+  other,
+}
 
 /// 目录占用分析中的一项（`du` / PowerShell 汇总）。
 class RemoteDiskUsageEntry {
@@ -20,12 +28,14 @@ class RemoteDiskUsageSnapshot {
     required this.path,
     required this.entries,
     this.error,
+    this.errorKind,
   });
 
   final RemoteOsKind os;
   final String path;
   final List<RemoteDiskUsageEntry> entries;
   final String? error;
+  final RemoteDiskUsageErrorKind? errorKind;
 
   int? get totalBytes {
     for (final e in entries) {
@@ -38,17 +48,80 @@ class RemoteDiskUsageSnapshot {
 
 bool isSafeDiskUsagePath(String path) {
   if (path.isEmpty || path.length > 512) return false;
-  if (path.contains('..')) return false;
-  return RegExp(r'^[A-Za-z0-9_./\\:@+\- ~]+$').hasMatch(path);
+  if (path.contains('\u0000') || path.contains('\n') || path.contains('\r')) {
+    return false;
+  }
+  // 禁止路径穿越段；其余字符由 shell 单引号转义保护。
+  final parts = path.replaceAll('\\', '/').split('/');
+  for (final p in parts) {
+    if (p == '..') return false;
+  }
+  return true;
+}
+
+/// 从文案判断是否像权限不足。
+bool looksLikeDiskUsagePermissionDenied(String? msg) {
+  if (msg == null || msg.isEmpty) return false;
+  final lower = msg.toLowerCase();
+  return lower.contains('permission denied') ||
+      lower.contains('access denied') ||
+      lower.contains('operation not permitted') ||
+      lower.contains('requires root') ||
+      lower.contains('permission_denied') ||
+      msg.contains('权限不足') ||
+      msg.contains('权限被拒绝');
+}
+
+/// 从文案判断是否像路径不存在。
+bool looksLikeDiskUsageNotFound(String? msg) {
+  if (msg == null || msg.isEmpty) return false;
+  final lower = msg.toLowerCase();
+  return lower.contains('not_found') ||
+      lower.contains('no such file') ||
+      lower.contains('path not found') ||
+      lower.contains('cannot find') ||
+      lower.contains('does not exist') ||
+      msg.contains('路径不存在') ||
+      msg.contains('不存在');
+}
+
+RemoteDiskUsageErrorKind? classifyDiskUsageError(String? msg) {
+  if (msg == null || msg.isEmpty) return null;
+  if (RemoteSudo.isPasswordRequired(msg) || RemoteSudo.isAuthFailed(msg)) {
+    return null;
+  }
+  if (looksLikeDiskUsageNotFound(msg)) {
+    return RemoteDiskUsageErrorKind.notFound;
+  }
+  if (looksLikeDiskUsagePermissionDenied(msg)) {
+    return RemoteDiskUsageErrorKind.permission;
+  }
+  return RemoteDiskUsageErrorKind.other;
 }
 
 String _shellSingleQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
+
+String _linuxDuPipeline(
+  String quotedPath,
+  int maxEntries, {
+  required bool oneFilesystem,
+}) {
+  if (oneFilesystem) {
+    return '(du -x -B1 -d 1 $quotedPath 2>/dev/null || '
+        'du -B1 -d 1 $quotedPath 2>/dev/null) | sort -nr | head -n $maxEntries';
+  }
+  return 'du -B1 -d 1 $quotedPath 2>/dev/null | sort -nr | head -n $maxEntries';
+}
 
 Future<RemoteDiskUsageSnapshot?> fetchRemoteDiskUsage(
   SshWorkspaceController controller, {
   required String path,
   RemoteOsKind? osHint,
   int maxEntries = 60,
+  bool oneFilesystem = true,
+  /// 为 true 时用 `sudo -n`（或 [sudoPassword] 时的 `sudo -S`）跑 du。
+  bool useSudo = false,
+  String? sudoPassword,
 }) async {
   if (!controller.connected) return null;
   final p = path.trim().isEmpty ? '/' : path.trim();
@@ -58,17 +131,32 @@ Future<RemoteDiskUsageSnapshot?> fetchRemoteDiskUsage(
       path: p,
       entries: const [],
       error: '非法路径',
+      errorKind: RemoteDiskUsageErrorKind.other,
     );
   }
   final os = osHint ?? await detectRemoteOs(controller);
   final n = maxEntries.clamp(10, 200);
   switch (os) {
     case RemoteOsKind.linux:
-      return _fetchLinux(controller, p, n);
+      return _fetchLinux(
+        controller,
+        p,
+        n,
+        oneFilesystem: oneFilesystem,
+        useSudo: useSudo,
+        sudoPassword: sudoPassword,
+      );
     case RemoteOsKind.windows:
       return _fetchWindows(controller, p, n);
     case RemoteOsKind.unknown:
-      final linux = await _fetchLinux(controller, p, n);
+      final linux = await _fetchLinux(
+        controller,
+        p,
+        n,
+        oneFilesystem: oneFilesystem,
+        useSudo: useSudo,
+        sudoPassword: sudoPassword,
+      );
       if (linux.entries.isNotEmpty || linux.error == null) return linux;
       return _fetchWindows(controller, p, n);
   }
@@ -77,19 +165,79 @@ Future<RemoteDiskUsageSnapshot?> fetchRemoteDiskUsage(
 Future<RemoteDiskUsageSnapshot> _fetchLinux(
   SshWorkspaceController controller,
   String path,
-  int maxEntries,
-) async {
+  int maxEntries, {
+  bool oneFilesystem = true,
+  bool useSudo = false,
+  String? sudoPassword,
+}) async {
   final q = _shellSingleQuote(path);
-  // -B1 字节；-d 1 仅一层；失败时退回不带 -x
-  final cmd =
-      '(du -x -B1 -d 1 $q 2>/dev/null || du -B1 -d 1 $q 2>/dev/null) | sort -nr | head -n $maxEntries';
-  final raw = await controller.runRemoteForStatus(cmd);
+  final pipeline = _linuxDuPipeline(
+    q,
+    maxEntries,
+    oneFilesystem: oneFilesystem,
+  );
+  final usePwd = sudoPassword != null && sudoPassword.isNotEmpty;
+  final wantSudo = useSudo || usePwd;
+
+  late final String cmd;
+  if (wantSudo) {
+    var sudoCmd =
+        'sudo -n sh -c ${_shellSingleQuote(pipeline)} 2>&1; echo __EC:\$?';
+    if (usePwd) {
+      sudoCmd = RemoteSudo.toStdinCommand(sudoCmd);
+    }
+    cmd = sudoCmd;
+  } else {
+    // 区分路径不存在 vs 不可读/不可进目录；再跑 du（子项权限问题仍吞 stderr）。
+    cmd = 'if [ ! -e $q ]; then printf \'%s\\n\' \'__ET_DU_ERR__ not_found\'; '
+        'elif { [ -d $q ] && [ ! -x $q ]; } || [ ! -r $q ]; then '
+        'printf \'%s\\n\' \'__ET_DU_ERR__ permission_denied\'; '
+        'else $pipeline; fi';
+  }
+
+  final raw = await controller.runQueued(
+    cmd,
+    timeout: const Duration(seconds: 60),
+    stdinBytes: usePwd ? RemoteSudo.passwordStdin(sudoPassword) : null,
+  );
+
+  if (wantSudo) {
+    final sudoErr = RemoteSudo.interpretExit(raw, usedPassword: usePwd);
+    if (sudoErr != null) {
+      final kind = classifyDiskUsageError(sudoErr) ??
+          (RemoteSudo.isPasswordRequired(sudoErr) ||
+                  RemoteSudo.isAuthFailed(sudoErr)
+              ? null
+              : RemoteDiskUsageErrorKind.permission);
+      return RemoteDiskUsageSnapshot(
+        os: RemoteOsKind.linux,
+        path: path,
+        entries: const [],
+        error: sudoErr,
+        errorKind: kind,
+      );
+    }
+    final cleaned =
+        (raw ?? '').replaceAll(RegExp(r'__EC:\d+\s*$'), '').trim();
+    if (cleaned.isEmpty) {
+      return RemoteDiskUsageSnapshot(
+        os: RemoteOsKind.linux,
+        path: path,
+        entries: const [],
+        error: '无法执行 du（权限不足或路径不存在）',
+        errorKind: RemoteDiskUsageErrorKind.permission,
+      );
+    }
+    return parseLinuxDu(cleaned, path: path);
+  }
+
   if (raw == null || raw.trim().isEmpty) {
     return RemoteDiskUsageSnapshot(
       os: RemoteOsKind.linux,
       path: path,
       entries: const [],
       error: '无法执行 du（权限不足或路径不存在）',
+      errorKind: RemoteDiskUsageErrorKind.other,
     );
   }
   return parseLinuxDu(raw, path: path);
@@ -103,13 +251,17 @@ Future<RemoteDiskUsageSnapshot> _fetchWindows(
   final escaped = path.replaceAll("'", "''");
   final cmd =
       '''powershell -NoProfile -NonInteractive -Command "\$ErrorActionPreference='SilentlyContinue'; \$root='$escaped'; if(-not (Test-Path -LiteralPath \$root)){ Write-Output '__ET_DU_ERR__ path not found'; exit }; Get-ChildItem -LiteralPath \$root -Force | ForEach-Object { \$b=0; if(\$_.PSIsContainer){ \$b=(Get-ChildItem -LiteralPath \$_.FullName -Recurse -Force -File | Measure-Object -Property Length -Sum).Sum; if(-not \$b){\$b=0} } else { \$b=\$_.Length }; Write-Output ([string]\$b + '|' + \$_.Name) } | Sort-Object { [int64](\$_ -split '\\|')[0] } -Descending | Select-Object -First $maxEntries"''';
-  final raw = await controller.runRemoteForStatus(cmd);
+  final raw = await controller.runQueued(
+    cmd,
+    timeout: const Duration(seconds: 60),
+  );
   if (raw == null || raw.trim().isEmpty) {
     return RemoteDiskUsageSnapshot(
       os: RemoteOsKind.windows,
       path: path,
       entries: const [],
       error: '无法统计目录占用',
+      errorKind: RemoteDiskUsageErrorKind.other,
     );
   }
   return parseWindowsDu(raw, path: path);
@@ -118,11 +270,36 @@ Future<RemoteDiskUsageSnapshot> _fetchWindows(
 /// `bytes\\tpath` 或 `bytes path`（du 默认）。
 RemoteDiskUsageSnapshot parseLinuxDu(String raw, {required String path}) {
   if (raw.contains('__ET_DU_ERR__')) {
+    final tag = raw.split('__ET_DU_ERR__').last.trim();
+    final kind = classifyDiskUsageError(tag) ??
+        (tag.toLowerCase().contains('permission')
+            ? RemoteDiskUsageErrorKind.permission
+            : tag.toLowerCase().contains('not_found') ||
+                    tag.toLowerCase().contains('not found')
+                ? RemoteDiskUsageErrorKind.notFound
+                : RemoteDiskUsageErrorKind.other);
+    final message = switch (kind) {
+      RemoteDiskUsageErrorKind.permission => '权限不足',
+      RemoteDiskUsageErrorKind.notFound => '路径不存在',
+      RemoteDiskUsageErrorKind.other =>
+        tag.isEmpty ? '无法统计' : tag,
+    };
     return RemoteDiskUsageSnapshot(
       os: RemoteOsKind.linux,
       path: path,
       entries: const [],
-      error: '无法统计',
+      error: message,
+      errorKind: kind,
+    );
+  }
+  if (looksLikeDiskUsagePermissionDenied(raw) &&
+      !RegExp(r'^\d+\s+\S', multiLine: true).hasMatch(raw.trim())) {
+    return RemoteDiskUsageSnapshot(
+      os: RemoteOsKind.linux,
+      path: path,
+      entries: const [],
+      error: '权限不足',
+      errorKind: RemoteDiskUsageErrorKind.permission,
     );
   }
   final entries = <RemoteDiskUsageEntry>[];
@@ -170,11 +347,26 @@ RemoteDiskUsageSnapshot parseLinuxDu(String raw, {required String path}) {
 RemoteDiskUsageSnapshot parseWindowsDu(String raw, {required String path}) {
   if (raw.contains('__ET_DU_ERR__')) {
     final msg = raw.split('__ET_DU_ERR__').last.trim();
+    final kind = classifyDiskUsageError(msg) ??
+        RemoteDiskUsageErrorKind.notFound;
     return RemoteDiskUsageSnapshot(
       os: RemoteOsKind.windows,
       path: path,
       entries: const [],
-      error: msg.isEmpty ? '路径不存在' : msg,
+      error: msg.isEmpty
+          ? (kind == RemoteDiskUsageErrorKind.permission ? '权限不足' : '路径不存在')
+          : msg,
+      errorKind: kind,
+    );
+  }
+  if (looksLikeDiskUsagePermissionDenied(raw) &&
+      !raw.contains('|')) {
+    return RemoteDiskUsageSnapshot(
+      os: RemoteOsKind.windows,
+      path: path,
+      entries: const [],
+      error: '权限不足',
+      errorKind: RemoteDiskUsageErrorKind.permission,
     );
   }
   final entries = <RemoteDiskUsageEntry>[];

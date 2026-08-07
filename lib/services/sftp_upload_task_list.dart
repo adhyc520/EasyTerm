@@ -27,6 +27,9 @@ class SftpUploadTaskView {
     this.uploadedBytes = 0,
     this.error,
     this.state = SftpUploadRowState.pending,
+    this.localPath,
+    this.remotePath,
+    this.remoteCwd,
   });
 
   final String id;
@@ -36,6 +39,27 @@ class SftpUploadTaskView {
   int uploadedBytes;
   Object? error;
   SftpUploadRowState state;
+
+  /// 上传源路径，或下载目标本机路径（失败重试用）。
+  final String? localPath;
+
+  /// 远端文件绝对路径（失败重试用）。
+  final String? remotePath;
+
+  /// 入队时的远程工作目录（上传上下文；cwd 变更后仍按 [remotePath] 父目录重试）。
+  final String? remoteCwd;
+
+  /// 是否具备重试所需路径信息。
+  bool get canRetry {
+    if (state != SftpUploadRowState.failed) return false;
+    if (direction == SftpTransferDirection.upload) {
+      return localPath != null && localPath!.isNotEmpty;
+    }
+    return localPath != null &&
+        localPath!.isNotEmpty &&
+        remotePath != null &&
+        remotePath!.isNotEmpty;
+  }
 }
 
 /// 上传/下载队列展示用，与 [SshWorkspaceController] 并列。
@@ -43,6 +67,7 @@ class SftpUploadTaskList extends ChangeNotifier {
   final List<SftpUploadTaskView> _items = [];
 
   final Set<String> _cancelledIds = {};
+  final Set<String> _pausedIds = {};
 
   int _batchTotal = 0;
   int _batchSucceeded = 0;
@@ -55,10 +80,55 @@ class SftpUploadTaskList extends ChangeNotifier {
   /// 已成功完成并从列表移除的数量。
   int get batchSucceeded => _batchSucceeded;
 
+  /// 是否存在排队中或传输中的任务（含已暂停）。
+  bool get hasActive => _items.any(
+        (t) =>
+            t.state == SftpUploadRowState.pending ||
+            t.state == SftpUploadRowState.uploading,
+      );
+
+  /// 是否有任务处于用户暂停（整表或逐行）。
+  bool get hasPaused => _pausedIds.isNotEmpty;
+
+  /// 是否全部进行中任务都已暂停（用于「全部继续」按钮可用性）。
+  bool get allActivePaused {
+    final active = _items.where(
+      (t) =>
+          t.state == SftpUploadRowState.pending ||
+          t.state == SftpUploadRowState.uploading,
+    );
+    if (active.isEmpty) return false;
+    return active.every((t) => _pausedIds.contains(t.id));
+  }
+
+  /// 失败行数量。
+  int get failedCount =>
+      _items.where((t) => t.state == SftpUploadRowState.failed).length;
+
+  /// 进行中（pending + uploading）数量。
+  int get activeCount => _items
+      .where(
+        (t) =>
+            t.state == SftpUploadRowState.pending ||
+            t.state == SftpUploadRowState.uploading,
+      )
+      .length;
+
+  /// 已暂停的进行中任务数。
+  int get pausedCount => _items
+      .where(
+        (t) =>
+            (t.state == SftpUploadRowState.pending ||
+                t.state == SftpUploadRowState.uploading) &&
+            _pausedIds.contains(t.id),
+      )
+      .length;
+
   Timer? _debounce;
   var _dirty = false;
   var _disposed = false;
 
+  /// 清空全部（含进行中）。调用方应优先 [clearFailed] / [clearFinished]。
   void clear() {
     _debounce?.cancel();
     _debounce = null;
@@ -66,9 +136,29 @@ class SftpUploadTaskList extends ChangeNotifier {
     _batchTotal = 0;
     _batchSucceeded = 0;
     _cancelledIds.clear();
+    _pausedIds.clear();
     if (_items.isEmpty) return;
     _items.clear();
     if (!_disposed) notifyListeners();
+  }
+
+  /// 仅移除失败行；不触碰 pending/uploading。
+  void clearFailed() {
+    if (_disposed) return;
+    final before = _items.length;
+    _items.removeWhere((t) => t.state == SftpUploadRowState.failed);
+    if (_items.length == before) return;
+    if (!hasActive && _items.isEmpty) {
+      _batchTotal = 0;
+      _batchSucceeded = 0;
+    }
+    _notifyNow();
+  }
+
+  /// 移除失败（及任何已完成展示行）；有进行中任务时不清除 active。
+  void clearFinished() {
+    if (_disposed) return;
+    clearFailed();
   }
 
   void _notifyNow() {
@@ -96,6 +186,7 @@ class SftpUploadTaskList extends ChangeNotifier {
     _debounce = null;
     _dirty = false;
     _cancelledIds.clear();
+    _pausedIds.clear();
     _items
       ..clear()
       ..addAll(rows);
@@ -150,6 +241,46 @@ class SftpUploadTaskList extends ChangeNotifier {
 
   bool isCancellationRequested(String id) => _cancelledIds.contains(id);
 
+  bool isPauseRequested(String id) => _pausedIds.contains(id);
+
+  /// 暂停单个任务：传输层在 chunk 边界自旋等待；pending 在开始前等待。
+  void userPauseFile(String id) {
+    if (_disposed) return;
+    final idx = _items.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    final t = _items[idx];
+    if (t.state == SftpUploadRowState.failed) return;
+    if (_cancelledIds.contains(id)) return;
+    if (_pausedIds.add(id)) _notifyNow();
+  }
+
+  void userResumeFile(String id) {
+    if (_disposed) return;
+    if (_pausedIds.remove(id)) _notifyNow();
+  }
+
+  /// 暂停全部进行中任务（pending + uploading）。
+  bool userPauseAll() {
+    if (_disposed) return false;
+    var any = false;
+    for (final t in _items) {
+      if (t.state == SftpUploadRowState.failed) continue;
+      if (_cancelledIds.contains(t.id)) continue;
+      if (_pausedIds.add(t.id)) any = true;
+    }
+    if (any) _notifyNow();
+    return any;
+  }
+
+  /// 恢复全部已暂停任务。
+  bool userResumeAll() {
+    if (_disposed) return false;
+    if (_pausedIds.isEmpty) return false;
+    _pausedIds.clear();
+    _notifyNow();
+    return true;
+  }
+
   /// 一键取消整个队列。
   ///
   /// * `uploading` 行：把 id 写进 [_cancelledIds]，让传输层在下一个 chunk 边界
@@ -197,12 +328,29 @@ class SftpUploadTaskList extends ChangeNotifier {
   void removeCancelled(String id) {
     if (_disposed) return;
     _cancelledIds.remove(id);
+    _pausedIds.remove(id);
     final idx = _items.indexWhere((e) => e.id == id);
     if (idx < 0) return;
     _items.removeAt(idx);
     if (_batchTotal > 0) _batchTotal--;
     _notifyNow();
   }
+
+  /// 按 id 移除一行（失败重试前出列；不计取消）。
+  void removeById(String id) {
+    if (_disposed) return;
+    _cancelledIds.remove(id);
+    _pausedIds.remove(id);
+    final idx = _items.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    _items.removeAt(idx);
+    if (_batchTotal > 0) _batchTotal--;
+    _notifyNow();
+  }
+
+  /// 失败行列表快照（「全部重试」用）。
+  List<SftpUploadTaskView> get failedItems =>
+      _items.where((t) => t.state == SftpUploadRowState.failed).toList();
 
   void setUploading(String id) {
     if (_disposed) return;
@@ -225,6 +373,7 @@ class SftpUploadTaskList extends ChangeNotifier {
     final idx = _items.indexWhere((e) => e.id == id);
     if (idx < 0) return;
     _cancelledIds.remove(id);
+    _pausedIds.remove(id);
     _items.removeAt(idx);
     _batchSucceeded++;
     _notifyNow();
@@ -234,10 +383,46 @@ class SftpUploadTaskList extends ChangeNotifier {
     if (_disposed) return;
     final idx = _items.indexWhere((e) => e.id == id);
     if (idx < 0) return;
+    _pausedIds.remove(id);
     _items[idx].error = error;
     _items[idx].state = SftpUploadRowState.failed;
     _notifyNow();
   }
+
+  /// 调整列表显示顺序，并影响尚未开始的 pending 项执行次序
+  /// （执行器每取下一项前按 [preferredUploadOrder] 重排剩余 plan）。
+  void reorder(int oldIndex, int newIndex) {
+    if (_disposed) return;
+    if (oldIndex < 0 || oldIndex >= _items.length) return;
+    var dest = newIndex;
+    if (dest > oldIndex) dest -= 1;
+    if (dest < 0 || dest >= _items.length) return;
+    if (oldIndex == dest) return;
+    final item = _items.removeAt(oldIndex);
+    _items.insert(dest, item);
+    _notifyNow();
+  }
+
+  /// 将任务移到 pending 队列最前（紧接在所有 uploading 行之后）。
+  /// 尚未开始的项会因此被执行器优先拾取。
+  void prioritize(String id) {
+    if (_disposed) return;
+    final idx = _items.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    final item = _items[idx];
+    if (item.state == SftpUploadRowState.uploading) return;
+    _items.removeAt(idx);
+    var insertAt = 0;
+    while (insertAt < _items.length &&
+        _items[insertAt].state == SftpUploadRowState.uploading) {
+      insertAt++;
+    }
+    _items.insert(insertAt, item);
+    _notifyNow();
+  }
+
+  /// 当前列表中的任务 id 顺序（供上传执行器尊重 UI 优先级）。
+  List<String> preferredUploadOrder() => [for (final t in _items) t.id];
 
   @override
   void dispose() {
@@ -246,6 +431,7 @@ class SftpUploadTaskList extends ChangeNotifier {
     _debounce?.cancel();
     _items.clear();
     _cancelledIds.clear();
+    _pausedIds.clear();
     _batchTotal = 0;
     _batchSucceeded = 0;
     super.dispose();

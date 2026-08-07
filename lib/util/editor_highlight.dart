@@ -140,9 +140,7 @@ class SyntaxEditingController extends TextEditingController {
     }
 
     final base = style ?? const TextStyle();
-    if (_language == EditorLanguage.plain ||
-        _language == EditorLanguage.html ||
-        text.isEmpty) {
+    if (_language == EditorLanguage.plain || text.isEmpty) {
       return super.buildTextSpan(
         context: context,
         style: style,
@@ -216,6 +214,22 @@ TextSpan buildHighlightedSpan(
     case EditorLanguage.bash:
       _highlightBash(source, emit);
     case EditorLanguage.html:
+    case EditorLanguage.xml:
+      _highlightHtml(source, emit);
+    case EditorLanguage.css:
+      _highlightCss(source, emit);
+    case EditorLanguage.python:
+      _highlightPython(source, emit);
+    case EditorLanguage.dockerfile:
+      _highlightDockerfile(source, emit);
+    case EditorLanguage.markdown:
+      _highlightMarkdown(source, emit);
+    case EditorLanguage.ini:
+      _highlightIni(source, emit);
+    case EditorLanguage.go:
+      _highlightGo(source, emit);
+    case EditorLanguage.sql:
+      _highlightSql(source, emit);
     case EditorLanguage.plain:
       emit(source, EditorHighlightKind.plain);
   }
@@ -602,6 +616,690 @@ void _highlightBash(String text, _Emit emit) {
   }
 }
 
+void _highlightHtml(String text, _Emit emit) {
+  var i = 0;
+  while (i < text.length) {
+    // Comment <!-- ... -->
+    if (text.startsWith('<!--', i)) {
+      final start = i;
+      final end = text.indexOf('-->', i + 4);
+      i = end < 0 ? text.length : end + 3;
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    final c = text.codeUnitAt(i);
+    if (c != 0x3C /* < */) {
+      // Text node until next tag
+      final start = i;
+      while (i < text.length && text.codeUnitAt(i) != 0x3C) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.plain);
+      continue;
+    }
+
+    // Tag: <...>, </...>, <!...>, <?...>
+    final tagStart = i;
+    i++; // <
+    if (i < text.length &&
+        (text.codeUnitAt(i) == 0x21 /* ! */ ||
+            text.codeUnitAt(i) == 0x3F /* ? */)) {
+      while (i < text.length && text.codeUnitAt(i) != 0x3E) {
+        i++;
+      }
+      if (i < text.length) i++;
+      emit(text.substring(tagStart, i), EditorHighlightKind.keyword);
+      continue;
+    }
+
+    var closing = false;
+    if (i < text.length && text.codeUnitAt(i) == 0x2F /* / */) {
+      closing = true;
+      i++;
+    }
+
+    emit('<${closing ? '/' : ''}', EditorHighlightKind.punctuation);
+
+    // Tag name
+    final nameStart = i;
+    while (i < text.length && _isHtmlNameChar(text.codeUnitAt(i))) {
+      i++;
+    }
+    if (i > nameStart) {
+      emit(text.substring(nameStart, i), EditorHighlightKind.keyword);
+    }
+
+    // Attributes until >
+    while (i < text.length) {
+      final ac = text.codeUnitAt(i);
+      if (ac == 0x3E /* > */) {
+        emit('>', EditorHighlightKind.punctuation);
+        i++;
+        break;
+      }
+      if (ac == 0x2F /* / */ &&
+          i + 1 < text.length &&
+          text.codeUnitAt(i + 1) == 0x3E) {
+        emit('/>', EditorHighlightKind.punctuation);
+        i += 2;
+        break;
+      }
+      if (_isSpace(ac)) {
+        final start = i;
+        while (i < text.length && _isSpace(text.codeUnitAt(i))) {
+          i++;
+        }
+        emit(text.substring(start, i), EditorHighlightKind.plain);
+        continue;
+      }
+      if (ac == 0x27 || ac == 0x22) {
+        final start = i;
+        i = _consumeQuoted(text, i, allowEscape: false);
+        emit(text.substring(start, i), EditorHighlightKind.string);
+        continue;
+      }
+      if (_isHtmlNameStart(ac)) {
+        final start = i;
+        i++;
+        while (i < text.length && _isHtmlNameChar(text.codeUnitAt(i))) {
+          i++;
+        }
+        emit(text.substring(start, i), EditorHighlightKind.key);
+        continue;
+      }
+      if (ac == 0x3D /* = */) {
+        emit('=', EditorHighlightKind.punctuation);
+        i++;
+        continue;
+      }
+      emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+      i++;
+    }
+  }
+}
+
+void _highlightCss(String text, _Emit emit) {
+  var i = 0;
+  var inBlock = 0;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x2F && i + 1 < text.length && text.codeUnitAt(i + 1) == 0x2A) {
+      final start = i;
+      i += 2;
+      while (i + 1 < text.length &&
+          !(text.codeUnitAt(i) == 0x2A && text.codeUnitAt(i + 1) == 0x2F)) {
+        i++;
+      }
+      if (i + 1 < text.length) i += 2;
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    if (c == 0x27 || c == 0x22) {
+      final start = i;
+      i = _consumeQuoted(text, i, allowEscape: true);
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      continue;
+    }
+
+    if (c == 0x7B /* { */) {
+      inBlock++;
+      emit('{', EditorHighlightKind.punctuation);
+      i++;
+      continue;
+    }
+    if (c == 0x7D /* } */) {
+      if (inBlock > 0) inBlock--;
+      emit('}', EditorHighlightKind.punctuation);
+      i++;
+      continue;
+    }
+
+    if (c == 0x3A /* : */ ||
+        c == 0x3B /* ; */ ||
+        c == 0x2C /* , */ ||
+        c == 0x28 ||
+        c == 0x29) {
+      emit(text.substring(i, i + 1), EditorHighlightKind.punctuation);
+      i++;
+      continue;
+    }
+
+    if (c >= 0x30 && c <= 0x39) {
+      final start = i;
+      i = _consumeNumber(text, i);
+      // trailing unit like px/em/%
+      while (i < text.length && _isIdentChar(text.codeUnitAt(i))) {
+        i++;
+      }
+      if (i < text.length && text.codeUnitAt(i) == 0x25 /* % */) i++;
+      emit(text.substring(start, i), EditorHighlightKind.number);
+      continue;
+    }
+
+    if (_isIdentStart(c) ||
+        c == 0x2E /* . */ ||
+        c == 0x23 /* # */ ||
+        c == 0x40 /* @ */ ||
+        c == 0x2D /* - */) {
+      final start = i;
+      i++;
+      while (i < text.length) {
+        final cc = text.codeUnitAt(i);
+        if (_isIdentChar(cc) || cc == 0x2D || cc == 0x2E) {
+          i++;
+          continue;
+        }
+        break;
+      }
+      final word = text.substring(start, i);
+      if (inBlock > 0) {
+        // property name if next non-space is :
+        var j = i;
+        while (j < text.length && _isSpace(text.codeUnitAt(j))) {
+          j++;
+        }
+        if (j < text.length && text.codeUnitAt(j) == 0x3A) {
+          emit(word, EditorHighlightKind.key);
+        } else {
+          emit(word, EditorHighlightKind.plain);
+        }
+      } else {
+        emit(word, EditorHighlightKind.keyword); // selector / at-rule
+      }
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    i++;
+  }
+}
+
+void _highlightPython(String text, _Emit emit) {
+  var i = 0;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x23 /* # */) {
+      final start = i;
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    // Triple-quoted strings
+    if ((c == 0x27 || c == 0x22) &&
+        i + 2 < text.length &&
+        text.codeUnitAt(i + 1) == c &&
+        text.codeUnitAt(i + 2) == c) {
+      final start = i;
+      final quote = c;
+      i += 3;
+      while (i + 2 < text.length &&
+          !(text.codeUnitAt(i) == quote &&
+              text.codeUnitAt(i + 1) == quote &&
+              text.codeUnitAt(i + 2) == quote)) {
+        if (text.codeUnitAt(i) == 0x5C) {
+          i += 2;
+          continue;
+        }
+        i++;
+      }
+      if (i + 2 < text.length) i += 3;
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      continue;
+    }
+
+    if (c == 0x27 || c == 0x22) {
+      final start = i;
+      i = _consumeQuoted(text, i, allowEscape: true);
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      continue;
+    }
+
+    if (c == 0x2E /* . */ &&
+        i + 1 < text.length &&
+        text.codeUnitAt(i + 1) >= 0x30 &&
+        text.codeUnitAt(i + 1) <= 0x39) {
+      final start = i;
+      i = _consumeNumber(text, i);
+      emit(text.substring(start, i), EditorHighlightKind.number);
+      continue;
+    }
+
+    if (c >= 0x30 && c <= 0x39) {
+      final start = i;
+      i = _consumeNumber(text, i);
+      emit(text.substring(start, i), EditorHighlightKind.number);
+      continue;
+    }
+
+    if (_isIdentStart(c)) {
+      final start = i;
+      i++;
+      while (i < text.length && _isIdentChar(text.codeUnitAt(i))) {
+        i++;
+      }
+      final word = text.substring(start, i);
+      if (_pythonKeywords.contains(word)) {
+        emit(word, EditorHighlightKind.keyword);
+      } else if (word == 'True' || word == 'False' || word == 'None') {
+        emit(word, EditorHighlightKind.boolean);
+      } else {
+        emit(word, EditorHighlightKind.plain);
+      }
+      continue;
+    }
+
+    if (_isJsPunct(c)) {
+      emit(text.substring(i, i + 1), EditorHighlightKind.punctuation);
+      i++;
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    i++;
+  }
+}
+
+void _highlightDockerfile(String text, _Emit emit) {
+  var i = 0;
+  var atLineStart = true;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x0A) {
+      emit('\n', EditorHighlightKind.plain);
+      i++;
+      atLineStart = true;
+      continue;
+    }
+
+    if (atLineStart && (c == 0x20 || c == 0x09)) {
+      final start = i;
+      while (i < text.length &&
+          (text.codeUnitAt(i) == 0x20 || text.codeUnitAt(i) == 0x09)) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.plain);
+      continue;
+    }
+
+    if (atLineStart && c == 0x23 /* # */) {
+      final start = i;
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    if (atLineStart && _isIdentStart(c)) {
+      final start = i;
+      i++;
+      while (i < text.length && _isIdentChar(text.codeUnitAt(i))) {
+        i++;
+      }
+      final word = text.substring(start, i);
+      if (_dockerfileKeywords.contains(word.toUpperCase())) {
+        emit(word, EditorHighlightKind.keyword);
+      } else {
+        emit(word, EditorHighlightKind.plain);
+      }
+      atLineStart = false;
+      continue;
+    }
+
+    // Strings
+    if (c == 0x27 || c == 0x22) {
+      final start = i;
+      i = _consumeQuoted(text, i, allowEscape: true);
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      atLineStart = false;
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    atLineStart = false;
+    i++;
+  }
+}
+
+void _highlightMarkdown(String text, _Emit emit) {
+  var i = 0;
+  var atLineStart = true;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x0A) {
+      emit('\n', EditorHighlightKind.plain);
+      i++;
+      atLineStart = true;
+      continue;
+    }
+
+    // Fenced code block ```...```
+    if (atLineStart && text.startsWith('```', i)) {
+      final start = i;
+      i += 3;
+      // rest of opening line
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      if (i < text.length) i++; // newline
+      while (i < text.length) {
+        if (text.startsWith('```', i)) {
+          i += 3;
+          while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+            i++;
+          }
+          break;
+        }
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      atLineStart = false;
+      continue;
+    }
+
+    // Headings: # ... at line start
+    if (atLineStart && c == 0x23 /* # */) {
+      var j = i;
+      while (j < text.length &&
+          text.codeUnitAt(j) == 0x23 &&
+          j - i < 6) {
+        j++;
+      }
+      if (j < text.length &&
+          (text.codeUnitAt(j) == 0x20 || text.codeUnitAt(j) == 0x09)) {
+        final start = i;
+        while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+          i++;
+        }
+        emit(text.substring(start, i), EditorHighlightKind.keyword);
+        atLineStart = false;
+        continue;
+      }
+    }
+
+    // Bold **...** or __...__
+    if ((c == 0x2A /* * */ || c == 0x5F /* _ */) &&
+        i + 1 < text.length &&
+        text.codeUnitAt(i + 1) == c) {
+      final mark = c;
+      final start = i;
+      i += 2;
+      var closed = false;
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        if (text.codeUnitAt(i) == mark &&
+            i + 1 < text.length &&
+            text.codeUnitAt(i + 1) == mark) {
+          i += 2;
+          closed = true;
+          break;
+        }
+        i++;
+      }
+      emit(
+        text.substring(start, i),
+        closed ? EditorHighlightKind.key : EditorHighlightKind.plain,
+      );
+      atLineStart = false;
+      continue;
+    }
+
+    // Emit plain until next special or newline
+    final start = i;
+    while (i < text.length) {
+      final cc = text.codeUnitAt(i);
+      if (cc == 0x0A) break;
+      if (cc == 0x2A || cc == 0x5F) break;
+      if (atLineStart && cc == 0x23) break;
+      if (atLineStart && text.startsWith('```', i)) break;
+      i++;
+      atLineStart = false;
+    }
+    if (i > start) {
+      emit(text.substring(start, i), EditorHighlightKind.plain);
+    } else {
+      emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+      i++;
+      atLineStart = false;
+    }
+  }
+}
+
+void _highlightIni(String text, _Emit emit) {
+  var i = 0;
+  var atLineStart = true;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x0A) {
+      emit('\n', EditorHighlightKind.plain);
+      i++;
+      atLineStart = true;
+      continue;
+    }
+
+    if (atLineStart && (c == 0x20 || c == 0x09)) {
+      final start = i;
+      while (i < text.length &&
+          (text.codeUnitAt(i) == 0x20 || text.codeUnitAt(i) == 0x09)) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.plain);
+      continue;
+    }
+
+    // Comments # or ;
+    if (atLineStart && (c == 0x23 /* # */ || c == 0x3B /* ; */)) {
+      final start = i;
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    // [section]
+    if (atLineStart && c == 0x5B /* [ */) {
+      final start = i;
+      i++;
+      while (i < text.length &&
+          text.codeUnitAt(i) != 0x5D &&
+          text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      if (i < text.length && text.codeUnitAt(i) == 0x5D) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.keyword);
+      atLineStart = false;
+      continue;
+    }
+
+    // key=value
+    if (atLineStart) {
+      final keyStart = i;
+      while (i < text.length) {
+        final kc = text.codeUnitAt(i);
+        if (kc == 0x0A || kc == 0x3D /* = */) break;
+        i++;
+      }
+      if (i > keyStart) {
+        emit(text.substring(keyStart, i), EditorHighlightKind.key);
+      }
+      if (i < text.length && text.codeUnitAt(i) == 0x3D) {
+        emit('=', EditorHighlightKind.punctuation);
+        i++;
+        final valStart = i;
+        while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+          i++;
+        }
+        if (i > valStart) {
+          emit(text.substring(valStart, i), EditorHighlightKind.string);
+        }
+      }
+      atLineStart = false;
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    atLineStart = false;
+    i++;
+  }
+}
+
+void _highlightGo(String text, _Emit emit) {
+  var i = 0;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x2F /* / */ && i + 1 < text.length) {
+      final n = text.codeUnitAt(i + 1);
+      if (n == 0x2F) {
+        final start = i;
+        i += 2;
+        while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+          i++;
+        }
+        emit(text.substring(start, i), EditorHighlightKind.comment);
+        continue;
+      }
+      if (n == 0x2A) {
+        final start = i;
+        i += 2;
+        while (i + 1 < text.length &&
+            !(text.codeUnitAt(i) == 0x2A && text.codeUnitAt(i + 1) == 0x2F)) {
+          i++;
+        }
+        if (i + 1 < text.length) i += 2;
+        emit(text.substring(start, i), EditorHighlightKind.comment);
+        continue;
+      }
+    }
+
+    if (c == 0x27 || c == 0x22 || c == 0x60 /* ` */) {
+      final start = i;
+      if (c == 0x60) {
+        i++;
+        while (i < text.length && text.codeUnitAt(i) != 0x60) {
+          i++;
+        }
+        if (i < text.length) i++;
+      } else {
+        i = _consumeQuoted(text, i, allowEscape: true);
+      }
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      continue;
+    }
+
+    if (c == 0x2D /* - */ || (c >= 0x30 && c <= 0x39)) {
+      final start = i;
+      i = _consumeNumber(text, i);
+      emit(text.substring(start, i), EditorHighlightKind.number);
+      continue;
+    }
+
+    if (_isIdentStart(c)) {
+      final start = i;
+      i++;
+      while (i < text.length && _isIdentChar(text.codeUnitAt(i))) {
+        i++;
+      }
+      final word = text.substring(start, i);
+      if (_goKeywords.contains(word)) {
+        emit(word, EditorHighlightKind.keyword);
+      } else if (word == 'true' || word == 'false' || word == 'nil') {
+        emit(word, EditorHighlightKind.boolean);
+      } else {
+        emit(word, EditorHighlightKind.plain);
+      }
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    i++;
+  }
+}
+
+void _highlightSql(String text, _Emit emit) {
+  var i = 0;
+  while (i < text.length) {
+    final c = text.codeUnitAt(i);
+
+    if (c == 0x2D && i + 1 < text.length && text.codeUnitAt(i + 1) == 0x2D) {
+      final start = i;
+      i += 2;
+      while (i < text.length && text.codeUnitAt(i) != 0x0A) {
+        i++;
+      }
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    if (c == 0x2F /* / */ &&
+        i + 1 < text.length &&
+        text.codeUnitAt(i + 1) == 0x2A) {
+      final start = i;
+      i += 2;
+      while (i + 1 < text.length &&
+          !(text.codeUnitAt(i) == 0x2A && text.codeUnitAt(i + 1) == 0x2F)) {
+        i++;
+      }
+      if (i + 1 < text.length) i += 2;
+      emit(text.substring(start, i), EditorHighlightKind.comment);
+      continue;
+    }
+
+    if (c == 0x27 || c == 0x22) {
+      final start = i;
+      i = _consumeQuoted(text, i, allowEscape: true);
+      emit(text.substring(start, i), EditorHighlightKind.string);
+      continue;
+    }
+
+    if (c >= 0x30 && c <= 0x39) {
+      final start = i;
+      i = _consumeNumber(text, i);
+      emit(text.substring(start, i), EditorHighlightKind.number);
+      continue;
+    }
+
+    if (_isIdentStart(c)) {
+      final start = i;
+      i++;
+      while (i < text.length && _isIdentChar(text.codeUnitAt(i))) {
+        i++;
+      }
+      final word = text.substring(start, i);
+      if (_sqlKeywords.contains(word.toUpperCase())) {
+        emit(word, EditorHighlightKind.keyword);
+      } else {
+        emit(word, EditorHighlightKind.plain);
+      }
+      continue;
+    }
+
+    emit(text.substring(i, i + 1), EditorHighlightKind.plain);
+    i++;
+  }
+}
+
+bool _isHtmlNameStart(int c) =>
+    (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+bool _isHtmlNameChar(int c) =>
+    _isHtmlNameStart(c) ||
+    (c >= 0x30 && c <= 0x39) ||
+    c == 0x2D /* - */ ||
+    c == 0x3A /* : */;
+
 // --- scanners ----------------------------------------------------------------
 
 int _consumeJsonString(String text, int i) {
@@ -934,4 +1632,140 @@ const _bashKeywords = {
   'readonly',
   'unset',
   'typeset',
+};
+
+const _pythonKeywords = {
+  'and',
+  'as',
+  'assert',
+  'async',
+  'await',
+  'break',
+  'class',
+  'continue',
+  'def',
+  'del',
+  'elif',
+  'else',
+  'except',
+  'finally',
+  'for',
+  'from',
+  'global',
+  'if',
+  'import',
+  'in',
+  'is',
+  'lambda',
+  'nonlocal',
+  'not',
+  'or',
+  'pass',
+  'raise',
+  'return',
+  'try',
+  'while',
+  'with',
+  'yield',
+};
+
+const _dockerfileKeywords = {
+  'FROM',
+  'RUN',
+  'CMD',
+  'ENTRYPOINT',
+  'COPY',
+  'ADD',
+  'WORKDIR',
+  'ENV',
+  'EXPOSE',
+  'USER',
+  'VOLUME',
+  'LABEL',
+  'ARG',
+  'ONBUILD',
+  'STOPSIGNAL',
+  'HEALTHCHECK',
+  'SHELL',
+  'MAINTAINER',
+};
+
+const _goKeywords = {
+  'break',
+  'case',
+  'chan',
+  'const',
+  'continue',
+  'default',
+  'defer',
+  'else',
+  'fallthrough',
+  'for',
+  'func',
+  'go',
+  'goto',
+  'if',
+  'import',
+  'interface',
+  'map',
+  'package',
+  'range',
+  'return',
+  'select',
+  'struct',
+  'switch',
+  'type',
+  'var',
+};
+
+const _sqlKeywords = {
+  'SELECT',
+  'FROM',
+  'WHERE',
+  'AND',
+  'OR',
+  'NOT',
+  'INSERT',
+  'INTO',
+  'VALUES',
+  'UPDATE',
+  'SET',
+  'DELETE',
+  'CREATE',
+  'TABLE',
+  'DROP',
+  'ALTER',
+  'INDEX',
+  'JOIN',
+  'LEFT',
+  'RIGHT',
+  'INNER',
+  'OUTER',
+  'ON',
+  'AS',
+  'ORDER',
+  'BY',
+  'GROUP',
+  'HAVING',
+  'LIMIT',
+  'OFFSET',
+  'DISTINCT',
+  'NULL',
+  'TRUE',
+  'FALSE',
+  'IN',
+  'IS',
+  'LIKE',
+  'BETWEEN',
+  'EXISTS',
+  'UNION',
+  'ALL',
+  'PRIMARY',
+  'KEY',
+  'FOREIGN',
+  'REFERENCES',
+  'CONSTRAINT',
+  'DEFAULT',
+  'CASCADE',
+  'WITH',
 };

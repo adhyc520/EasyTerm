@@ -1,7 +1,8 @@
 import 'remote_process_list.dart';
+import 'remote_sudo.dart';
 import 'ssh_workspace_controller.dart';
 
-enum RemoteContainerAction { start, stop, restart }
+enum RemoteContainerAction { start, stop, restart, remove }
 
 /// 单个容器（Docker）。
 class RemoteContainer {
@@ -162,11 +163,37 @@ Future<String?> controlRemoteContainer(
     RemoteContainerAction.start => 'start',
     RemoteContainerAction.stop => 'stop',
     RemoteContainerAction.restart => 'restart',
+    RemoteContainerAction.remove => 'rm -f',
   };
+  if (os == RemoteOsKind.windows) {
+    final cmd = 'docker.exe $verb $ref 2>nul || docker $verb $ref';
+    final raw = await controller.runRemoteForStatus(cmd);
+    if (raw == null) return '命令失败或已断开';
+    final lower = raw.toLowerCase();
+    if (lower.contains('error') ||
+        lower.contains('no such') ||
+        lower.contains('cannot')) {
+      final msg = raw.trim();
+      return msg.isEmpty ? '操作失败' : msg;
+    }
+    return null;
+  }
+  final cmd = 'docker $verb $ref 2>&1; echo __EC:\$?';
+  final raw = await controller.runRemoteForStatus(cmd);
+  return RemoteSudo.interpretExit(raw, usedPassword: false);
+}
+
+Future<String?> inspectRemoteContainer(
+  SshWorkspaceController controller, {
+  required RemoteOsKind os,
+  required String ref,
+}) async {
+  if (!controller.connected) return null;
+  if (!isSafeContainerRef(ref)) return null;
   final cmd = os == RemoteOsKind.windows
-      ? 'docker.exe $verb $ref 2>nul || docker $verb $ref'
-      : 'docker $verb $ref';
-  return controller.runRemoteForStatus(cmd);
+      ? 'docker.exe inspect $ref 2>nul || docker inspect $ref'
+      : "docker inspect --format '{{.Name}}|{{.State.Status}}|{{.Config.Image}}|{{.Created}}|{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' $ref 2>/dev/null || docker inspect $ref 2>/dev/null | head -n 80";
+  return controller.runQueued(cmd);
 }
 
 List<RemoteContainer> parseDockerPs(String raw, {RemoteOsKind? os}) {

@@ -425,5 +425,20 @@
   "updateErrorUnknown": "无法检查更新。",
   "updateRetry": "重试",
   "updateUnsupported": "自动更新仅支持 macOS 与 Windows。",
-  "updateOk": "确定"
+  "updateOk": "确定",
+  "desktopReconnecting": "正在重连…",
+  "desktopReconnect": "重连",
+  "desktopDismissBanner": "关闭提示",
+  "desktopPaused": "已暂停",
+  "desktopUndoLast": "撤销上一次",
+  "sudoNeedAuthTitle": "需要 sudo 授权",
+  "sudoAuthBody": "远端执行特权命令需要 sudo 密码。密码将在本次会话内复用（15 分钟空闲后失效），不会保存到本地。",
+  "sudoPasswordLabel": "sudo 密码",
+  "sudoUseSshPassword": "使用 SSH 登录密码",
+  "sudoAuthorize": "授权",
+  "sudoPasswordIncorrect": "密码不正确，请重试",
+  "sudoLockedSnack": "已锁定 sudo 密码",
+  "sudoCancel": "取消",
+  "sudoShowPassword": "显示",
+  "sudoHidePassword": "隐藏"
 }

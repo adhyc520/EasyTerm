@@ -6,7 +6,11 @@ import '../../services/remote_containers.dart';
 import '../../services/remote_process_list.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
+import '../../widgets/destructive_action_dialog.dart';
+import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_monitor_widgets.dart';
+import '../widgets/desktop_scrollable_actions.dart';
 
 enum _Sort { name, status, cpu, memory }
 
@@ -37,9 +41,14 @@ class _ContainersAppState extends State<ContainersApp> {
   String? _error;
   String _filter = '';
   String? _selected;
+  /// True when [_selected] was visible in a prior refresh but is missing now.
+  bool _selectedGone = false;
   _Sort _sort = _Sort.status;
   bool _sortAsc = true;
   final _filterCtrl = TextEditingController();
+  bool _userPaused = false;
+  Duration _interval = const Duration(seconds: 5);
+  DateTime? _lastTickAt;
 
   @override
   void initState() {
@@ -76,7 +85,8 @@ class _ContainersAppState extends State<ContainersApp> {
     if (mounted) setState(() {});
   }
 
-  bool get _paused => widget.window.state == WindowState.minimized;
+  bool get _paused =>
+      widget.window.state == WindowState.minimized || _userPaused;
 
   bool get _connected =>
       widget.controller.connected && !widget.controller.dropped;
@@ -87,7 +97,7 @@ class _ContainersAppState extends State<ContainersApp> {
       _timer = null;
       return;
     }
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _timer = Timer.periodic(_interval, (_) {
       unawaited(_tick());
     });
   }
@@ -124,9 +134,16 @@ class _ContainersAppState extends State<ContainersApp> {
         _available = snap.available;
         _loading = false;
         _error = snap.error;
-        if (_selected != null &&
-            !snap.containers.any((c) => c.id == _selected)) {
-          _selected = null;
+        _lastTickAt = DateTime.now();
+        if (_selected != null) {
+          final stillThere =
+              snap.containers.any((c) => c.id == _selected);
+          if (stillThere) {
+            _selectedGone = false;
+          } else if (!_selectedGone) {
+            // Keep id so detail can explain disappearance.
+            _selectedGone = true;
+          }
         }
       });
     } catch (e) {
@@ -174,6 +191,39 @@ class _ContainersAppState extends State<ContainersApp> {
   Future<void> _act(RemoteContainerAction action) async {
     final id = _selected;
     if (id == null || _os == null || _busy) return;
+    RemoteContainer? selected;
+    for (final c in _items) {
+      if (c.id == id) {
+        selected = c;
+        break;
+      }
+    }
+    final name = selected?.name.isNotEmpty == true ? selected!.name : id;
+    if (action == RemoteContainerAction.stop) {
+      final ok = await confirmDestructiveAction(
+        context,
+        title: '停止容器',
+        body: '确定停止容器「$name」？正在其中运行的服务将中断。',
+        confirmLabel: '停止',
+      );
+      if (!ok || !mounted) return;
+    } else if (action == RemoteContainerAction.restart) {
+      final ok = await confirmDestructiveAction(
+        context,
+        title: '重启容器',
+        body: '确定重启容器「$name」？服务会短暂中断。',
+        confirmLabel: '重启',
+      );
+      if (!ok || !mounted) return;
+    } else if (action == RemoteContainerAction.remove) {
+      final ok = await confirmDestructiveAction(
+        context,
+        title: '删除容器',
+        body: '确定删除容器「$name」？此操作不可撤销。',
+        confirmLabel: '删除',
+      );
+      if (!ok || !mounted) return;
+    }
     setState(() => _busy = true);
     final out = await controlRemoteContainer(
       widget.controller,
@@ -183,14 +233,68 @@ class _ContainersAppState extends State<ContainersApp> {
     );
     if (!mounted) return;
     setState(() => _busy = false);
-    if (out != null &&
-        out.toLowerCase().contains('error') &&
-        context.mounted) {
+    if (out != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(out.trim())),
       );
     }
     await _tick();
+  }
+
+  void _openLogs(RemoteContainer c) {
+    widget.wm.open(
+      DesktopAppType.logs,
+      args: {
+        'source': 'docker',
+        'unit': c.name.isNotEmpty ? c.name : c.id,
+      },
+    );
+  }
+
+  void _execShell(RemoteContainer c) {
+    final ref = c.name.isNotEmpty ? c.name : c.id;
+    widget.wm.open(
+      DesktopAppType.terminal,
+      args: {'inject': 'docker exec -it $ref sh\n'},
+    );
+  }
+
+  Future<void> _inspect(RemoteContainer c) async {
+    if (_os == null) return;
+    final ref = c.name.isNotEmpty ? c.name : c.id;
+    final raw = await inspectRemoteContainer(
+      widget.controller,
+      os: _os!,
+      ref: ref,
+    );
+    if (!mounted) return;
+    final wb = context.wb;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: wb.panelElevated,
+        title: Text('容器详情 · $ref', style: TextStyle(color: wb.primaryText)),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              (raw == null || raw.trim().isEmpty) ? '无法获取 inspect 输出' : raw.trim(),
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                color: wb.secondaryText,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _toggleSort(_Sort s) {
@@ -215,6 +319,8 @@ class _ContainersAppState extends State<ContainersApp> {
         break;
       }
     }
+    final showMissingDetail =
+        _selected != null && selected == null && _selectedGone;
 
     return ColoredBox(
       color: wb.bg,
@@ -242,6 +348,30 @@ class _ContainersAppState extends State<ContainersApp> {
                   style: TextStyle(fontSize: 12, color: wb.textMuted),
                 ),
                 const Spacer(),
+                LastUpdatedChip(
+                  lastTickAt: _lastTickAt,
+                  live: !_paused && _connected,
+                ),
+                const SizedBox(width: 4),
+                PauseToggle(
+                  paused: _userPaused,
+                  onPausedChanged: (v) {
+                    setState(() => _userPaused = v);
+                    _armTimer();
+                  },
+                  interval: _interval,
+                  onIntervalChanged: (d) {
+                    setState(() => _interval = d);
+                    _armTimer();
+                  },
+                  intervals: const [
+                    Duration(seconds: 1),
+                    Duration(seconds: 3),
+                    Duration(seconds: 5),
+                    Duration(seconds: 10),
+                    Duration(seconds: 30),
+                  ],
+                ),
                 if (_loading)
                   const SizedBox(
                     width: 14,
@@ -292,43 +422,63 @@ class _ContainersAppState extends State<ContainersApp> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _ActBtn(
-                  label: '启动',
-                  enabled: selected != null && !selected.isRunning && !_busy,
-                  onPressed: () => unawaited(_act(RemoteContainerAction.start)),
-                ),
-                const SizedBox(width: 4),
-                _ActBtn(
-                  label: '停止',
-                  enabled: selected != null && selected.isRunning && !_busy,
-                  onPressed: () => unawaited(_act(RemoteContainerAction.stop)),
-                ),
-                const SizedBox(width: 4),
-                _ActBtn(
-                  label: '重启',
-                  enabled: selected != null && !_busy,
-                  onPressed: () =>
-                      unawaited(_act(RemoteContainerAction.restart)),
-                ),
-                const SizedBox(width: 4),
-                _ActBtn(
-                  label: '日志',
-                  enabled: selected != null,
-                  onPressed: () {
-                    final c = selected!;
-                    widget.wm.open(
-                      DesktopAppType.logs,
-                      args: {
-                        'source': 'docker',
-                        'unit': c.name.isNotEmpty ? c.name : c.id,
-                      },
-                    );
-                  },
+                Flexible(
+                  child: DesktopScrollableActions(
+                    children: [
+                      _ActBtn(
+                        label: '启动',
+                        enabled:
+                            selected != null && !selected.isRunning && !_busy,
+                        onPressed: () =>
+                            unawaited(_act(RemoteContainerAction.start)),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '停止',
+                        enabled:
+                            selected != null && selected.isRunning && !_busy,
+                        onPressed: () =>
+                            unawaited(_act(RemoteContainerAction.stop)),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '重启',
+                        enabled: selected != null && !_busy,
+                        onPressed: () =>
+                            unawaited(_act(RemoteContainerAction.restart)),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '日志',
+                        enabled: selected != null,
+                        onPressed: () => _openLogs(selected!),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '进入',
+                        enabled: selected != null && selected.isRunning,
+                        onPressed: () => _execShell(selected!),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '检查',
+                        enabled: selected != null && !_busy,
+                        onPressed: () => unawaited(_inspect(selected!)),
+                      ),
+                      const SizedBox(width: 4),
+                      _ActBtn(
+                        label: '删除',
+                        enabled: selected != null && !_busy,
+                        onPressed: () =>
+                            unawaited(_act(RemoteContainerAction.remove)),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-          if (_error != null)
+          if (_error != null && _items.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
               child: Text(
@@ -342,139 +492,167 @@ class _ContainersAppState extends State<ContainersApp> {
             onSort: _toggleSort,
           ),
           Expanded(
-            child: !_available && _items.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        _error ?? '远端未安装 Docker，或当前用户无权访问 docker.sock',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: wb.textMuted, fontSize: 13),
+            child: RemoteStateView(
+              state: !_connected && _items.isEmpty
+                  ? RemoteState.disconnected
+                  : (_loading && _items.isEmpty)
+                      ? RemoteState.loading
+                      : (!_available && _items.isEmpty)
+                          ? RemoteState.notInstalled
+                          : (_error != null && _items.isEmpty)
+                              ? RemoteState.error
+                              : list.isEmpty
+                                  ? RemoteState.empty
+                                  : RemoteState.data,
+              message: !_connected && _items.isEmpty
+                  ? '未连接'
+                  : (!_available && _items.isEmpty)
+                      ? (_error ?? '远端未安装 Docker，或当前用户无权访问 docker.sock')
+                      : (_error != null && _items.isEmpty)
+                          ? _error
+                          : '无容器',
+              onRetry: !_connected && _items.isEmpty
+                  ? () => unawaited(widget.controller.reconnect())
+                  : () => unawaited(_tick()),
+              retryLabel: !_connected && _items.isEmpty
+                  ? '重连'
+                  : (!_available && _items.isEmpty)
+                      ? '重试'
+                      : null,
+              data: ListView.builder(
+                itemCount: list.length,
+                itemBuilder: (context, i) {
+                  final c = list[i];
+                  final sel = c.id == _selected;
+                  return InkWell(
+                    onTap: () => setState(() => _selected = c.id),
+                    onDoubleTap: () {
+                      setState(() => _selected = c.id);
+                      _openLogs(c);
+                    },
+                    child: Container(
+                      color: sel
+                          ? wb.accentBlue.withValues(alpha: 0.12)
+                          : null,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
                       ),
-                    ),
-                  )
-                : list.isEmpty
-                    ? Center(
-                        child: Text(
-                          _loading ? '加载中…' : '无容器',
-                          style: TextStyle(color: wb.textMuted),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: list.length,
-                        itemBuilder: (context, i) {
-                          final c = list[i];
-                          final sel = c.id == _selected;
-                          return InkWell(
-                            onTap: () => setState(() => _selected = c.id),
-                            onDoubleTap: () {
-                              setState(() => _selected = c.id);
-                              unawaited(
-                                _act(
-                                  c.isRunning
-                                      ? RemoteContainerAction.restart
-                                      : RemoteContainerAction.start,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 8,
+                            color: c.isRunning ? wb.online : wb.textMuted,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  c.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: wb.primaryText,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
                                 ),
-                              );
-                            },
-                            child: Container(
-                              color: sel
-                                  ? wb.accentBlue.withValues(alpha: 0.12)
-                                  : null,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.circle,
-                                    size: 8,
-                                    color: c.isRunning
-                                        ? wb.online
-                                        : wb.textMuted,
+                                Text(
+                                  c.image,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: wb.textMuted,
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    flex: 3,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          c.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: wb.primaryText,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        Text(
-                                          c.image,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: wb.textMuted,
-                                            fontSize: 11,
-                                            fontFamily: 'monospace',
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  Expanded(
-                                    flex: 2,
-                                    child: Text(
-                                      c.status,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: wb.secondaryText,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 56,
-                                    child: Text(
-                                      c.cpuPercent == null
-                                          ? '—'
-                                          : '${c.cpuPercent!.toStringAsFixed(1)}%',
-                                      textAlign: TextAlign.right,
-                                      style: TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontSize: 12,
-                                        color: wb.secondaryText,
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(
-                                    width: 72,
-                                    child: Text(
-                                      c.memUsage ??
-                                          (c.memPercent == null
-                                              ? '—'
-                                              : '${c.memPercent!.toStringAsFixed(1)}%'),
-                                      textAlign: TextAlign.right,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontSize: 11,
-                                        color: wb.secondaryText,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            flex: 2,
+                            child: Text(
+                              c.status,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: wb.secondaryText,
+                                fontSize: 11,
                               ),
                             ),
-                          );
-                        },
+                          ),
+                          SizedBox(
+                            width: 56,
+                            child: Text(
+                              c.cpuPercent == null
+                                  ? '—'
+                                  : '${c.cpuPercent!.toStringAsFixed(1)}%',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                                color: wb.secondaryText,
+                              ),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 72,
+                            child: Text(
+                              c.memUsage ??
+                                  (c.memPercent == null
+                                      ? '—'
+                                      : '${c.memPercent!.toStringAsFixed(1)}%'),
+                              textAlign: TextAlign.right,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: wb.secondaryText,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
-          if (selected != null)
+          if (showMissingDetail)
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: wb.border)),
+                color: wb.panel,
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: wb.textMuted),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '所选容器已不存在（可能已被删除或重建）',
+                      style: TextStyle(fontSize: 12, color: wb.textMuted),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() {
+                      _selected = null;
+                      _selectedGone = false;
+                    }),
+                    child: const Text('清除选区'),
+                  ),
+                ],
+              ),
+            )
+          else if (selected != null)
             Container(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
               decoration: BoxDecoration(

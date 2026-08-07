@@ -9,11 +9,25 @@ void main() {
       expect(editorLanguageFromPath(r'D:\x\y.yml'), EditorLanguage.yaml);
       expect(editorLanguageFromPath('app.js'), EditorLanguage.javascript);
       expect(editorLanguageFromPath('mod.mjs'), EditorLanguage.javascript);
+      expect(editorLanguageFromPath('app.ts'), EditorLanguage.javascript);
+      expect(editorLanguageFromPath('App.tsx'), EditorLanguage.javascript);
       expect(editorLanguageFromPath('index.html'), EditorLanguage.html);
       expect(editorLanguageFromPath('page.HTM'), EditorLanguage.html);
+      expect(editorLanguageFromPath('styles.css'), EditorLanguage.css);
+      expect(editorLanguageFromPath('main.py'), EditorLanguage.python);
+      expect(editorLanguageFromPath('script.pyw'), EditorLanguage.python);
       expect(editorLanguageFromPath('run.sh'), EditorLanguage.bash);
       expect(editorLanguageFromPath('init.bash'), EditorLanguage.bash);
-      expect(editorLanguageFromPath('readme.md'), EditorLanguage.plain);
+      expect(editorLanguageFromPath('Dockerfile'), EditorLanguage.dockerfile);
+      expect(editorLanguageFromPath('dockerfile'), EditorLanguage.dockerfile);
+      expect(editorLanguageFromPath('app.dockerfile'), EditorLanguage.dockerfile);
+      expect(editorLanguageFromPath('readme.md'), EditorLanguage.markdown);
+      expect(editorLanguageFromPath('NOTES.markdown'), EditorLanguage.markdown);
+      expect(editorLanguageFromPath('app.ini'), EditorLanguage.ini);
+      expect(editorLanguageFromPath('nginx.conf'), EditorLanguage.ini);
+      expect(editorLanguageFromPath('local.cfg'), EditorLanguage.ini);
+      expect(editorLanguageFromPath('pom.xml'), EditorLanguage.xml);
+      expect(editorLanguageFromPath('icon.svg'), EditorLanguage.xml);
     });
   });
 

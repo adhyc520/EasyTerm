@@ -8,6 +8,7 @@ import '../services/desktop_settings_store.dart';
 import '../services/desktop_window_size_store.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
+import 'desktop_app_registry.dart';
 
 enum WindowState { normal, minimized, maximized }
 
@@ -237,49 +238,23 @@ class DesktopWindowManager extends ChangeNotifier {
 
   static String defaultTitle(DesktopAppType type, Map<String, dynamic> args) {
     switch (type) {
-      case DesktopAppType.terminal:
-        return '终端';
-      case DesktopAppType.files:
-        return '文件';
-      case DesktopAppType.browser:
-        return '浏览器';
-      case DesktopAppType.monitor:
-        return '监控';
-      case DesktopAppType.tasks:
-        return '任务管理器';
-      case DesktopAppType.logs:
-        return '日志';
-      case DesktopAppType.containers:
-        return '容器';
       case DesktopAppType.diskUsage:
         final path = args['path']?.toString();
         if (path != null && path.isNotEmpty && path != '/') {
           final i = path.replaceAll('\\', '/').lastIndexOf('/');
           final name = i < 0 ? path : path.substring(i + 1);
-          return name.isEmpty ? '磁盘占用' : '占用 · $name';
+          return name.isEmpty ? metaFor(type).label : '占用 · $name';
         }
-        return '磁盘占用';
-      case DesktopAppType.transfers:
-        return '传输';
+        return metaFor(type).label;
       case DesktopAppType.editor:
         final path = args['path']?.toString();
         if (path != null && path.isNotEmpty) {
           final i = path.replaceAll('\\', '/').lastIndexOf('/');
           return i < 0 ? path : path.substring(i + 1);
         }
-        return '编辑器';
-      case DesktopAppType.forwards:
-        return '端口转发';
-      case DesktopAppType.runCommand:
-        return '运行命令';
-      case DesktopAppType.cron:
-        return '计划任务';
-      case DesktopAppType.users:
-        return '用户与组';
-      case DesktopAppType.packages:
-        return '包管理器';
-      case DesktopAppType.firewall:
-        return '防火墙';
+        return metaFor(type).label;
+      default:
+        return metaFor(type).label;
     }
   }
 

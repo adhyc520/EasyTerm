@@ -227,7 +227,11 @@ bool _isSkippableBrowserUrl(String trimmed) {
       lower.startsWith('about:');
 }
 
-/// Rewrite HTML/CSS/JS body absolute URLs; optionally inject fetch/XHR shim.
+/// Rewrite HTML/CSS body absolute URLs; optionally inject fetch/XHR shim.
+///
+/// JavaScript responses are intentionally not rewritten here — SPA bundles are
+/// huge and almost never contain `href`/`url()` attributes; the HTML shim covers
+/// `fetch`/XHR instead. Running regex rewrite on JS would freeze the UI isolate.
 String rewriteGatewayResponseBody(
   String body, {
   required int gatewayPort,

@@ -1065,4 +1065,50 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get updateOk => '确定';
+
+  @override
+  String get desktopReconnecting => '正在重连…';
+
+  @override
+  String get desktopReconnect => '重连';
+
+  @override
+  String get desktopDismissBanner => '关闭提示';
+
+  @override
+  String get desktopPaused => '已暂停';
+
+  @override
+  String get desktopUndoLast => '撤销上一次';
+
+  @override
+  String get sudoNeedAuthTitle => '需要 sudo 授权';
+
+  @override
+  String get sudoAuthBody =>
+      '远端执行特权命令需要 sudo 密码。密码将在本次会话内复用（15 分钟空闲后失效），不会保存到本地。';
+
+  @override
+  String get sudoPasswordLabel => 'sudo 密码';
+
+  @override
+  String get sudoUseSshPassword => '使用 SSH 登录密码';
+
+  @override
+  String get sudoAuthorize => '授权';
+
+  @override
+  String get sudoPasswordIncorrect => '密码不正确，请重试';
+
+  @override
+  String get sudoLockedSnack => '已锁定 sudo 密码';
+
+  @override
+  String get sudoCancel => '取消';
+
+  @override
+  String get sudoShowPassword => '显示';
+
+  @override
+  String get sudoHidePassword => '隐藏';
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/workbench_theme.dart';
 import '../util/desktop_resize_cursors.dart';
+import 'desktop_app_registry.dart';
 import 'desktop_window_manager.dart';
 
 /// 桌面窗口外框：标题栏拖动 / 双击最大化 / 8 向缩放 / 聚焦高亮。
@@ -26,42 +27,7 @@ class DesktopWindowFrame extends StatelessWidget {
   /// （父级 Positioned 外溢区域无法命中，故手柄必须落在窗口矩形内。）
   static const double handle = 10;
 
-  IconData _iconFor(DesktopAppType type) {
-    switch (type) {
-      case DesktopAppType.terminal:
-        return Icons.terminal_rounded;
-      case DesktopAppType.files:
-        return Icons.folder_rounded;
-      case DesktopAppType.browser:
-        return Icons.language_rounded;
-      case DesktopAppType.monitor:
-        return Icons.monitor_heart_rounded;
-      case DesktopAppType.tasks:
-        return Icons.memory_rounded;
-      case DesktopAppType.logs:
-        return Icons.article_rounded;
-      case DesktopAppType.containers:
-        return Icons.view_in_ar_rounded;
-      case DesktopAppType.diskUsage:
-        return Icons.pie_chart_rounded;
-      case DesktopAppType.transfers:
-        return Icons.swap_vert_rounded;
-      case DesktopAppType.editor:
-        return Icons.edit_note_rounded;
-      case DesktopAppType.forwards:
-        return Icons.alt_route_rounded;
-      case DesktopAppType.runCommand:
-        return Icons.play_circle_outline_rounded;
-      case DesktopAppType.cron:
-        return Icons.schedule_rounded;
-      case DesktopAppType.users:
-        return Icons.groups_rounded;
-      case DesktopAppType.packages:
-        return Icons.inventory_2_rounded;
-      case DesktopAppType.firewall:
-        return Icons.security_rounded;
-    }
-  }
+  IconData _iconFor(DesktopAppType type) => iconForApp(type);
 
   @override
   Widget build(BuildContext context) {
@@ -525,6 +491,7 @@ class _TitleBar extends StatelessWidget {
               maximized: maximized,
               onMaximize: onMaximize,
               onShowLayouts: () => unawaited(_showSnapPicker(context)),
+              onSnapLayout: onSnapLayout,
             ),
             _TitleBtn(
               icon: Icons.close_rounded,
@@ -539,44 +506,261 @@ class _TitleBar extends StatelessWidget {
   }
 }
 
-class _SnapMaximizeBtn extends StatelessWidget {
+class _SnapMaximizeBtn extends StatefulWidget {
   const _SnapMaximizeBtn({
     required this.maximized,
     required this.onMaximize,
     required this.onShowLayouts,
+    required this.onSnapLayout,
   });
 
   final bool maximized;
   final VoidCallback onMaximize;
   final VoidCallback onShowLayouts;
+  final void Function(TileZone zone) onSnapLayout;
+
+  @override
+  State<_SnapMaximizeBtn> createState() => _SnapMaximizeBtnState();
+}
+
+class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
+  final _layer = OverlayPortalController();
+  Timer? _hideTimer;
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) _layer.hide();
+    });
+  }
+
+  void _cancelHide() {
+    _hideTimer?.cancel();
+    _hideTimer = null;
+  }
+
+  void _showGrid() {
+    if (widget.maximized) return;
+    _cancelHide();
+    _layer.show();
+  }
 
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    return Tooltip(
-      message: maximized ? '还原' : '最大化 · 悬停选布局',
-      waitDuration: const Duration(milliseconds: 400),
-      child: MouseRegion(
-        onEnter: (_) {
-          if (!maximized) {
-            // 短延迟后由用户点击右侧小三角或长按打开；此处用 secondary 入口
-          }
-        },
-        child: InkWell(
-          onTap: onMaximize,
-          onSecondaryTap: onShowLayouts,
-          onLongPress: onShowLayouts,
-          canRequestFocus: false,
-          borderRadius: BorderRadius.circular(4),
-          child: SizedBox(
-            width: 28,
-            height: 24,
-            child: Icon(
-              maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
-              size: 15,
-              color: wb.textMuted,
+    return OverlayPortal(
+      controller: _layer,
+      overlayChildBuilder: (ctx) {
+        final box = context.findRenderObject() as RenderBox?;
+        if (box == null || !box.hasSize) return const SizedBox.shrink();
+        final origin = box.localToGlobal(Offset.zero);
+        return Positioned(
+          left: origin.dx - 72,
+          top: origin.dy + box.size.height + 4,
+          child: MouseRegion(
+            onEnter: (_) => _cancelHide(),
+            onExit: (_) => _scheduleHide(),
+            child: Material(
+              elevation: 8,
+              color: wb.panelElevated,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: SizedBox(
+                  width: 148,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '贴边布局',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: wb.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      // 2×2 quarters
+                      SizedBox(
+                        height: 56,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: _SnapCell(
+                                      onTap: () {
+                                        _layer.hide();
+                                        widget.onSnapLayout(TileZone.topLeft);
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Expanded(
+                                    child: _SnapCell(
+                                      onTap: () {
+                                        _layer.hide();
+                                        widget.onSnapLayout(
+                                          TileZone.bottomLeft,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Expanded(
+                                    child: _SnapCell(
+                                      onTap: () {
+                                        _layer.hide();
+                                        widget.onSnapLayout(TileZone.topRight);
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Expanded(
+                                    child: _SnapCell(
+                                      onTap: () {
+                                        _layer.hide();
+                                        widget.onSnapLayout(
+                                          TileZone.bottomRight,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _SnapCell(
+                              height: 22,
+                              label: '左',
+                              onTap: () {
+                                _layer.hide();
+                                widget.onSnapLayout(TileZone.left);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Expanded(
+                            child: _SnapCell(
+                              height: 22,
+                              label: '右',
+                              onTap: () {
+                                _layer.hide();
+                                widget.onSnapLayout(TileZone.right);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
+        );
+      },
+      child: Tooltip(
+        message: widget.maximized ? '还原' : '最大化 · 悬停选布局',
+        waitDuration: const Duration(milliseconds: 400),
+        child: MouseRegion(
+          onEnter: (_) => _showGrid(),
+          onExit: (_) => _scheduleHide(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              InkWell(
+                onTap: widget.onMaximize,
+                onSecondaryTap: widget.onShowLayouts,
+                onLongPress: widget.onShowLayouts,
+                canRequestFocus: false,
+                borderRadius: BorderRadius.circular(4),
+                child: SizedBox(
+                  width: 28,
+                  height: 24,
+                  child: Icon(
+                    widget.maximized
+                        ? Icons.filter_none_rounded
+                        : Icons.crop_square_rounded,
+                    size: 15,
+                    color: wb.textMuted,
+                  ),
+                ),
+              ),
+              if (!widget.maximized)
+                InkWell(
+                  onTap: widget.onShowLayouts,
+                  onSecondaryTap: widget.onShowLayouts,
+                  canRequestFocus: false,
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    width: 14,
+                    height: 24,
+                    child: Icon(
+                      Icons.arrow_drop_down_rounded,
+                      size: 14,
+                      color: wb.textMuted.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SnapCell extends StatelessWidget {
+  const _SnapCell({
+    required this.onTap,
+    this.height,
+    this.label,
+  });
+
+  final VoidCallback onTap;
+  final double? height;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Material(
+      color: wb.panel,
+      borderRadius: BorderRadius.circular(4),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          height: height,
+          width: double.infinity,
+          child: label == null
+              ? const SizedBox.expand()
+              : Center(
+                  child: Text(
+                    label!,
+                    style: TextStyle(fontSize: 10, color: wb.textMuted),
+                  ),
+                ),
         ),
       ),
     );

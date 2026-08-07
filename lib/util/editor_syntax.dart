@@ -2,13 +2,21 @@ import 'dart:convert';
 
 import 'package:yaml/yaml.dart';
 
-/// Languages the remote editor can syntax-check.
+/// Languages the remote editor can syntax-check / highlight.
 enum EditorLanguage {
   json,
   yaml,
   javascript,
   html,
+  css,
+  python,
   bash,
+  dockerfile,
+  markdown,
+  ini,
+  xml,
+  go,
+  sql,
   plain,
 }
 
@@ -34,12 +42,12 @@ class EditorSyntaxIssue {
 EditorLanguage editorLanguageFromPath(String path) {
   final name = path.replaceAll('\\', '/');
   final base = name.contains('/') ? name.substring(name.lastIndexOf('/') + 1) : name;
+  final baseLower = base.toLowerCase();
+  if (baseLower == 'dockerfile' || baseLower.startsWith('dockerfile.')) {
+    return EditorLanguage.dockerfile;
+  }
   final dot = base.lastIndexOf('.');
   if (dot < 0 || dot == base.length - 1) {
-    // Common bash scripts without extension.
-    if (base == 'Dockerfile' || base.startsWith('.')) {
-      return EditorLanguage.plain;
-    }
     return EditorLanguage.plain;
   }
   final ext = base.substring(dot + 1).toLowerCase();
@@ -52,15 +60,39 @@ EditorLanguage editorLanguageFromPath(String path) {
     case 'js':
     case 'mjs':
     case 'cjs':
+    case 'ts':
+    case 'tsx':
       return EditorLanguage.javascript;
     case 'html':
     case 'htm':
       return EditorLanguage.html;
+    case 'css':
+      return EditorLanguage.css;
+    case 'py':
+    case 'pyw':
+      return EditorLanguage.python;
     case 'sh':
     case 'bash':
     case 'zsh':
     case 'ksh':
       return EditorLanguage.bash;
+    case 'dockerfile':
+      return EditorLanguage.dockerfile;
+    case 'md':
+    case 'markdown':
+    case 'mdown':
+      return EditorLanguage.markdown;
+    case 'ini':
+    case 'conf':
+    case 'cfg':
+      return EditorLanguage.ini;
+    case 'xml':
+    case 'svg':
+      return EditorLanguage.xml;
+    case 'go':
+      return EditorLanguage.go;
+    case 'sql':
+      return EditorLanguage.sql;
     default:
       return EditorLanguage.plain;
   }
@@ -76,8 +108,24 @@ String editorLanguageLabel(EditorLanguage language) {
       return 'JavaScript';
     case EditorLanguage.html:
       return 'HTML';
+    case EditorLanguage.css:
+      return 'CSS';
+    case EditorLanguage.python:
+      return 'Python';
     case EditorLanguage.bash:
       return 'Bash';
+    case EditorLanguage.dockerfile:
+      return 'Dockerfile';
+    case EditorLanguage.markdown:
+      return 'Markdown';
+    case EditorLanguage.ini:
+      return 'INI';
+    case EditorLanguage.xml:
+      return 'XML';
+    case EditorLanguage.go:
+      return 'Go';
+    case EditorLanguage.sql:
+      return 'SQL';
     case EditorLanguage.plain:
       return '';
   }
@@ -94,8 +142,20 @@ EditorSyntaxIssue? validateEditorSyntax(EditorLanguage language, String text) {
       return _validateJavascript(text);
     case EditorLanguage.html:
       return _validateHtml(text);
+    case EditorLanguage.css:
+    case EditorLanguage.python:
+    case EditorLanguage.dockerfile:
+    case EditorLanguage.markdown:
+    case EditorLanguage.ini:
+    case EditorLanguage.go:
+    case EditorLanguage.sql:
+      // Light highlight only — no structural validator yet.
+      return null;
     case EditorLanguage.bash:
       return _validateBash(text);
+    case EditorLanguage.xml:
+      // Reuse HTML tag-balance checks (void-tag rules are harmless for XML).
+      return _validateHtml(text);
     case EditorLanguage.plain:
       return null;
   }

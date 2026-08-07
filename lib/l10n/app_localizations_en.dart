@@ -1097,4 +1097,50 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get updateOk => 'OK';
+
+  @override
+  String get desktopReconnecting => 'Reconnecting…';
+
+  @override
+  String get desktopReconnect => 'Reconnect';
+
+  @override
+  String get desktopDismissBanner => 'Dismiss';
+
+  @override
+  String get desktopPaused => 'Paused';
+
+  @override
+  String get desktopUndoLast => 'Undo last';
+
+  @override
+  String get sudoNeedAuthTitle => 'sudo authorization required';
+
+  @override
+  String get sudoAuthBody =>
+      'Remote privileged commands need a sudo password. It is reused for this session (expires after 15 minutes of idle) and is never saved to disk.';
+
+  @override
+  String get sudoPasswordLabel => 'sudo password';
+
+  @override
+  String get sudoUseSshPassword => 'Use SSH login password';
+
+  @override
+  String get sudoAuthorize => 'Authorize';
+
+  @override
+  String get sudoPasswordIncorrect => 'Incorrect password, try again';
+
+  @override
+  String get sudoLockedSnack => 'sudo password locked';
+
+  @override
+  String get sudoCancel => 'Cancel';
+
+  @override
+  String get sudoShowPassword => 'Show';
+
+  @override
+  String get sudoHidePassword => 'Hide';
 }

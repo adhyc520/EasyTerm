@@ -515,5 +515,20 @@
   "updateErrorUnknown": "Could not check for updates.",
   "updateRetry": "Retry",
   "updateUnsupported": "Automatic updates are only available on macOS and Windows.",
-  "updateOk": "OK"
+  "updateOk": "OK",
+  "desktopReconnecting": "Reconnecting…",
+  "desktopReconnect": "Reconnect",
+  "desktopDismissBanner": "Dismiss",
+  "desktopPaused": "Paused",
+  "desktopUndoLast": "Undo last",
+  "sudoNeedAuthTitle": "sudo authorization required",
+  "sudoAuthBody": "Remote privileged commands need a sudo password. It is reused for this session (expires after 15 minutes of idle) and is never saved to disk.",
+  "sudoPasswordLabel": "sudo password",
+  "sudoUseSshPassword": "Use SSH login password",
+  "sudoAuthorize": "Authorize",
+  "sudoPasswordIncorrect": "Incorrect password, try again",
+  "sudoLockedSnack": "sudo password locked",
+  "sudoCancel": "Cancel",
+  "sudoShowPassword": "Show",
+  "sudoHidePassword": "Hide"
 }
