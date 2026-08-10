@@ -27,14 +27,21 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
   @override
   void initState() {
     super.initState();
+    widget.controller?.addListener(_onController);
     _pollTimer = Timer.periodic(const Duration(seconds: 22), (_) => _poll());
     scheduleMicrotask(_poll);
+  }
+
+  void _onController() {
+    if (mounted) setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant WorkbenchStatusBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.removeListener(_onController);
+      widget.controller?.addListener(_onController);
       scheduleMicrotask(_poll);
     }
     _syncClockTimer();
@@ -58,6 +65,7 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
 
   @override
   void dispose() {
+    widget.controller?.removeListener(_onController);
     _pollTimer?.cancel();
     _clockTimer?.cancel();
     super.dispose();
@@ -118,6 +126,13 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
     return '$clock · $tail';
   }
 
+  static String _shortCwd(String path) {
+    final parts = path.split('/').where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return path.isEmpty ? '/' : path;
+    if (parts.length <= 2) return path;
+    return '…/${parts[parts.length - 2]}/${parts.last}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
@@ -129,7 +144,7 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
     return Material(
       color: context.wb.panelElevated,
       child: Container(
-        height: 56,
+        height: context.wbScaled(56),
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: context.wb.border)),
         ),
@@ -170,6 +185,28 @@ class _WorkbenchStatusBarState extends State<WorkbenchStatusBar> {
                 value01: s?.loadPressure01,
                 active: true,
                 tooltip: _tooltipLoad(l10n, s),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Tooltip(
+                  message: c.followTerminalCwd && !c.sawOsc7
+                      ? '${c.terminalCwd}\n${l10n.statusBarCwdNoOsc7Hint}'
+                      : c.terminalCwd,
+                  child: Text(
+                    c.followTerminalCwd && !c.sawOsc7
+                        ? '${_shortCwd(c.terminalCwd.isNotEmpty ? c.terminalCwd : c.remoteCwd)} · · ·'
+                        : _shortCwd(c.terminalCwd.isNotEmpty ? c.terminalCwd : c.remoteCwd),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: c.followTerminalCwd && !c.sawOsc7
+                          ? context.wb.offline
+                          : context.wb.textMuted,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: 16),
             ],

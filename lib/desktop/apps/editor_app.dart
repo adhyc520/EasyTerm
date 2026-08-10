@@ -12,6 +12,7 @@ import '../../theme/workbench_theme.dart';
 import '../../util/desktop_drop_paths.dart';
 import '../../util/editor_highlight.dart';
 import '../../util/editor_syntax.dart';
+import '../../widgets/editor_find_bar.dart';
 import '../../util/remote_paths.dart';
 import '../desktop_tab_strip.dart';
 import '../desktop_window_manager.dart';
@@ -38,14 +39,27 @@ class _EditorTab implements DesktopTabModel {
   _EditorTab(this.path)
       : text = SyntaxEditingController(),
         focus = FocusNode(),
+        find = EditorFindReplaceController(),
+        scroll = ScrollController(),
+        gutterScroll = ScrollController(),
+        undo = UndoHistoryController(),
         dirty = false,
-        tabKey = Object();
+        tabKey = Object() {
+    scroll.addListener(_syncGutter);
+  }
 
   String path;
   @override
   final Object tabKey;
   final SyntaxEditingController text;
   final FocusNode focus;
+  final EditorFindReplaceController find;
+  final ScrollController scroll;
+  final ScrollController gutterScroll;
+  final UndoHistoryController undo;
+  VoidCallback? _onFindChanged;
+  bool applyingFindHits = false;
+  String lastFindSourceText = '';
   int? remoteMtime;
   int? ignoredMtime;
   bool remoteChanged = false;
@@ -72,7 +86,26 @@ class _EditorTab implements DesktopTabModel {
 
   EditorLanguage get language => text.language;
 
+  void _syncGutter() {
+    if (!scroll.hasClients || !gutterScroll.hasClients) return;
+    final target = scroll.offset.clamp(
+      gutterScroll.position.minScrollExtent,
+      gutterScroll.position.maxScrollExtent,
+    );
+    if ((gutterScroll.offset - target).abs() > 0.5) {
+      gutterScroll.jumpTo(target);
+    }
+  }
+
   void dispose() {
+    if (_onFindChanged != null) {
+      find.removeListener(_onFindChanged!);
+    }
+    find.dispose();
+    scroll.removeListener(_syncGutter);
+    scroll.dispose();
+    gutterScroll.dispose();
+    undo.dispose();
     focus.dispose();
     text.dispose();
   }
@@ -292,32 +325,6 @@ String _encodingStatusLabel(String encoding) {
   }
 }
 
-class _FindHit {
-  const _FindHit(this.start, this.length);
-  final int start;
-  final int length;
-  int get end => start + length;
-}
-
-bool _isWordCharCode(int cu) {
-  return (cu >= 0x30 && cu <= 0x39) ||
-      (cu >= 0x41 && cu <= 0x5A) ||
-      (cu >= 0x61 && cu <= 0x7A) ||
-      cu == 0x5F ||
-      cu >= 0x80;
-}
-
-bool _isWholeWordMatch(String text, int start, int length) {
-  if (start > 0 && _isWordCharCode(text.codeUnitAt(start - 1))) {
-    return false;
-  }
-  final end = start + length;
-  if (end < text.length && _isWordCharCode(text.codeUnitAt(end))) {
-    return false;
-  }
-  return true;
-}
-
 class _EditorAppState extends State<EditorApp> {
   final List<_EditorTab> _tabs = [];
   int _active = 0;
@@ -325,18 +332,9 @@ class _EditorAppState extends State<EditorApp> {
   Timer? _syntaxDebounce;
   bool _saving = false;
 
-  bool _findOpen = false;
-  bool _replaceMode = false;
   bool _wrapLines = true;
-  bool _findCaseSensitive = false;
-  bool _findRegex = false;
-  bool _findWholeWord = false;
-  bool _findRegexInvalid = false;
-  final _findCtrl = TextEditingController();
-  final _replaceCtrl = TextEditingController();
-  int _findIndex = -1;
-  List<_FindHit> _findHits = const [];
 
+  static const _lineHeight = 13.0 * 1.35;
   static const _maxTabs = 8;
 
   _EditorTab? get _tab =>
@@ -405,9 +403,10 @@ class _EditorAppState extends State<EditorApp> {
     if (i < 0 || i >= _tabs.length || i == _active) return;
     setState(() => _active = i);
     _syncTitle();
-    if (_findOpen) {
-      _rebuildFindHits();
-      _selectFindHit();
+    final tab = _tab;
+    if (tab != null && tab.find.open) {
+      tab.find.rebuildHits();
+      tab.find.applyCurrent();
     }
   }
 
@@ -450,41 +449,13 @@ class _EditorAppState extends State<EditorApp> {
   }
 
   Future<void> _promptOpenPath() async {
-    final ctrl = TextEditingController();
     final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) {
-        final wb = ctx.wb;
-        return AlertDialog(
-          backgroundColor: wb.panelElevated,
-          title: Text('打开文件', style: TextStyle(color: wb.primaryText)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              color: wb.primaryText,
-            ),
-            decoration: InputDecoration(
-              hintText: '远端绝对路径',
-              hintStyle: TextStyle(color: wb.textMuted),
-            ),
-            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: const Text('打开'),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => const _EditorPathPromptDialog(
+        title: '打开文件',
+        confirmLabel: '打开',
+      ),
     );
-    ctrl.dispose();
     if (raw == null || raw.isEmpty || !mounted) return;
     if (!_tryOpenPath(raw)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -496,41 +467,14 @@ class _EditorAppState extends State<EditorApp> {
   Future<void> _promptSaveAs() async {
     final tab = _tab;
     if (tab == null) return;
-    final ctrl = TextEditingController(text: tab.path);
     final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) {
-        final wb = ctx.wb;
-        return AlertDialog(
-          backgroundColor: wb.panelElevated,
-          title: Text('另存为', style: TextStyle(color: wb.primaryText)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              color: wb.primaryText,
-            ),
-            decoration: InputDecoration(
-              hintText: '远端绝对路径',
-              hintStyle: TextStyle(color: wb.textMuted),
-            ),
-            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => _EditorPathPromptDialog(
+        title: '另存为',
+        confirmLabel: '保存',
+        initialValue: tab.path,
+      ),
     );
-    ctrl.dispose();
     if (raw == null || raw.isEmpty || !mounted) return;
     final path = _normalizePath(raw);
     if (path.isEmpty) return;
@@ -543,6 +487,21 @@ class _EditorAppState extends State<EditorApp> {
     final tab = _EditorTab(path);
     tab.focus.onKeyEvent = (node, event) => _onEditorKey(tab, event);
     tab.text.addListener(() => _onTextChanged(tab));
+    tab.find.getText = () => tab.text.text;
+    tab.find.onApplySelection = (hit) => _applyFindHit(tab, hit);
+    tab.find.onReplace = (hit, replacement) =>
+        _replaceHit(tab, hit, replacement);
+    tab.find.onSetText = (text, sel) {
+      tab.text.value = TextEditingValue(text: text, selection: sel);
+    };
+    tab.find.onMessage = (msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    };
+    tab._onFindChanged = () => _onFindChanged(tab);
+    tab.find.addListener(tab._onFindChanged!);
     setState(() {
       _tabs.add(tab);
       _active = _tabs.length - 1;
@@ -558,9 +517,9 @@ class _EditorAppState extends State<EditorApp> {
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.tab) {
       if (HardwareKeyboard.instance.isShiftPressed) {
-        _outdent(tab);
+        editorOutdent(tab.text);
       } else {
-        _insertIndent(tab);
+        editorInsertIndent(tab.text);
       }
       return KeyEventResult.handled;
     }
@@ -573,6 +532,7 @@ class _EditorAppState extends State<EditorApp> {
   }
 
   void _onTextChanged(_EditorTab tab) {
+    if (tab.applyingFindHits) return;
     if (!tab.suppressDirty && !tab.dirty) {
       setState(() => tab.dirty = true);
       _syncTitle();
@@ -580,6 +540,10 @@ class _EditorAppState extends State<EditorApp> {
       setState(() {});
     }
     if (identical(tab, _tab)) _scheduleSyntaxCheck(tab);
+    if (tab.find.open && tab.text.text != tab.lastFindSourceText) {
+      tab.lastFindSourceText = tab.text.text;
+      tab.find.rebuildHits();
+    }
   }
 
   void _scheduleSyntaxCheck(_EditorTab tab) {
@@ -625,8 +589,6 @@ class _EditorAppState extends State<EditorApp> {
     widget.window.tryOpenEditorPath = null;
     _poll?.cancel();
     _syntaxDebounce?.cancel();
-    _findCtrl.dispose();
-    _replaceCtrl.dispose();
     for (final t in _tabs) {
       t.dispose();
     }
@@ -732,9 +694,12 @@ class _EditorAppState extends State<EditorApp> {
     _syncTitle();
     if (_tabs.isEmpty) {
       unawaited(widget.wm.requestClose(widget.window.id));
-    } else if (_findOpen) {
-      _rebuildFindHits();
-      _selectFindHit();
+    } else {
+      final tab = _tab;
+      if (tab != null && tab.find.open) {
+        tab.find.rebuildHits();
+        tab.find.applyCurrent();
+      }
     }
   }
 
@@ -833,9 +798,9 @@ class _EditorAppState extends State<EditorApp> {
         tab.remoteChanged = false;
       });
       _syncTitle();
-      if (_findOpen && identical(tab, _tab)) {
-        _rebuildFindHits();
-        _selectFindHit();
+      if (tab.find.open && identical(tab, _tab)) {
+        tab.find.rebuildHits();
+        tab.find.applyCurrent();
       }
     } catch (e) {
       if (!mounted) return;
@@ -993,9 +958,9 @@ class _EditorAppState extends State<EditorApp> {
       _runSyntaxCheckNow(tab);
       setState(() => tab.dirty = false);
       _syncTitle();
-      if (_findOpen) {
-        _rebuildFindHits();
-        _selectFindHit();
+      if (tab.find.open) {
+        tab.find.rebuildHits();
+        tab.find.applyCurrent();
       }
     } catch (e) {
       if (!mounted) return;
@@ -1005,245 +970,57 @@ class _EditorAppState extends State<EditorApp> {
     }
   }
 
-  void _rebuildFindHits() {
-    final tab = _tab;
-    final q = _findCtrl.text;
-    _findRegexInvalid = false;
-    if (tab == null || q.isEmpty) {
-      _findHits = const [];
-      _findIndex = -1;
-      return;
-    }
-    final text = tab.text.text;
-    final hits = <_FindHit>[];
-
-    if (_findRegex) {
-      try {
-        var pattern = q;
-        if (_findWholeWord) {
-          pattern = '\\b(?:$q)\\b';
-        }
-        final re = RegExp(
-          pattern,
-          caseSensitive: _findCaseSensitive,
-          multiLine: true,
-        );
-        for (final m in re.allMatches(text)) {
-          if (m.end > m.start) {
-            hits.add(_FindHit(m.start, m.end - m.start));
-          }
-        }
-      } on FormatException {
-        _findRegexInvalid = true;
-        _findHits = const [];
-        _findIndex = -1;
-        return;
+  void _onFindChanged(_EditorTab tab) {
+    tab.applyingFindHits = true;
+    try {
+      if (tab.find.open) {
+        tab.text.setFindHits(tab.find.hitRanges, currentIndex: tab.find.index);
+      } else {
+        tab.text.clearFindHits();
       }
-    } else {
-      final haystack = _findCaseSensitive ? text : text.toLowerCase();
-      final needle = _findCaseSensitive ? q : q.toLowerCase();
-      var from = 0;
-      while (true) {
-        final i = haystack.indexOf(needle, from);
-        if (i < 0) break;
-        if (!_findWholeWord || _isWholeWordMatch(text, i, q.length)) {
-          hits.add(_FindHit(i, q.length));
-        }
-        from = i + (q.isEmpty ? 1 : q.length);
-      }
+    } finally {
+      tab.applyingFindHits = false;
     }
-
-    _findHits = hits;
-    _findIndex = hits.isEmpty ? -1 : 0;
+    if (identical(tab, _tab) && mounted) setState(() {});
   }
 
-  void _selectFindHit() {
-    final tab = _tab;
-    if (tab == null || _findIndex < 0 || _findIndex >= _findHits.length) {
-      return;
-    }
-    final hit = _findHits[_findIndex];
+  void _applyFindHit(_EditorTab tab, EditorFindHit hit) {
     tab.text.selection = TextSelection(
       baseOffset: hit.start,
       extentOffset: hit.end,
     );
+    _scrollToLine(tab, editorLineOfOffset(tab.text.text, hit.start));
+    if (mounted) setState(() {});
   }
 
-  void _findNext({bool reverse = false}) {
-    if (_findHits.isEmpty) _rebuildFindHits();
-    if (_findRegexInvalid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('无效的正则表达式')),
-      );
-      setState(() {});
-      return;
-    }
-    if (_findHits.isEmpty) {
-      setState(() {});
-      return;
-    }
-    setState(() {
-      if (reverse) {
-        _findIndex = (_findIndex - 1 + _findHits.length) % _findHits.length;
-      } else {
-        _findIndex = (_findIndex + 1) % _findHits.length;
-      }
-    });
-    _selectFindHit();
+  void _replaceHit(_EditorTab tab, EditorFindHit hit, String replacement) {
+    editorReplaceHit(tab.text, hit, replacement);
   }
 
-  Widget _findOptionChip(
-    WorkbenchColors wb, {
-    required String label,
-    required String tooltip,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: Padding(
-        padding: const EdgeInsets.only(right: 2),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(4),
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: selected
-                  ? wb.accentBlue.withValues(alpha: 0.22)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                color: selected ? wb.accentBlue : wb.border,
-              ),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                fontFamily: 'monospace',
-                color: selected ? wb.accentBlue : wb.textMuted,
-              ),
-            ),
-          ),
-        ),
-      ),
+  void _scrollToLine(_EditorTab tab, int line) {
+    if (!tab.scroll.hasClients) return;
+    final target = ((line - 1) * _lineHeight).clamp(
+      tab.scroll.position.minScrollExtent,
+      tab.scroll.position.maxScrollExtent,
     );
+    tab.scroll.jumpTo(target);
+    tab._syncGutter();
   }
 
-  void _replaceOne() {
-    final tab = _tab;
-    if (tab == null || _findCtrl.text.isEmpty) return;
-    final sel = tab.text.selection;
-    _FindHit? hit;
-    if (sel.isValid && !sel.isCollapsed) {
-      for (final h in _findHits) {
-        if (h.start == sel.start && h.end == sel.end) {
-          hit = h;
-          break;
-        }
-      }
-    }
-    if (hit == null) {
-      _findNext();
-      return;
-    }
-    final next = tab.text.text.replaceRange(
-      hit.start,
-      hit.end,
-      _replaceCtrl.text,
-    );
-    tab.text.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(
-        offset: hit.start + _replaceCtrl.text.length,
-      ),
-    );
-    _rebuildFindHits();
-    setState(() {});
-    _selectFindHit();
-  }
-
-  void _replaceAll() {
-    final tab = _tab;
-    final q = _findCtrl.text;
-    if (tab == null || q.isEmpty) return;
-    _rebuildFindHits();
-    if (_findHits.isEmpty) {
-      setState(() {});
-      return;
-    }
-    var text = tab.text.text;
-    final replacement = _replaceCtrl.text;
-    for (var i = _findHits.length - 1; i >= 0; i--) {
-      final hit = _findHits[i];
-      text = text.replaceRange(hit.start, hit.end, replacement);
-    }
-    tab.text.value = TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: text.length),
-    );
-    _rebuildFindHits();
-    setState(() {});
-  }
-
-  void _jumpToLine(int line) {
-    final tab = _tab;
-    if (tab == null || line < 1) return;
-    final text = tab.text.text;
-    var offset = 0;
-    var cur = 1;
-    while (cur < line) {
-      final i = text.indexOf('\n', offset);
-      if (i < 0) {
-        offset = text.length;
-        break;
-      }
-      offset = i + 1;
-      cur++;
-    }
+  void _jumpToLine(_EditorTab tab, int line) {
+    if (line < 1) return;
+    final offset = editorLineStartOffset(tab.text.text, line);
     tab.text.selection = TextSelection.collapsed(offset: offset);
-    setState(() {});
+    _scrollToLine(tab, line);
+    if (mounted) setState(() {});
   }
 
   Future<void> _gotoLine() async {
     final tab = _tab;
     if (tab == null || !mounted) return;
-    final ctrl = TextEditingController();
-    final line = await showDialog<int>(
-      context: context,
-      builder: (ctx) {
-        final wb = ctx.wb;
-        return AlertDialog(
-          backgroundColor: wb.panelElevated,
-          title: Text('跳转到行', style: TextStyle(color: wb.primaryText)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            style: TextStyle(color: wb.primaryText),
-            decoration: const InputDecoration(hintText: '行号'),
-            onSubmitted: (v) => Navigator.pop(ctx, int.tryParse(v.trim())),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
-              child: const Text('跳转'),
-            ),
-          ],
-        );
-      },
-    );
-    ctrl.dispose();
-    if (line == null || line < 1) return;
-    _jumpToLine(line);
+    final line = await showGotoLineDialog(context);
+    if (line == null || line < 1 || !mounted) return;
+    _jumpToLine(tab, line);
   }
 
   void _onDrop(DropDoneDetails detail) {
@@ -1303,40 +1080,28 @@ class _EditorAppState extends State<EditorApp> {
             unawaited(_save());
           },
           const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () {
-            setState(() {
-              _findOpen = true;
-              _replaceMode = false;
-            });
+            tab.find.setOpen(true);
           },
           const SingleActivator(LogicalKeyboardKey.keyF, control: true): () {
-            setState(() {
-              _findOpen = true;
-              _replaceMode = false;
-            });
+            tab.find.setOpen(true);
           },
           const SingleActivator(LogicalKeyboardKey.keyH, meta: true): () {
-            setState(() {
-              _findOpen = true;
-              _replaceMode = true;
-            });
+            tab.find.setOpen(true, replace: true);
           },
           const SingleActivator(LogicalKeyboardKey.keyH, control: true): () {
-            setState(() {
-              _findOpen = true;
-              _replaceMode = true;
-            });
+            tab.find.setOpen(true, replace: true);
           },
           const SingleActivator(LogicalKeyboardKey.keyG, meta: true): () =>
-              _findNext(),
+              tab.find.findNext(),
           const SingleActivator(LogicalKeyboardKey.keyG, control: true): () =>
-              _findNext(),
+              tab.find.findNext(),
           const SingleActivator(LogicalKeyboardKey.keyG, meta: true, shift: true):
-              () => _findNext(reverse: true),
+              () => tab.find.findNext(reverse: true),
           const SingleActivator(
             LogicalKeyboardKey.keyG,
             control: true,
             shift: true,
-          ): () => _findNext(reverse: true),
+          ): () => tab.find.findNext(reverse: true),
           const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () =>
               unawaited(_gotoLine()),
           const SingleActivator(LogicalKeyboardKey.keyL, control: true): () =>
@@ -1417,10 +1182,8 @@ class _EditorAppState extends State<EditorApp> {
                               IconButton(
                                 tooltip: '查找',
                                 iconSize: 18,
-                                onPressed: () => setState(() {
-                                  _findOpen = !_findOpen;
-                                  _replaceMode = false;
-                                }),
+                                onPressed: () =>
+                                    tab.find.setOpen(!tab.find.open),
                                 icon: Icon(
                                   Icons.search_rounded,
                                   color: wb.textMuted,
@@ -1487,169 +1250,7 @@ class _EditorAppState extends State<EditorApp> {
                     ),
                   ),
                 ),
-                if (_findOpen)
-                  Material(
-                    color: wb.panelElevated,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _findCtrl,
-                                  autofocus: true,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: wb.primaryText,
-                                  ),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    hintText: '查找',
-                                    hintStyle: TextStyle(color: wb.textMuted),
-                                    border: const OutlineInputBorder(),
-                                    enabledBorder: _findRegexInvalid
-                                        ? OutlineInputBorder(
-                                            borderSide: BorderSide(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .error,
-                                            ),
-                                          )
-                                        : null,
-                                    focusedBorder: _findRegexInvalid
-                                        ? OutlineInputBorder(
-                                            borderSide: BorderSide(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .error,
-                                              width: 1.5,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  onChanged: (_) {
-                                    _rebuildFindHits();
-                                    setState(() {});
-                                    _selectFindHit();
-                                  },
-                                  onSubmitted: (_) => _findNext(),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Flexible(
-                                child: DesktopScrollableActions(
-                                  children: [
-                                    _findOptionChip(
-                                      wb,
-                                      label: 'Aa',
-                                      tooltip: '区分大小写',
-                                      selected: _findCaseSensitive,
-                                      onTap: () {
-                                        setState(() {
-                                          _findCaseSensitive =
-                                              !_findCaseSensitive;
-                                          _rebuildFindHits();
-                                        });
-                                        _selectFindHit();
-                                      },
-                                    ),
-                                    _findOptionChip(
-                                      wb,
-                                      label: '.*',
-                                      tooltip: '正则表达式',
-                                      selected: _findRegex,
-                                      onTap: () {
-                                        setState(() {
-                                          _findRegex = !_findRegex;
-                                          _rebuildFindHits();
-                                        });
-                                        _selectFindHit();
-                                      },
-                                    ),
-                                    _findOptionChip(
-                                      wb,
-                                      label: 'W',
-                                      tooltip: '全词匹配',
-                                      selected: _findWholeWord,
-                                      onTap: () {
-                                        setState(() {
-                                          _findWholeWord = !_findWholeWord;
-                                          _rebuildFindHits();
-                                        });
-                                        _selectFindHit();
-                                      },
-                                    ),
-                                    TextButton(
-                                      onPressed: () =>
-                                          _findNext(reverse: true),
-                                      child: const Text('上一个'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => _findNext(),
-                                      child: const Text('下一个'),
-                                    ),
-                                    Text(
-                                      _findCtrl.text.isEmpty
-                                          ? ''
-                                          : (_findHits.isEmpty
-                                              ? '无匹配'
-                                              : '${_findIndex + 1}/${_findHits.length}'),
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: wb.textMuted,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      iconSize: 18,
-                                      onPressed: () =>
-                                          setState(() => _findOpen = false),
-                                      icon: Icon(
-                                        Icons.close,
-                                        color: wb.textMuted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_replaceMode) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _replaceCtrl,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: wb.primaryText,
-                                    ),
-                                    decoration: InputDecoration(
-                                      isDense: true,
-                                      hintText: '替换为',
-                                      hintStyle:
-                                          TextStyle(color: wb.textMuted),
-                                      border: const OutlineInputBorder(),
-                                    ),
-                                  ),
-                                ),
-                                TextButton(
-                                  onPressed: _replaceOne,
-                                  child: const Text('替换'),
-                                ),
-                                TextButton(
-                                  onPressed: _replaceAll,
-                                  child: const Text('全部替换'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
+                if (tab.find.open) EditorFindBar(controller: tab.find),
                 if (tab.remoteChanged)
                   Material(
                     color: Theme.of(context).colorScheme.errorContainer,
@@ -1741,7 +1342,7 @@ class _EditorAppState extends State<EditorApp> {
                         return InkWell(
                           onTap: issueLine == null
                               ? null
-                              : () => _jumpToLine(issueLine),
+                              : () => _jumpToLine(tab, issueLine),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,
@@ -1901,75 +1502,6 @@ class _EditorAppState extends State<EditorApp> {
     return '行 $line, 列 $col$selected';
   }
 
-  void _insertIndent(_EditorTab tab) {
-    const indent = '  ';
-    final value = tab.text.value;
-    final sel = value.selection;
-    if (!sel.isValid) return;
-    final start = sel.start;
-    final end = sel.end;
-    final next = value.text.replaceRange(start, end, indent);
-    tab.text.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: start + indent.length),
-    );
-  }
-
-  void _outdent(_EditorTab tab) {
-    final value = tab.text.value;
-    final sel = value.selection;
-    if (!sel.isValid) return;
-    final text = value.text;
-
-    var firstLineStart = sel.start;
-    while (firstLineStart > 0 && text[firstLineStart - 1] != '\n') {
-      firstLineStart--;
-    }
-    final lineStarts = <int>[firstLineStart];
-    if (!sel.isCollapsed) {
-      var pos = firstLineStart;
-      while (true) {
-        final nl = text.indexOf('\n', pos);
-        if (nl < 0 || nl + 1 >= sel.end) break;
-        lineStarts.add(nl + 1);
-        pos = nl + 1;
-      }
-    }
-
-    var next = text;
-    var base = sel.baseOffset;
-    var extent = sel.extentOffset;
-    for (final start in lineStarts.reversed) {
-      final rem = _leadingIndentToRemove(next, start);
-      if (rem == 0) continue;
-      next = next.replaceRange(start, start + rem, '');
-      if (base > start) base -= rem.clamp(0, base - start);
-      if (extent > start) extent -= rem.clamp(0, extent - start);
-    }
-
-    tab.text.value = TextEditingValue(
-      text: next,
-      selection: sel.isCollapsed
-          ? TextSelection.collapsed(offset: extent.clamp(0, next.length))
-          : TextSelection(
-              baseOffset: base.clamp(0, next.length),
-              extentOffset: extent.clamp(0, next.length),
-            ),
-    );
-  }
-
-  int _leadingIndentToRemove(String text, int lineStart) {
-    if (lineStart >= text.length) return 0;
-    if (text[lineStart] == '\t') return 1;
-    var n = 0;
-    while (n < 2 &&
-        lineStart + n < text.length &&
-        text[lineStart + n] == ' ') {
-      n++;
-    }
-    return n;
-  }
-
   void _insertNewlineWithIndent(_EditorTab tab) {
     final value = tab.text.value;
     final sel = value.selection;
@@ -2051,28 +1583,46 @@ class _EditorAppState extends State<EditorApp> {
             final field = TextField(
               controller: tab.text,
               focusNode: tab.focus,
+              scrollController: tab.scroll,
+              undoController: tab.undo,
               maxLines: null,
+              expands: true,
+              textAlignVertical: TextAlignVertical.top,
               readOnly: tab.readOnly,
               style: style.copyWith(color: wb.primaryText),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 isCollapsed: true,
-                contentPadding: EdgeInsets.zero,
+                contentPadding: EdgeInsets.fromLTRB(0, 12, 12, 12),
               ),
             );
+            final gutter = ListenableBuilder(
+              listenable: tab.gutterScroll,
+              builder: (context, _) {
+                return SingleChildScrollView(
+                  controller: tab.gutterScroll,
+                  primary: false,
+                  physics: const NeverScrollableScrollPhysics(),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 12, 0, 12),
+                    child: Text(
+                      [
+                        for (var i = 1; i <= lineCount; i++) '$i',
+                      ].join('\n'),
+                      textAlign: TextAlign.right,
+                      style: style.copyWith(color: wb.textMuted),
+                    ),
+                  ),
+                );
+              },
+            );
             final row = Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
                   width: gutterWidth,
-                  child: Text(
-                    [
-                      for (var i = 1; i <= lineCount; i++) '$i',
-                    ].join('\n'),
-                    textAlign: TextAlign.right,
-                    style: style.copyWith(color: wb.textMuted),
-                  ),
+                  child: gutter,
                 ),
                 const SizedBox(width: 8),
                 // Expanded fits within scroll padding; fixed width ignored it and overflowed.
@@ -2089,13 +1639,77 @@ class _EditorAppState extends State<EditorApp> {
                 child: body,
               );
             }
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-              child: body,
-            );
+            return body;
           },
         ),
       ),
+    );
+  }
+}
+
+/// Owns [TextEditingController] so it survives the dialog route exit animation.
+class _EditorPathPromptDialog extends StatefulWidget {
+  const _EditorPathPromptDialog({
+    required this.title,
+    required this.confirmLabel,
+    this.initialValue,
+  });
+
+  final String title;
+  final String confirmLabel;
+  final String? initialValue;
+
+  @override
+  State<_EditorPathPromptDialog> createState() =>
+      _EditorPathPromptDialogState();
+}
+
+class _EditorPathPromptDialogState extends State<_EditorPathPromptDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialValue ?? '');
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _ctrl.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return AlertDialog(
+      backgroundColor: wb.panelElevated,
+      title: Text(widget.title, style: TextStyle(color: wb.primaryText)),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          color: wb.primaryText,
+        ),
+        decoration: InputDecoration(
+          hintText: '远端绝对路径',
+          hintStyle: TextStyle(color: wb.textMuted),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
     );
   }
 }

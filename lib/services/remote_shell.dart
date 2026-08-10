@@ -4,20 +4,36 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb, kDebugMode, debugPrint;
+    show
+        ChangeNotifier,
+        TargetPlatform,
+        defaultTargetPlatform,
+        kIsWeb,
+        kDebugMode,
+        debugPrint;
 import 'package:xterm/xterm.dart';
 
+import 'pty_interceptor.dart';
 import 'workbench_settings_store.dart';
 
 /// 一条独立 PTY + xterm [Terminal] + I/O 接线，供桌面多终端窗口使用。
-class RemoteShell {
-  RemoteShell._(this.session, this.terminal);
+class RemoteShell extends ChangeNotifier {
+  RemoteShell._(this.session, this.terminal, this._interceptor);
 
   final SSHSession session;
   final Terminal terminal;
+  final PtyInterceptor _interceptor;
 
   StreamSubscription<List<int>>? _out;
   StreamSubscription<List<int>>? _err;
+
+  bool _mouseMode = false;
+  String _terminalCwd = '';
+  bool _sawOsc7 = false;
+
+  bool get mouseModeActive => _mouseMode;
+  String get terminalCwd => _terminalCwd;
+  bool get sawOsc7 => _sawOsc7;
 
   static Future<RemoteShell> open(
     SSHClient client, {
@@ -38,13 +54,30 @@ class RemoteShell {
       onOutput: (d) => session.write(Uint8List.fromList(utf8.encode(d))),
       onResize: (w, h, pw, ph) => session.resizeTerminal(w, h, pw, ph),
     );
-    final shell = RemoteShell._(session, terminal);
-    shell._out = session.stdout.listen(
-      (d) => terminal.write(utf8.decode(d, allowMalformed: true)),
+
+    late final RemoteShell shell;
+    final interceptor = PtyInterceptor(
+      onCwd: (cwd) {
+        if (shell._terminalCwd == cwd && shell._sawOsc7) return;
+        shell._terminalCwd = cwd;
+        shell._sawOsc7 = true;
+        shell.notifyListeners();
+      },
+      onMouseMode: (active) {
+        if (shell._mouseMode == active) return;
+        shell._mouseMode = active;
+        shell.notifyListeners();
+      },
     );
-    shell._err = session.stderr.listen(
-      (d) => terminal.write(utf8.decode(d, allowMalformed: true)),
-    );
+    shell = RemoteShell._(session, terminal, interceptor);
+
+    void feed(List<int> d) {
+      final decoded = utf8.decode(d, allowMalformed: true);
+      terminal.write(interceptor.process(decoded));
+    }
+
+    shell._out = session.stdout.listen(feed);
+    shell._err = session.stderr.listen(feed);
     debugAliveShells++;
     if (kDebugMode) {
       debugPrint('RemoteShell+ alive=$debugAliveShells');
@@ -78,11 +111,17 @@ class RemoteShell {
 
   void paste(String s) => terminal.paste(s);
 
+  bool _closed = false;
+
   Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
     await _out?.cancel();
     await _err?.cancel();
     _out = null;
     _err = null;
+    _interceptor.reset();
+    _mouseMode = false;
     try {
       session.close();
     } catch (_) {}
@@ -92,5 +131,6 @@ class RemoteShell {
         debugPrint('RemoteShell- alive=$debugAliveShells');
       }
     }
+    dispose();
   }
 }

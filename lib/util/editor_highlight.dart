@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/workbench_theme.dart';
 import 'editor_syntax.dart';
 
 /// Token roles used by the remote editor highlighter.
@@ -105,15 +106,44 @@ class SyntaxEditingController extends TextEditingController {
     notifyListeners();
   }
 
+  List<TextRange> _hitRanges = const [];
+  int _currentHitIndex = -1;
+
+  void setFindHits(List<TextRange> ranges, {int currentIndex = -1}) {
+    _hitRanges = List.unmodifiable(ranges);
+    _currentHitIndex = currentIndex;
+    invalidateHighlightCache();
+    notifyListeners();
+  }
+
+  void clearFindHits() {
+    if (_hitRanges.isEmpty && _currentHitIndex < 0) return;
+    _hitRanges = const [];
+    _currentHitIndex = -1;
+    invalidateHighlightCache();
+    notifyListeners();
+  }
+
   String? _cacheText;
   EditorLanguage? _cacheLanguage;
   Brightness? _cacheBrightness;
   TextStyle? _cacheBase;
+  int? _cacheHitFingerprint;
   TextSpan? _cacheSpan;
+
+  int _hitFingerprint() {
+    if (_hitRanges.isEmpty) return 0;
+    var h = _currentHitIndex + 1;
+    for (final r in _hitRanges) {
+      h = Object.hash(h, r.start, r.end);
+    }
+    return h;
+  }
 
   void invalidateHighlightCache() {
     _cacheText = null;
     _cacheSpan = null;
+    _cacheHitFingerprint = null;
   }
 
   @override
@@ -140,13 +170,6 @@ class SyntaxEditingController extends TextEditingController {
     }
 
     final base = style ?? const TextStyle();
-    if (_language == EditorLanguage.plain || text.isEmpty) {
-      return super.buildTextSpan(
-        context: context,
-        style: style,
-        withComposing: withComposing,
-      );
-    }
 
     // Skip heavy highlight on huge buffers — keep editing responsive.
     if (text.length > 120000) {
@@ -158,28 +181,125 @@ class SyntaxEditingController extends TextEditingController {
     }
 
     final brightness = Theme.of(context).brightness;
+    final hitFp = _hitFingerprint();
     if (_cacheSpan != null &&
         _cacheText == text &&
         _cacheLanguage == _language &&
         _cacheBrightness == brightness &&
-        _cacheBase == base) {
+        _cacheBase == base &&
+        _cacheHitFingerprint == hitFp) {
       return _cacheSpan!;
     }
 
-    final theme = EditorHighlightTheme.forBrightness(brightness);
-    final span = buildHighlightedSpan(
-      text,
-      language: _language,
-      baseStyle: base,
-      theme: theme,
-    );
+    TextSpan span;
+    if (_language == EditorLanguage.plain || text.isEmpty) {
+      span = TextSpan(text: text, style: base);
+    } else {
+      final theme = EditorHighlightTheme.forBrightness(brightness);
+      span = buildHighlightedSpan(
+        text,
+        language: _language,
+        baseStyle: base,
+        theme: theme,
+      );
+    }
+
+    if (_hitRanges.isNotEmpty) {
+      span = applyFindHitBackgrounds(
+        span,
+        _hitRanges,
+        _currentHitIndex,
+        WorkbenchColors.findHitBg,
+        WorkbenchColors.findHitCurrentBg,
+      );
+    }
+
     _cacheText = text;
     _cacheLanguage = _language;
     _cacheBrightness = brightness;
     _cacheBase = base;
+    _cacheHitFingerprint = hitFp;
     _cacheSpan = span;
     return span;
   }
+}
+
+List<({String text, TextStyle style})> _flattenTextSpan(TextSpan span) {
+  final out = <({String text, TextStyle style})>[];
+  void rec(TextSpan s, TextStyle? parent) {
+    final st = s.style ?? parent ?? const TextStyle();
+    if (s.text != null && s.text!.isNotEmpty) {
+      out.add((text: s.text!, style: st));
+    }
+    for (final c in s.children ?? const <InlineSpan>[]) {
+      if (c is TextSpan) rec(c, st);
+    }
+  }
+
+  rec(span, span.style);
+  return out;
+}
+
+Color? _backgroundForHit(
+  int pos,
+  List<TextRange> hits,
+  int currentIndex,
+  Color hitBg,
+  Color currentBg,
+) {
+  for (var i = 0; i < hits.length; i++) {
+    final r = hits[i];
+    if (pos >= r.start && pos < r.end) {
+      return i == currentIndex ? currentBg : hitBg;
+    }
+  }
+  return null;
+}
+
+/// Overlay find-hit backgrounds onto an existing highlighted [TextSpan].
+TextSpan applyFindHitBackgrounds(
+  TextSpan span,
+  List<TextRange> hits,
+  int currentIndex,
+  Color hitBg,
+  Color currentBg,
+) {
+  final flat = _flattenTextSpan(span);
+  final children = <InlineSpan>[];
+  var offset = 0;
+  for (final piece in flat) {
+    var local = 0;
+    while (local < piece.text.length) {
+      final bg = _backgroundForHit(
+        offset + local,
+        hits,
+        currentIndex,
+        hitBg,
+        currentBg,
+      );
+      var end = local + 1;
+      while (end < piece.text.length) {
+        if (_backgroundForHit(
+              offset + end,
+              hits,
+              currentIndex,
+              hitBg,
+              currentBg,
+            ) !=
+            bg) {
+          break;
+        }
+        end++;
+      }
+      final chunk = piece.text.substring(local, end);
+      final style =
+          bg != null ? piece.style.copyWith(backgroundColor: bg) : piece.style;
+      children.add(TextSpan(text: chunk, style: style));
+      local = end;
+    }
+    offset += piece.text.length;
+  }
+  return TextSpan(style: span.style, children: children);
 }
 
 /// Build a highlighted [TextSpan] tree for [source].

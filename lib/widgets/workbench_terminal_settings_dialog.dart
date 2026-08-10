@@ -30,6 +30,9 @@ class _WorkbenchTerminalSettingsDialogState
   late String _termType;
   late String _fontFamily;
   late bool _selectCopy;
+  late bool _followCwd;
+  late bool _injectOsc7;
+  late bool _smartRightClick;
 
   @override
   void initState() {
@@ -45,7 +48,13 @@ class _WorkbenchTerminalSettingsDialogState
     _fontSizeCtrl = TextEditingController(text: '${s.terminalFontSize}');
     _termType = s.terminalTermType;
     _fontFamily = s.terminalFontFamily;
+    if (!WorkbenchSettingsStore.fontFamilyChoices.contains(_fontFamily)) {
+      _fontFamily = WorkbenchSettingsStore.fontFamilyChoices.first;
+    }
     _selectCopy = s.selectToCopy;
+    _followCwd = s.followTerminalCwd;
+    _injectOsc7 = s.injectOsc7Cwd;
+    _smartRightClick = s.smartRightClick;
   }
 
   @override
@@ -117,6 +126,9 @@ class _WorkbenchTerminalSettingsDialogState
     s.terminalTermType = _termType;
     s.terminalFontFamily = _fontFamily;
     s.selectToCopy = _selectCopy;
+    s.followTerminalCwd = _followCwd;
+    s.injectOsc7Cwd = _injectOsc7;
+    s.smartRightClick = _smartRightClick;
     await s.persist();
     if (mounted) Navigator.of(context).pop();
   }
@@ -382,6 +394,71 @@ class _WorkbenchTerminalSettingsDialogState
                       padding: const EdgeInsets.only(left: 150, bottom: 4),
                       child: Text(
                         l.settingsSelectCopyDescription,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ),
+                    _row(
+                      l.settingsFollowTerminalCwdLabel,
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child:                         Switch(
+                          value: _followCwd,
+                          onChanged: (v) => setState(() {
+                            _followCwd = v;
+                            // Follow needs OSC 7; turn reporting on together.
+                            if (v) _injectOsc7 = true;
+                          }),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 150, bottom: 4),
+                      child: Text(
+                        l.settingsFollowTerminalCwdDescription,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ),
+                    _row(
+                      l.settingsInjectOsc7Label,
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Switch(
+                          value: _injectOsc7,
+                          onChanged: (v) => setState(() => _injectOsc7 = v),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 150, bottom: 4),
+                      child: Text(
+                        l.settingsInjectOsc7Description,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ),
+                    _row(
+                      l.settingsSmartRightClickLabel,
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Switch(
+                          value: _smartRightClick,
+                          onChanged: (v) =>
+                              setState(() => _smartRightClick = v),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 150, bottom: 4),
+                      child: Text(
+                        l.settingsSmartRightClickDescription,
                         style: TextStyle(
                           fontSize: 11,
                           color: context.wb.textMuted.withValues(alpha: 0.85),

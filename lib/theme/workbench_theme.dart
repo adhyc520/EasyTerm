@@ -40,6 +40,12 @@ final class WorkbenchColors {
 
   final Color topBarDivider;
 
+  /// Find-hit background (other matches).
+  static const Color findHitBg = Color(0x66B59F3B);
+
+  /// Find-hit background (current match).
+  static const Color findHitCurrentBg = Color(0xAAE2C08D);
+
   static const WorkbenchColors dark = WorkbenchColors(
     bg: Color(0xFF111113),
     topBar: Color(0xFF1B1B1F),
@@ -79,6 +85,14 @@ extension WorkbenchColorsContext on BuildContext {
   WorkbenchColors get wb => Theme.of(this).brightness == Brightness.light
       ? WorkbenchColors.light
       : WorkbenchColors.dark;
+
+  /// Effective UI scale from [MediaQuery.textScaler] (falls back to 1.0).
+  double get wbScale {
+    final s = MediaQuery.maybeTextScalerOf(this)?.scale(1.0) ?? 1.0;
+    return s.clamp(0.75, 2.0);
+  }
+
+  double wbScaled(double logical) => logical * wbScale;
 }
 
 /// 与 [WorkbenchColors] 配套的 Material 3 主题（浅色 / 深色各一套）。

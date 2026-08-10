@@ -464,10 +464,10 @@ class _TitleBar extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: focused ? wb.accentBlue : wb.textMuted),
+            Icon(icon, size: context.wbScaled(16), color: focused ? wb.accentBlue : wb.textMuted),
             if (alwaysOnTop) ...[
               const SizedBox(width: 4),
-              Icon(Icons.push_pin, size: 12, color: wb.accentBlue),
+              Icon(Icons.push_pin, size: context.wbScaled(12), color: wb.accentBlue),
             ],
             const SizedBox(width: 8),
             Expanded(
@@ -476,7 +476,7 @@ class _TitleBar extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: context.wbScaled(12),
                   fontWeight: FontWeight.w600,
                   color: focused ? wb.primaryText : wb.secondaryText,
                 ),
@@ -580,7 +580,7 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                       Text(
                         '贴边布局',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: context.wbScaled(11),
                           color: wb.textMuted,
                           fontWeight: FontWeight.w600,
                         ),
@@ -588,7 +588,7 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                       const SizedBox(height: 6),
                       // 2×2 quarters
                       SizedBox(
-                        height: 56,
+                        height: context.wbScaled(56),
                         child: Row(
                           children: [
                             Expanded(
@@ -650,7 +650,7 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                         children: [
                           Expanded(
                             child: _SnapCell(
-                              height: 22,
+                              height: context.wbScaled(22),
                               label: '左',
                               onTap: () {
                                 _layer.hide();
@@ -661,7 +661,7 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                           const SizedBox(width: 2),
                           Expanded(
                             child: _SnapCell(
-                              height: 22,
+                              height: context.wbScaled(22),
                               label: '右',
                               onTap: () {
                                 _layer.hide();
@@ -695,13 +695,13 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                 canRequestFocus: false,
                 borderRadius: BorderRadius.circular(4),
                 child: SizedBox(
-                  width: 28,
-                  height: 24,
+                  width: context.wbScaled(28),
+                  height: context.wbScaled(24),
                   child: Icon(
                     widget.maximized
                         ? Icons.filter_none_rounded
                         : Icons.crop_square_rounded,
-                    size: 15,
+                    size: context.wbScaled(15),
                     color: wb.textMuted,
                   ),
                 ),
@@ -713,11 +713,11 @@ class _SnapMaximizeBtnState extends State<_SnapMaximizeBtn> {
                   canRequestFocus: false,
                   borderRadius: BorderRadius.circular(4),
                   child: SizedBox(
-                    width: 14,
-                    height: 24,
+                    width: context.wbScaled(14),
+                    height: context.wbScaled(24),
                     child: Icon(
                       Icons.arrow_drop_down_rounded,
-                      size: 14,
+                      size: context.wbScaled(14),
                       color: wb.textMuted.withValues(alpha: 0.85),
                     ),
                   ),
@@ -758,7 +758,10 @@ class _SnapCell extends StatelessWidget {
               : Center(
                   child: Text(
                     label!,
-                    style: TextStyle(fontSize: 10, color: wb.textMuted),
+                    style: TextStyle(
+                      fontSize: context.wbScaled(10),
+                      color: wb.textMuted,
+                    ),
                   ),
                 ),
         ),
@@ -791,11 +794,11 @@ class _TitleBtn extends StatelessWidget {
         canRequestFocus: false,
         borderRadius: BorderRadius.circular(4),
         child: SizedBox(
-          width: 28,
-          height: 24,
+          width: context.wbScaled(28),
+          height: context.wbScaled(24),
           child: Icon(
             icon,
-            size: 15,
+            size: context.wbScaled(15),
             color: danger ? const Color(0xFFEF4444) : wb.textMuted,
           ),
         ),

@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,6 +26,10 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
   static const _kLlmApiKey = 'wb_llm_api_key';
   static const _kAssistantCollapsed = 'wb_assistant_collapsed';
   static const _kAssistantWidth = 'wb_assistant_width';
+  static const _kUiScale = 'wb_ui_scale';
+  static const _kFollowTerminalCwd = 'wb_follow_terminal_cwd';
+  static const _kInjectOsc7 = 'wb_inject_osc7';
+  static const _kSmartRightClick = 'wb_smart_right_click';
 
   /// 界面语言：`zh` 或 `en`，默认中文。
   String appLocaleCode = 'zh';
@@ -72,6 +79,26 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
 
   bool selectToCopy = false;
 
+  /// Assign UI scale and notify listeners (for live slider preview).
+  void setUiScaleFactor(double value) {
+    final next = value.clamp(0.75, 2.0);
+    if (uiScaleFactor == next) return;
+    uiScaleFactor = next;
+    notifyListeners();
+  }
+
+  /// 全局 UI 缩放（0.75–2.0），经 textScaler + 终端字号联动。
+  double uiScaleFactor = 1.0;
+
+  /// 终端 `cd` 后自动同步 SFTP 浏览器目录。
+  bool followTerminalCwd = false;
+
+  /// 连接后注入 bash/zsh OSC 7 片段（默认关）。
+  bool injectOsc7Cwd = false;
+
+  /// Windows 风格：有选区右键=复制并清选区；无选区右键=粘贴。
+  bool smartRightClick = false;
+
   /// OpenAI 兼容 Chat Completions 的基础地址（通常以 `/v1` 结尾，也可直接填完整 `.../chat/completions` URL）。
   String llmBaseUrl = 'https://api.openai.com/v1';
 
@@ -95,7 +122,7 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     'ansi',
   ];
 
-  static const List<String> fontFamilyChoices = [
+  static const List<String> _allFontFamilies = [
     'Courier New',
     'Menlo',
     'Monaco',
@@ -105,6 +132,49 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     'SF Mono',
     'monospace',
   ];
+
+  /// Platform-filtered font list for settings UI.
+  static List<String> get fontFamilyChoices {
+    if (kIsWeb) return List<String>.from(_allFontFamilies);
+    if (Platform.isWindows) {
+      return const [
+        'Consolas',
+        'Courier New',
+        'JetBrains Mono',
+        'Roboto Mono',
+        'monospace',
+      ];
+    }
+    if (Platform.isMacOS || Platform.isIOS) {
+      return const [
+        'Menlo',
+        'Monaco',
+        'SF Mono',
+        'Courier New',
+        'JetBrains Mono',
+        'Roboto Mono',
+        'monospace',
+      ];
+    }
+    return List<String>.from(_allFontFamilies);
+  }
+
+  /// Default monospace for [TerminalSurface] when no setting is passed.
+  static String get platformDefaultFontFamily {
+    if (!kIsWeb && Platform.isWindows) return 'Consolas';
+    if (!kIsWeb && (Platform.isMacOS || Platform.isIOS)) return 'Menlo';
+    return 'Courier New';
+  }
+
+  static double defaultUiScaleForDpr(double dpr) {
+    if (dpr >= 2.0) return 1.1;
+    return 1.0;
+  }
+
+  static double defaultFontSizeForDpr(double dpr) {
+    if (dpr >= 2.0) return 16;
+    return 14;
+  }
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
@@ -119,12 +189,46 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
       terminalTermType = 'xterm-256color';
     }
     terminalMaxLines = (p.getInt(_kBufferLines) ?? 1000).clamp(100, 100000);
-    terminalFontSize = (p.getDouble(_kFontSize) ?? 14).clamp(6, 48);
-    terminalFontFamily = p.getString(_kFontFamily) ?? 'Courier New';
-    if (!fontFamilyChoices.contains(terminalFontFamily)) {
-      terminalFontFamily = 'Courier New';
+
+    double dpr = 1.0;
+    try {
+      dpr = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio;
+    } catch (_) {}
+
+    if (p.containsKey(_kFontSize)) {
+      terminalFontSize = (p.getDouble(_kFontSize) ?? 14).clamp(6, 48);
+    } else {
+      terminalFontSize = defaultFontSizeForDpr(dpr);
     }
-    selectToCopy = p.getBool(_kSelectCopy) ?? false;
+
+    terminalFontFamily =
+        p.getString(_kFontFamily) ?? platformDefaultFontFamily;
+    if (!fontFamilyChoices.contains(terminalFontFamily) &&
+        !_allFontFamilies.contains(terminalFontFamily)) {
+      terminalFontFamily = platformDefaultFontFamily;
+    }
+
+    if (p.containsKey(_kSelectCopy)) {
+      selectToCopy = p.getBool(_kSelectCopy) ?? false;
+    } else {
+      // Windows newcomers expect select-to-copy (PuTTY / Windows Terminal).
+      selectToCopy = !kIsWeb && Platform.isWindows;
+    }
+
+    if (p.containsKey(_kUiScale)) {
+      uiScaleFactor = (p.getDouble(_kUiScale) ?? 1.0).clamp(0.75, 2.0);
+    } else {
+      uiScaleFactor = defaultUiScaleForDpr(dpr);
+    }
+
+    followTerminalCwd = p.getBool(_kFollowTerminalCwd) ?? false;
+    injectOsc7Cwd = p.getBool(_kInjectOsc7) ?? false;
+    if (p.containsKey(_kSmartRightClick)) {
+      smartRightClick = p.getBool(_kSmartRightClick) ?? false;
+    } else {
+      smartRightClick = !kIsWeb && Platform.isWindows;
+    }
+
     appLocaleCode = p.getString(_kAppLocale) ?? 'zh';
     if (appLocaleCode != 'en' && appLocaleCode != 'zh') {
       appLocaleCode = 'zh';
@@ -161,6 +265,10 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     await p.setDouble(_kFontSize, terminalFontSize);
     await p.setString(_kFontFamily, terminalFontFamily);
     await p.setBool(_kSelectCopy, selectToCopy);
+    await p.setDouble(_kUiScale, uiScaleFactor);
+    await p.setBool(_kFollowTerminalCwd, followTerminalCwd);
+    await p.setBool(_kInjectOsc7, injectOsc7Cwd);
+    await p.setBool(_kSmartRightClick, smartRightClick);
     await p.setString(_kAppLocale, appLocaleCode);
     await p.setString(_kThemeMode, appThemeMode);
     await p.setString(_kLlmBaseUrl, llmBaseUrl);

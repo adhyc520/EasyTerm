@@ -470,6 +470,38 @@ class AppLocalizationsEn extends AppLocalizations {
       'Auto-copy selection to clipboard (short debounce).';
 
   @override
+  String get settingsFollowTerminalCwdLabel => 'Follow terminal folder';
+
+  @override
+  String get settingsFollowTerminalCwdDescription =>
+      'Sync the file browser when the shell cds; also injects cwd reporting into bash/zsh.';
+
+  @override
+  String get settingsInjectOsc7Label => 'Enable cwd reporting';
+
+  @override
+  String get settingsInjectOsc7Description =>
+      'Inject an OSC 7 hook into bash/zsh after connect (also auto-enabled with Follow terminal folder).';
+
+  @override
+  String get statusBarCwdNoOsc7Hint =>
+      'No cwd reports yet — follow may not work';
+
+  @override
+  String get settingsSmartRightClickLabel => 'Smart right-click copy/paste';
+
+  @override
+  String get settingsSmartRightClickDescription =>
+      'With a selection, right-click copies and clears; otherwise pastes (Windows Terminal style).';
+
+  @override
+  String get settingsUiScaleLabel => 'UI scale';
+
+  @override
+  String get settingsUiScaleDescription =>
+      'Scale UI text and terminal font size (0.75–2.0).';
+
+  @override
   String get settingsInvalidNumbers =>
       'Enter valid numbers (see each field’s range).';
 

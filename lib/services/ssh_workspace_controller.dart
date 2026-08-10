@@ -36,6 +36,7 @@ import 'sftp_remote_clipboard.dart';
 import 'sftp_remote_copy.dart' as sftp_copy;
 import 'sftp_upload_progress_hooks.dart';
 import 'sftp_upload_task_list.dart';
+import 'pty_interceptor.dart';
 import 'workbench_settings_store.dart';
 
 const int kMaxEditorBytes = 512 * 1024;
@@ -262,6 +263,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   }) : _password = password,
        _privateKeyPem = privateKeyPem {
     _remoteSession.onTransportClosed = _onRemoteTransportClosed;
+    settings.addListener(_onSettingsChanged);
   }
 
   final WorkbenchSettingsStore settings;
@@ -390,6 +392,33 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   }
 
   String _remoteCwd = '/';
+
+  /// Shell cwd from OSC 7 (independent of SFTP [_remoteCwd]).
+  String _terminalCwd = '/';
+  bool _mouseMode = false;
+  bool _sawOsc7 = false;
+  DateTime? _lastManualNavAt;
+  Timer? _followDebounce;
+  bool _osc7InjectInFlight = false;
+  DateTime? _lastOsc7InjectAt;
+  late final PtyInterceptor _ptyInterceptor = PtyInterceptor(
+    onCwd: _onTerminalCwd,
+    onMouseMode: (active) {
+      if (_mouseMode == active) return;
+      _mouseMode = active;
+      notifyListeners();
+    },
+  );
+
+  String get terminalCwd => _terminalCwd;
+  bool get mouseModeActive => _mouseMode;
+  bool get sawOsc7 => _sawOsc7;
+  bool get followTerminalCwd => settings.followTerminalCwd;
+
+  /// Follow needs cwd reports; inject setting alone also opts in.
+  bool get _wantOsc7Hook =>
+      settings.injectOsc7Cwd || settings.followTerminalCwd;
+
   bool _loadingDir = false;
   List<SftpName> _entries = [];
   String? _loadError;
@@ -633,6 +662,9 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
           if (_sessionDisposed) return;
 
           _remoteCwd = await _sftp!.absolute('.');
+          _terminalCwd = _remoteCwd;
+          _sawOsc7 = false;
+          _ptyInterceptor.reset();
           await refreshDirectory();
           if (_sessionDisposed) return;
 
@@ -641,8 +673,10 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
             _initTerminal();
           }
           _wireShell();
-
           _connected = true;
+          if (_wantOsc7Hook) {
+            unawaited(_injectOsc7Hook());
+          }
           _dropped = false;
           lastError = null;
           break;
@@ -742,12 +776,106 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     if (term == null) return;
 
     _stdoutSub = session.stdout.listen((data) {
-      term.write(utf8.decode(data, allowMalformed: true));
+      final decoded = utf8.decode(data, allowMalformed: true);
+      final out = _ptyInterceptor.process(decoded);
+      term.write(out);
     }, onError: (e) => debugPrint('stdout: $e'));
 
     _stderrSub = session.stderr.listen((data) {
       term.write(utf8.decode(data, allowMalformed: true));
     }, onError: (e) => debugPrint('stderr: $e'));
+  }
+
+  void _onTerminalCwd(String cwd) {
+    final norm = normalizeRemotePath(cwd);
+    if (norm.isEmpty) return;
+    final firstReport = !_sawOsc7;
+    _sawOsc7 = true;
+    if (norm == _terminalCwd) {
+      // First report may match SFTP home; notify so UI clears "no OSC7" hint.
+      if (firstReport) notifyListeners();
+      return;
+    }
+    _terminalCwd = norm;
+    notifyListeners();
+    if (settings.followTerminalCwd) {
+      _scheduleSyncBrowserToTerminalCwd();
+    }
+  }
+
+  void _onSettingsChanged() {
+    if (_sessionDisposed || !_connected) return;
+    if (_wantOsc7Hook && !_sawOsc7) {
+      unawaited(_injectOsc7Hook());
+    }
+    if (settings.followTerminalCwd && _sawOsc7) {
+      _scheduleSyncBrowserToTerminalCwd();
+    }
+  }
+
+  void _markManualNav() {
+    _lastManualNavAt = DateTime.now();
+  }
+
+  bool get _manualNavRecent {
+    final at = _lastManualNavAt;
+    if (at == null) return false;
+    return DateTime.now().difference(at) < const Duration(milliseconds: 1500);
+  }
+
+  void _scheduleSyncBrowserToTerminalCwd() {
+    _followDebounce?.cancel();
+    _followDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(_syncBrowserToTerminalCwd());
+    });
+  }
+
+  Future<void> _syncBrowserToTerminalCwd() async {
+    if (!settings.followTerminalCwd) return;
+    if (_manualNavRecent) return;
+    final target = _terminalCwd;
+    if (normalizeRemotePathForCompare(target) ==
+        normalizeRemotePathForCompare(_remoteCwd)) {
+      return;
+    }
+    await navigateToAbsolutePath(target, fromTerminalFollow: true);
+  }
+
+  /// Inject bash/zsh OSC 7 cwd hook into the interactive PTY (settings-gated).
+  ///
+  /// Safe to call multiple times; no-ops once [sawOsc7] is true or while a
+  /// recent inject is in flight. Follow-folder enables this automatically.
+  Future<void> _injectOsc7Hook() async {
+    if (!_wantOsc7Hook || !_connected || _sawOsc7) return;
+    if (_osc7InjectInFlight) return;
+    final last = _lastOsc7InjectAt;
+    if (last != null &&
+        DateTime.now().difference(last) < const Duration(seconds: 3)) {
+      return;
+    }
+
+    _osc7InjectInFlight = true;
+    try {
+      // Wait for login banner / rc files so the snippet lands at a prompt.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final session = _shell;
+      if (session == null || !_connected || _sawOsc7 || _sessionDisposed) {
+        return;
+      }
+      // Compact one-liner: bash PROMPT_COMMAND + zsh precmd_functions (not a
+      // bare precmd() override — oh-my-zsh ignores that).
+      const snippet =
+          r'''if [ -n "$BASH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; case ";${PROMPT_COMMAND:-};" in *__easyterm_osc7*) ;; *) PROMPT_COMMAND="__easyterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; __easyterm_osc7; elif [ -n "$ZSH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOST:-localhost}" "$PWD"; }; typeset -ga precmd_functions 2>/dev/null; case " ${precmd_functions[*]} " in *" __easyterm_osc7 "*) ;; *) precmd_functions+=(__easyterm_osc7);; esac; __easyterm_osc7; fi
+''';
+      // Clear any partial input (Ctrl-U) before injecting, then run the hook.
+      session.write(Uint8List.fromList([0x15]));
+      session.write(Uint8List.fromList(utf8.encode(snippet)));
+      _lastOsc7InjectAt = DateTime.now();
+    } catch (e) {
+      debugPrint('injectOsc7: $e');
+    } finally {
+      _osc7InjectInFlight = false;
+    }
   }
 
   @override
@@ -789,6 +917,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   @override
   Future<void> goBack() async {
     if (_cwdHistoryBack.isEmpty) return;
+    _markManualNav();
     _cwdHistoryForward.add(_remoteCwd);
     if (_cwdHistoryForward.length > 64) _cwdHistoryForward.removeAt(0);
     _remoteCwd = _cwdHistoryBack.removeLast();
@@ -798,6 +927,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   @override
   Future<void> goForward() async {
     if (_cwdHistoryForward.isEmpty) return;
+    _markManualNav();
     _cwdHistoryBack.add(_remoteCwd);
     if (_cwdHistoryBack.length > 64) _cwdHistoryBack.removeAt(0);
     _remoteCwd = _cwdHistoryForward.removeLast();
@@ -812,6 +942,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     try {
       final attrs = await client.stat(path);
       if (attrs.isDirectory) {
+        _markManualNav();
         _pushCwdHistory();
         _remoteCwd = path;
         await refreshDirectory();
@@ -826,19 +957,26 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   Future<void> navigateUp() async {
     final parent = remoteDirname(_remoteCwd);
     if (parent == _remoteCwd) return;
+    _markManualNav();
     _pushCwdHistory();
     _remoteCwd = parent;
     await refreshDirectory();
   }
 
   Future<void> navigateToRoot() async {
+    _markManualNav();
     _remoteCwd = '/';
     await refreshDirectory();
   }
 
   /// 跳转到绝对目录路径（须为已存在的目录）。
+  ///
+  /// [fromTerminalFollow] skips the manual-nav cooldown (follow sync itself).
   @override
-  Future<void> navigateToAbsolutePath(String absolutePath) async {
+  Future<void> navigateToAbsolutePath(
+    String absolutePath, {
+    bool fromTerminalFollow = false,
+  }) async {
     final client = _sftp;
     if (client == null) return;
     var path = absolutePath.replaceAll('\\', '/');
@@ -854,6 +992,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
         notifyListeners();
         return;
       }
+      if (!fromTerminalFollow) _markManualNav();
       if (path != _remoteCwd) _pushCwdHistory();
       _remoteCwd = path;
       await refreshDirectory();
@@ -1912,10 +2051,16 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   /// [keepTerminal] 为 `true` 时保留 [_terminal] 与 [_entries]，用于「掉线后保留
   /// 历史缓冲以供重连」的场景；为 `false`（[disconnect] 的对外语义）时彻底清空。
   Future<void> _teardownConnection({bool keepTerminal = false}) async {
+    _followDebounce?.cancel();
+    _followDebounce = null;
+    _osc7InjectInFlight = false;
+    _lastOsc7InjectAt = null;
     await _stdoutSub?.cancel();
     await _stderrSub?.cancel();
     _stdoutSub = null;
     _stderrSub = null;
+    _ptyInterceptor.reset();
+    _mouseMode = false;
 
     try {
       _shell?.close();
@@ -2059,6 +2204,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   void dispose() {
     if (_sessionDisposed) return;
     _sessionDisposed = true;
+    settings.removeListener(_onSettingsChanged);
     _remoteSession.onTransportClosed = null;
     _commandQueue?.dispose();
     _commandQueue = null;

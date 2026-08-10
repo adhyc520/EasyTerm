@@ -92,14 +92,25 @@ class _EasyTermAppState extends State<EasyTermApp> {
       darkTheme: darkTheme,
       themeMode: _settings.materialThemeMode,
       builder: (context, child) {
-        if (child == null || !workbenchDesktopShortcutsEnabled()) {
-          return child ?? const SizedBox.shrink();
+        if (child == null) return const SizedBox.shrink();
+        final scale = _settings.uiScaleFactor;
+        Widget wrapped = child;
+        if (scale != 1.0) {
+          final mq = MediaQuery.of(context);
+          final systemScale = mq.textScaler.scale(1.0);
+          wrapped = MediaQuery(
+            data: mq.copyWith(
+              textScaler: TextScaler.linear(systemScale * scale),
+            ),
+            child: child,
+          );
         }
+        if (!workbenchDesktopShortcutsEnabled()) return wrapped;
         return Shortcuts(
           shortcuts: workbenchGlobalShortcutIntents(),
           child: Actions(
             actions: workbenchGlobalShortcutActions(),
-            child: child,
+            child: wrapped,
           ),
         );
       },

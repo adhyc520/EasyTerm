@@ -452,6 +452,36 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsSelectCopyDescription => '选中后自动复制到剪贴板（有短暂防抖）。';
 
   @override
+  String get settingsFollowTerminalCwdLabel => '跟随终端目录';
+
+  @override
+  String get settingsFollowTerminalCwdDescription =>
+      '终端 cd 后自动同步文件浏览器；会自动向 bash/zsh 注入目录上报。';
+
+  @override
+  String get settingsInjectOsc7Label => '启用目录上报';
+
+  @override
+  String get settingsInjectOsc7Description =>
+      '连接后向 bash/zsh 注入 OSC 7（开启「跟随终端目录」时也会自动注入）。';
+
+  @override
+  String get statusBarCwdNoOsc7Hint => '未检测到目录上报，跟随可能无效';
+
+  @override
+  String get settingsSmartRightClickLabel => '右键智能复制/粘贴';
+
+  @override
+  String get settingsSmartRightClickDescription =>
+      '有选区时右键复制并清除；无选区时右键粘贴（Windows 终端习惯）。';
+
+  @override
+  String get settingsUiScaleLabel => '界面缩放';
+
+  @override
+  String get settingsUiScaleDescription => '放大或缩小界面文字与终端字号（0.75–2.0）。';
+
+  @override
   String get settingsInvalidNumbers => '请填写有效的数字（见各项取值范围）。';
 
   @override

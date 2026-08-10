@@ -140,6 +140,64 @@ class WorkbenchInterfaceSettingsDialog extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 20),
+              Text(
+                l.settingsUiScaleLabel,
+                style: TextStyle(
+                  color: context.wb.textMuted.withValues(alpha: 0.9),
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ListenableBuilder(
+                listenable: settings,
+                builder: (context, _) {
+                  final scale = settings.uiScaleFactor;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Slider(
+                              value: scale.clamp(0.75, 2.0),
+                              min: 0.75,
+                              max: 2.0,
+                              divisions: 25,
+                              label: scale.toStringAsFixed(2),
+                              onChanged: (v) {
+                                settings.setUiScaleFactor(v);
+                              },
+                              onChangeEnd: (v) async {
+                                settings.setUiScaleFactor(v);
+                                await settings.persist();
+                              },
+                            ),
+                          ),
+                          SizedBox(
+                            width: 48,
+                            child: Text(
+                              '${(scale * 100).round()}%',
+                              textAlign: TextAlign.end,
+                              style: TextStyle(
+                                color: context.wb.primaryText,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        l.settingsUiScaleDescription,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton(

@@ -25,6 +25,10 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   final SshWorkspaceController _workspace;
   bool _wasConnected = false;
   int _seenRemoteFsEpoch = 0;
+  String _lastFollowedTerminalCwd = '';
+  DateTime? _lastManualNavAt;
+  Timer? _followDebounce;
+  String? _pendingFollowTarget;
 
   /// 底层会话（拖出/临时文件登记等仍走工作区静态与实例方法）。
   SshWorkspaceController get workspace => _workspace;
@@ -132,7 +136,74 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
     if (sftp != null && _entries.isEmpty && !_loadingDir) {
       unawaited(refreshDirectory());
     }
+    _maybeFollowTerminalCwd();
     notifyListeners();
+  }
+
+  void _markManualNav() {
+    _lastManualNavAt = DateTime.now();
+  }
+
+  void _maybeFollowTerminalCwd() {
+    if (!_workspace.settings.followTerminalCwd) return;
+    final target = _workspace.terminalCwd;
+    if (target.isEmpty || target == _lastFollowedTerminalCwd) return;
+    if (normalizeRemotePathForCompare(target) ==
+        normalizeRemotePathForCompare(_remoteCwd)) {
+      _lastFollowedTerminalCwd = target;
+      return;
+    }
+    final at = _lastManualNavAt;
+    if (at != null &&
+        DateTime.now().difference(at) < const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _pendingFollowTarget = target;
+    _followDebounce?.cancel();
+    _followDebounce = Timer(const Duration(milliseconds: 400), () {
+      _followDebounce = null;
+      final path = _pendingFollowTarget;
+      _pendingFollowTarget = null;
+      if (path == null) return;
+      if (!_workspace.settings.followTerminalCwd) return;
+      if (path == _lastFollowedTerminalCwd) return;
+      if (normalizeRemotePathForCompare(path) ==
+          normalizeRemotePathForCompare(_remoteCwd)) {
+        _lastFollowedTerminalCwd = path;
+        return;
+      }
+      final manualAt = _lastManualNavAt;
+      if (manualAt != null &&
+          DateTime.now().difference(manualAt) <
+              const Duration(milliseconds: 1500)) {
+        return;
+      }
+      _lastFollowedTerminalCwd = path;
+      unawaited(_navigateFollowing(path));
+    });
+  }
+
+  Future<void> _navigateFollowing(String absolutePath) async {
+    final client = sftp;
+    if (client == null) return;
+    var path = absolutePath.replaceAll('\\', '/');
+    if (path.isEmpty) return;
+    if (path != '/' && path.endsWith('/')) {
+      path = path.substring(0, path.length - 1);
+    }
+    if (!path.startsWith('/')) return;
+    try {
+      final attrs = await client.stat(path);
+      if (!attrs.isDirectory) return;
+      if (path == _remoteCwd) {
+        await refreshDirectory();
+        return;
+      }
+      _beginNavigate(path, manual: false);
+      await refreshDirectory();
+    } catch (e) {
+      debugPrint('DesktopSftpController._navigateFollowing: $e');
+    }
   }
 
   Future<void> bindInitial() async {
@@ -182,7 +253,12 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
   }
 
   /// 切到新路径：清空当前项，让 UI 走 loading，避免短暂显示旧目录内容。
-  void _beginNavigate(String path, {bool pushHistory = true}) {
+  void _beginNavigate(
+    String path, {
+    bool pushHistory = true,
+    bool manual = true,
+  }) {
+    if (manual) _markManualNav();
     if (pushHistory && path != _remoteCwd) {
       _historyBack.add(_remoteCwd);
       if (_historyBack.length > 64) _historyBack.removeAt(0);
@@ -643,6 +719,9 @@ class DesktopSftpController extends ChangeNotifier implements SftpBrowserHost {
 
   @override
   void dispose() {
+    _followDebounce?.cancel();
+    _followDebounce = null;
+    _pendingFollowTarget = null;
     _workspace.removeListener(_onWorkspace);
     super.dispose();
   }

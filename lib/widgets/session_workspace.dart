@@ -139,7 +139,10 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
             themeBg: context.wb.terminalBg,
             fontSize: ws.terminalFontSize,
             fontFamily: ws.terminalFontFamily,
+            uiScale: ws.uiScaleFactor,
             selectToCopy: ws.selectToCopy,
+            mouseModeActive: c.mouseModeActive,
+            smartRightClick: ws.smartRightClick,
             showLeftBorder: true,
           );
         },

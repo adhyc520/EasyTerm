@@ -76,6 +76,7 @@ class _TerminalAppState extends State<TerminalApp> {
     final shell = _shell;
     _shell = null;
     if (shell != null) {
+      shell.removeListener(_onShell);
       unawaited(shell.close());
     }
     super.dispose();
@@ -83,6 +84,24 @@ class _TerminalAppState extends State<TerminalApp> {
 
   void _onSettings() {
     if (mounted) setState(() {});
+  }
+
+  void _onShell() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _mouseModeActive => _usePrimary
+      ? widget.controller.mouseModeActive
+      : (_shell?.mouseModeActive ?? false);
+
+  String get _displayCwd {
+    if (!_usePrimary) {
+      final shellCwd = _shell?.terminalCwd ?? '';
+      if (shellCwd.isNotEmpty) return shellCwd;
+      final arg = widget.window.args['cwd']?.toString().trim();
+      if (arg != null && arg.isNotEmpty) return arg;
+    }
+    return widget.controller.terminalCwd;
   }
 
   Future<void> _bumpFont(double delta) async {
@@ -100,15 +119,32 @@ class _TerminalAppState extends State<TerminalApp> {
     await s.persist();
   }
 
+  static String _shortCwd(String path) {
+    final parts = path.split('/').where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return path.isEmpty ? '/' : path;
+    if (parts.length <= 2) return path;
+    return '…/${parts[parts.length - 2]}/${parts.last}';
+  }
+
   Future<void> _openInFiles() async {
     final fallback = () {
       final cwd = widget.window.args['cwd']?.toString().trim();
       if (cwd != null && cwd.isNotEmpty) return cwd;
+      final tc = _displayCwd;
+      if (tc.isNotEmpty) return tc;
       return widget.controller.remoteCwd;
     }();
 
     var path = fallback;
-    if (widget.controller.connected && !widget.controller.dropped) {
+    // Prefer live OSC 7 cwd when available (this shell, else primary).
+    final shell = _shell;
+    if (!_usePrimary && shell != null && shell.sawOsc7 && shell.terminalCwd.isNotEmpty) {
+      path = shell.terminalCwd;
+    } else if (_usePrimary &&
+        widget.controller.sawOsc7 &&
+        widget.controller.terminalCwd.isNotEmpty) {
+      path = widget.controller.terminalCwd;
+    } else if (widget.controller.connected && !widget.controller.dropped) {
       try {
         final raw = await widget.controller.runQueued(
           r'pwd 2>/dev/null || echo "$PWD"',
@@ -171,6 +207,7 @@ class _TerminalAppState extends State<TerminalApp> {
       if (!nowConnected && _shell != null) {
         final dead = _shell;
         _shell = null;
+        dead?.removeListener(_onShell);
         unawaited(dead?.close());
       }
       // 重连成功或首次连上：自动重开独立 shell
@@ -202,6 +239,7 @@ class _TerminalAppState extends State<TerminalApp> {
     if (force && _shell != null) {
       final old = _shell;
       _shell = null;
+      old?.removeListener(_onShell);
       unawaited(old?.close());
     }
     setState(() {
@@ -214,6 +252,7 @@ class _TerminalAppState extends State<TerminalApp> {
         await shell.close();
         return;
       }
+      shell.addListener(_onShell);
       setState(() {
         _shell = shell;
         _opening = false;
@@ -300,6 +339,22 @@ class _TerminalAppState extends State<TerminalApp> {
                       color: context.wb.textMuted,
                     ),
                   ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Tooltip(
+                      message: _displayCwd,
+                      child: Text(
+                        _shortCwd(_displayCwd),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                          color: context.wb.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
                   const Spacer(),
                   TextButton(
                     onPressed: () => unawaited(_openInFiles()),
@@ -334,7 +389,10 @@ class _TerminalAppState extends State<TerminalApp> {
                 themeBg: context.wb.terminalBg,
                 fontSize: settings.terminalFontSize,
                 fontFamily: settings.terminalFontFamily,
+                uiScale: settings.uiScaleFactor,
                 selectToCopy: settings.selectToCopy,
+                mouseModeActive: _mouseModeActive,
+                smartRightClick: settings.smartRightClick,
                 showLeftBorder: false,
                 tapRegionGroupId: widget.window.id,
                 releaseFocusOnTapOutside: false,

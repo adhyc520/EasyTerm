@@ -962,6 +962,60 @@ abstract class AppLocalizations {
   /// **'Auto-copy selection to clipboard (short debounce).'**
   String get settingsSelectCopyDescription;
 
+  /// No description provided for @settingsFollowTerminalCwdLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow terminal folder'**
+  String get settingsFollowTerminalCwdLabel;
+
+  /// No description provided for @settingsFollowTerminalCwdDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync the file browser when the shell cds; also injects cwd reporting into bash/zsh.'**
+  String get settingsFollowTerminalCwdDescription;
+
+  /// No description provided for @settingsInjectOsc7Label.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable cwd reporting'**
+  String get settingsInjectOsc7Label;
+
+  /// No description provided for @settingsInjectOsc7Description.
+  ///
+  /// In en, this message translates to:
+  /// **'Inject an OSC 7 hook into bash/zsh after connect (also auto-enabled with Follow terminal folder).'**
+  String get settingsInjectOsc7Description;
+
+  /// No description provided for @statusBarCwdNoOsc7Hint.
+  ///
+  /// In en, this message translates to:
+  /// **'No cwd reports yet — follow may not work'**
+  String get statusBarCwdNoOsc7Hint;
+
+  /// No description provided for @settingsSmartRightClickLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Smart right-click copy/paste'**
+  String get settingsSmartRightClickLabel;
+
+  /// No description provided for @settingsSmartRightClickDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'With a selection, right-click copies and clears; otherwise pastes (Windows Terminal style).'**
+  String get settingsSmartRightClickDescription;
+
+  /// No description provided for @settingsUiScaleLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'UI scale'**
+  String get settingsUiScaleLabel;
+
+  /// No description provided for @settingsUiScaleDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Scale UI text and terminal font size (0.75–2.0).'**
+  String get settingsUiScaleDescription;
+
   /// No description provided for @settingsInvalidNumbers.
   ///
   /// In en, this message translates to:

@@ -5,11 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'
     show kPrimaryButton, PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../l10n/app_localizations.dart';
 import '../services/workbench_desktop_shortcuts.dart';
+import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
 
 /// 纯终端渲染 / 输入 / 选择 / 菜单 / 断线浮层，不依赖 [SshWorkspaceController]。
@@ -24,8 +26,11 @@ class TerminalSurface extends StatefulWidget {
     this.errorText,
     this.themeBg,
     this.fontSize = 13,
-    this.fontFamily = 'Menlo',
+    this.fontFamily,
+    this.uiScale = 1.0,
     this.selectToCopy = false,
+    this.mouseModeActive = false,
+    this.smartRightClick = false,
     this.showLeftBorder = true,
     this.tapRegionGroupId,
     this.releaseFocusOnTapOutside = true,
@@ -39,8 +44,19 @@ class TerminalSurface extends StatefulWidget {
   final String? errorText;
   final Color? themeBg;
   final double fontSize;
-  final String fontFamily;
+  final String? fontFamily;
+
+  /// Multiplier applied to [fontSize] (UI scale factor).
+  final double uiScale;
+
   final bool selectToCopy;
+
+  /// When true (app enabled mouse reporting), only Shift+drag selects locally.
+  final bool mouseModeActive;
+
+  /// Windows-style: secondary click copies+clears selection, or pastes.
+  final bool smartRightClick;
+
   final bool showLeftBorder;
 
   /// 与桌面窗口外框共用，避免点标题栏时丢掉键盘焦点。
@@ -54,7 +70,7 @@ class TerminalSurface extends StatefulWidget {
 }
 
 class TerminalSurfaceState extends State<TerminalSurface>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TerminalController _viewController = TerminalController();
   Timer? _selectCopyDebounce;
 
@@ -67,6 +83,8 @@ class TerminalSurfaceState extends State<TerminalSurface>
   Timer? _autoScrollTimer;
   bool _selectionApplyScheduled = false;
   bool _selDidDrag = false;
+
+  double? _lastDpr;
 
   /// 用户滚离底部时显示「跳最新」。
   bool _awayFromBottom = false;
@@ -112,6 +130,7 @@ class TerminalSurfaceState extends State<TerminalSurface>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _jumpPulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 420),
@@ -122,6 +141,25 @@ class TerminalSurfaceState extends State<TerminalSurface>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) requestKeyboardFocus();
       });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _lastDpr ??= MediaQuery.devicePixelRatioOf(context);
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    if (_lastDpr != null && dpr != _lastDpr) {
+      _lastDpr = dpr;
+      // Force a layout pass so TerminalView autoResize recalculates cols/rows.
+      setState(() {});
+    } else {
+      _lastDpr = dpr;
     }
   }
 
@@ -160,6 +198,7 @@ class TerminalSurfaceState extends State<TerminalSurface>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _selectCopyDebounce?.cancel();
     _autoScrollTimer?.cancel();
     _jumpPulse.dispose();
@@ -490,9 +529,30 @@ class TerminalSurfaceState extends State<TerminalSurface>
     _autoScrollTimer = null;
   }
 
+  void _copySelectionNow() {
+    final sel = _viewController.selection;
+    if (sel == null) return;
+    final text = widget.terminal.buffer.getText(sel);
+    if (text.isEmpty) return;
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
+  }
+
   void _onTerminalPointerDown(PointerDownEvent e) {
     if (e.kind != PointerDeviceKind.mouse) return;
     if ((e.buttons & kPrimaryButton) == 0) return;
+
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    final mouseMode = widget.mouseModeActive;
+
+    // In mouse-reporting mode, only Shift starts a local selection.
+    // (_LiveShiftAbsorbPointer already keeps TerminalView out of the hit path
+    // while Shift is held, so this down is local-only.)
+    if (mouseMode && !shift) {
+      _selStartCell = null;
+      _selDidDrag = false;
+      return;
+    }
+
     // 任何点击都抢回 primary focus（窗口已聚焦但键盘被壳层/标题栏抢走时）。
     requestKeyboardFocus();
     final rt = _renderTerminal;
@@ -535,6 +595,9 @@ class TerminalSurfaceState extends State<TerminalSurface>
         _selDidDrag) {
       _selectionApplyScheduled = false;
       _applySelection();
+      if (widget.selectToCopy) {
+        _copySelectionNow();
+      }
     }
     _endDrag();
   }
@@ -598,11 +661,32 @@ class TerminalSurfaceState extends State<TerminalSurface>
     return KeyEventResult.handled;
   }
 
+  Future<void> _smartSecondaryAction(Terminal term) async {
+    final sel = _viewController.selection;
+    if (sel != null) {
+      final text = term.buffer.getText(sel);
+      if (text.isNotEmpty) {
+        await Clipboard.setData(ClipboardData(text: text));
+      }
+      _viewController.clearSelection();
+      if (mounted) setState(() {});
+      return;
+    }
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    term.paste(text);
+  }
+
   void _showTerminalContextMenu(
     BuildContext context,
     Offset globalPosition,
     Terminal term,
   ) {
+    if (widget.smartRightClick) {
+      unawaited(_smartSecondaryAction(term));
+      return;
+    }
     final l = AppLocalizations.of(context)!;
     final overlay =
         Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
@@ -698,9 +782,11 @@ class TerminalSurfaceState extends State<TerminalSurface>
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context)!;
     final bg = widget.themeBg ?? context.wb.terminalBg;
+    final effectiveFontSize = widget.fontSize * widget.uiScale;
     final textStyle = TerminalStyle(
-      fontSize: widget.fontSize,
-      fontFamily: widget.fontFamily,
+      fontSize: effectiveFontSize,
+      fontFamily:
+          widget.fontFamily ?? WorkbenchSettingsStore.platformDefaultFontFamily,
       height: 1.0,
     );
 
@@ -719,28 +805,31 @@ class TerminalSurfaceState extends State<TerminalSurface>
           onPointerSignal: _onTerminalPointerSignal,
           onPointerUp: _onTerminalPointerUp,
           onPointerCancel: (_) => _endDrag(),
-          child: TerminalView(
-            widget.terminal,
-            key: _termViewKey,
-            controller: _viewController,
-            focusNode: _termFocus,
-            scrollController: _termScroll,
-            theme: _workbenchTerminalTheme(bg),
-            textStyle: textStyle,
-            autofocus: widget.autofocus,
-            hardwareKeyboardOnly: !kIsWeb,
-            // 始终 false：xterm 在 readOnly 时不挂 CustomKeyboardListener/Focus，
-            // 断线重连后 FocusNode 会游离，导致「点了也输不进去」。
-            // 未连接时由 [_onTerminalKeyEvent] 吞键 + 外层 AbsorbPointer 挡指针。
-            readOnly: false,
-            autoResize: true,
-            shortcuts: workbenchTerminalClipboardShortcuts(),
-            onKeyEvent: _onTerminalKeyEvent,
-            onSecondaryTapDown: (_, _) {},
-            onSecondaryTapUp: (details, _) => _showTerminalContextMenu(
-              context,
-              details.globalPosition,
+          child: _LiveShiftAbsorbPointer(
+            mouseModeActive: widget.mouseModeActive,
+            child: TerminalView(
               widget.terminal,
+              key: _termViewKey,
+              controller: _viewController,
+              focusNode: _termFocus,
+              scrollController: _termScroll,
+              theme: _workbenchTerminalTheme(bg),
+              textStyle: textStyle,
+              autofocus: widget.autofocus,
+              hardwareKeyboardOnly: !kIsWeb,
+              // 始终 false：xterm 在 readOnly 时不挂 CustomKeyboardListener/Focus，
+              // 断线重连后 FocusNode 会游离，导致「点了也输不进去」。
+              // 未连接时由 [_onTerminalKeyEvent] 吞键 + 外层 AbsorbPointer 挡指针。
+              readOnly: false,
+              autoResize: true,
+              shortcuts: workbenchTerminalClipboardShortcuts(),
+              onKeyEvent: _onTerminalKeyEvent,
+              onSecondaryTapDown: (_, _) {},
+              onSecondaryTapUp: (details, _) => _showTerminalContextMenu(
+                context,
+                details.globalPosition,
+                widget.terminal,
+              ),
             ),
           ),
         ),
@@ -978,5 +1067,52 @@ class TerminalSurfaceState extends State<TerminalSurface>
         ),
       ),
     );
+  }
+}
+
+/// Like [AbsorbPointer], but decides absorbing at hit-test time from live
+/// Shift + [mouseModeActive] so the first Shift+click never reaches the PTY.
+class _LiveShiftAbsorbPointer extends SingleChildRenderObjectWidget {
+  const _LiveShiftAbsorbPointer({
+    required this.mouseModeActive,
+    required super.child,
+  });
+
+  final bool mouseModeActive;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) {
+    return _RenderLiveShiftAbsorb(mouseModeActive: mouseModeActive);
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderLiveShiftAbsorb renderObject,
+  ) {
+    renderObject.mouseModeActive = mouseModeActive;
+  }
+}
+
+class _RenderLiveShiftAbsorb extends RenderProxyBox {
+  _RenderLiveShiftAbsorb({required bool mouseModeActive})
+      : _mouseModeActive = mouseModeActive;
+
+  bool _mouseModeActive;
+  set mouseModeActive(bool value) {
+    if (_mouseModeActive == value) return;
+    _mouseModeActive = value;
+  }
+
+  bool get _absorbing =>
+      _mouseModeActive && HardwareKeyboard.instance.isShiftPressed;
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    // Match [RenderAbsorbPointer]: when absorbing, claim the hit without
+    // testing children so TerminalView never sees the pointer.
+    return _absorbing
+        ? size.contains(position)
+        : super.hitTest(result, position: position);
   }
 }
