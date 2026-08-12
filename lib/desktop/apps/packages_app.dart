@@ -13,6 +13,7 @@ import '../../widgets/destructive_action_dialog.dart';
 import '../../widgets/package_op_log_dialog.dart';
 import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 包管理器：检测 apt/dnf/yum/pacman/brew/zypper，列表 / 搜索 / 安装 / 卸载。
 /// 特权操作弹出实时日志框；需密码时再弹 sudo 授权。
@@ -520,31 +521,12 @@ late final TabController _tabs;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+        DesktopAppToolbar(
           child: Row(
             children: [
-              Text(
-                '包管理器',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: wb.primaryText,
-                ),
-              ),
+              const DesktopAppTitle('包管理器'),
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: wb.panelElevated,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: wb.border),
-                ),
-                child: Text(
-                  _pm.label,
-                  style: TextStyle(fontSize: 11, color: wb.textMuted),
-                ),
-              ),
+              DesktopMetaChip(label: _pm.label),
               const Spacer(),
               if (_busy)
                 const Padding(
@@ -562,20 +544,18 @@ late final TabController _tabs;
                       : null,
                   child: const Text('全部升级'),
                 ),
-              IconButton(
+              DesktopToolIcon(
                 tooltip: '刷新',
                 onPressed:
                     _connected && !_loading ? () => unawaited(_reload()) : null,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                icon: Icons.refresh_rounded,
               ),
             ],
           ),
         ),
-        TabBar(
+        desktopTabBar(
           controller: _tabs,
-          labelColor: wb.accentBlue,
-          unselectedLabelColor: wb.textMuted,
-          indicatorColor: wb.accentBlue,
+          wb: wb,
           tabs: [
             Tab(text: '已安装 (${_installed.length})'),
             const Tab(text: '搜索 / 安装'),

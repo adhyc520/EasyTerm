@@ -11,6 +11,7 @@ import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 一次性远程命令窗口：用 [RemoteStream] 流式显示输出，不占交互终端。
 class RunCommandApp extends StatefulWidget {
@@ -324,20 +325,13 @@ static const _presets = [
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
+            DesktopAppToolbar(
               child: Row(
                 children: [
                   Icon(Icons.play_circle_outline_rounded,
                       size: 18, color: wb.accentBlue),
                   const SizedBox(width: 8),
-                  Text(
-                    '运行命令',
-                    style: TextStyle(
-                      color: wb.primaryText,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  const DesktopAppTitle('运行命令'),
                   const Spacer(),
                   if (_running)
                     TextButton(

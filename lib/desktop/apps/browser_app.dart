@@ -1859,11 +1859,11 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     return Material(
-      color: wb.panelElevated,
+      color: wb.panelElevated.withValues(alpha: 0.72),
       child: Column(
         children: [
           SizedBox(
-            height: 40,
+            height: 42,
             child: Row(
               children: [
                 const SizedBox(width: 4),

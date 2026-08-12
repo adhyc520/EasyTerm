@@ -8,7 +8,6 @@ final class DesktopSettingsStore extends ChangeNotifier {
   static const _kWorkspaceCount = 'desktop_workspace_count';
   static const _kSnapEnabled = 'desktop_snap_enabled';
   static const _kSnapEdgePx = 'desktop_snap_edge_px';
-  static const _kShowGrid = 'desktop_show_grid';
   static const _kWallpaper = 'desktop_wallpaper';
   static const _kTaskbarAutohide = 'desktop_taskbar_autohide';
   static const _kDefaultWFrac = 'desktop_default_window_w_frac';
@@ -20,7 +19,6 @@ final class DesktopSettingsStore extends ChangeNotifier {
   int workspaceCount = 2;
   bool snapEnabled = true;
   double snapEdgePx = 28;
-  bool showGrid = true;
   String wallpaper = '';
   bool taskbarAutohide = false;
   double defaultWindowWFrac = 0.52;
@@ -34,7 +32,6 @@ final class DesktopSettingsStore extends ChangeNotifier {
     workspaceCount = (p.getInt(_kWorkspaceCount) ?? 2).clamp(1, 9);
     snapEnabled = p.getBool(_kSnapEnabled) ?? true;
     snapEdgePx = (p.getDouble(_kSnapEdgePx) ?? 28).clamp(8, 80);
-    showGrid = p.getBool(_kShowGrid) ?? true;
     wallpaper = p.getString(_kWallpaper) ?? '';
     taskbarAutohide = p.getBool(_kTaskbarAutohide) ?? false;
     defaultWindowWFrac =
@@ -52,7 +49,6 @@ final class DesktopSettingsStore extends ChangeNotifier {
     await p.setInt(_kWorkspaceCount, workspaceCount.clamp(1, 9));
     await p.setBool(_kSnapEnabled, snapEnabled);
     await p.setDouble(_kSnapEdgePx, snapEdgePx);
-    await p.setBool(_kShowGrid, showGrid);
     await p.setString(_kWallpaper, wallpaper);
     await p.setBool(_kTaskbarAutohide, taskbarAutohide);
     await p.setDouble(_kDefaultWFrac, defaultWindowWFrac);

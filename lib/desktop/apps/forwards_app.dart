@@ -14,6 +14,7 @@ import '../../widgets/destructive_action_dialog.dart';
 import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 本地端口转发管理：列表 / 新增 / 删除，按 host 持久化并在重连后重建。
 class ForwardsApp extends StatefulWidget {
@@ -461,19 +462,12 @@ class _ForwardsAppState extends State<ForwardsApp> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          DesktopAppToolbar(
             child: Row(
               children: [
                 Icon(Icons.alt_route_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
-                Text(
-                  '端口转发',
-                  style: TextStyle(
-                    color: wb.primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                const DesktopAppTitle('端口转发'),
                 const Spacer(),
                 Tooltip(
                   message: '中断后自动重连',

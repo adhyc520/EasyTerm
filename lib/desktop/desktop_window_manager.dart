@@ -139,8 +139,8 @@ class DesktopWindowManager extends ChangeNotifier {
   final DesktopSettingsStore desktopSettings;
   final DesktopWindowSizeStore _sizeStore;
 
-  static const double taskbarH = 44;
-  static const double titleBarH = 30;
+  static const double taskbarH = 48;
+  static const double titleBarH = 34;
   static const double minWidth = 240;
   static const double minHeight = 160;
   static const int kDefaultWorkspaceCount = 2;

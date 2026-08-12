@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -7,6 +9,10 @@ import '../theme/workbench_theme.dart';
 import '../util/desktop_resize_cursors.dart';
 import 'desktop_app_registry.dart';
 import 'desktop_window_manager.dart';
+import 'widgets/desktop_ui.dart';
+
+/// 桌面窗口按钮布局：macOS 左侧红绿灯，Windows/Linux 右侧标题栏按钮。
+bool desktopUsesMacWindowControls() => !kIsWeb && Platform.isMacOS;
 
 /// 桌面窗口外框：标题栏拖动 / 双击最大化 / 8 向缩放 / 聚焦高亮。
 class DesktopWindowFrame extends StatelessWidget {
@@ -33,10 +39,9 @@ class DesktopWindowFrame extends StatelessWidget {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final focused = window.focused;
-    final borderColor = focused ? wb.accentBlue : wb.border;
     final isMax = window.state == WindowState.maximized;
 
-    final radius = BorderRadius.circular(isMax ? 0 : 8);
+    final radius = BorderRadius.circular(isMax ? 0 : DesktopUi.radiusMd);
 
     // 手柄在 ClipRRect 外；内容按 handle 内缩，手柄落在边框带上。
     // 缩放用 Listener 而非 Pan，避免与终端选择/列表滚动抢手势。
@@ -63,24 +68,12 @@ class DesktopWindowFrame extends StatelessWidget {
                   color: wb.panel,
                   borderRadius: radius,
                   border: Border.all(
-                    color: borderColor,
-                    width: focused ? 1.5 : 1,
+                    color: focused
+                        ? wb.border.withValues(alpha: 0.9)
+                        : wb.border.withValues(alpha: 0.55),
+                    width: 1,
                   ),
-                  boxShadow: focused
-                      ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            blurRadius: 18,
-                            offset: const Offset(0, 8),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.22),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
+                  boxShadow: DesktopUi.softShadow(elevated: focused),
                 ),
                 child: ClipRRect(
                   borderRadius: radius,
@@ -446,6 +439,7 @@ class _TitleBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
+    final mac = desktopUsesMacWindowControls();
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onFocus,
@@ -457,51 +451,126 @@ class _TitleBar extends StatelessWidget {
       onPanCancel: onPanEnd,
       child: Container(
         height: height,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: EdgeInsets.symmetric(horizontal: mac ? 10 : 6),
         decoration: BoxDecoration(
-          color: focused ? wb.panelElevated : wb.panel,
-          border: Border(bottom: BorderSide(color: wb.border)),
+          color: focused
+              ? wb.panelElevated.withValues(alpha: 0.92)
+              : wb.panel.withValues(alpha: 0.88),
+          border: Border(
+            bottom: BorderSide(color: wb.border.withValues(alpha: 0.75)),
+          ),
         ),
-        child: Row(
-          children: [
-            Icon(icon, size: context.wbScaled(16), color: focused ? wb.accentBlue : wb.textMuted),
-            if (alwaysOnTop) ...[
-              const SizedBox(width: 4),
-              Icon(Icons.push_pin, size: context.wbScaled(12), color: wb.accentBlue),
-            ],
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: context.wbScaled(12),
-                  fontWeight: FontWeight.w600,
-                  color: focused ? wb.primaryText : wb.secondaryText,
+        child: mac ? _buildMac(context, wb) : _buildWindows(context, wb),
+      ),
+    );
+  }
+
+  Widget _buildMac(BuildContext context, WorkbenchColors wb) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 78),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: context.wbScaled(13),
+                color: focused ? wb.secondaryText : wb.textMuted,
+              ),
+              if (alwaysOnTop) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.push_pin,
+                  size: context.wbScaled(11),
+                  color: wb.accentBlue,
+                ),
+              ],
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: context.wbScaled(12),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                    color: focused ? wb.primaryText : wb.secondaryText,
+                  ),
                 ),
               ),
+            ],
+          ),
+        ),
+        Row(
+          children: [
+            DesktopTrafficLights(
+              focused: focused,
+              maximized: maximized,
+              onClose: onClose,
+              onMinimize: onMinimize,
+              onMaximize: onMaximize,
             ),
-            _TitleBtn(
-              icon: Icons.remove_rounded,
-              tooltip: '最小化',
-              onPressed: onMinimize,
-            ),
+            const Spacer(),
             _SnapMaximizeBtn(
               maximized: maximized,
               onMaximize: onMaximize,
               onShowLayouts: () => unawaited(_showSnapPicker(context)),
               onSnapLayout: onSnapLayout,
             ),
-            _TitleBtn(
-              icon: Icons.close_rounded,
-              tooltip: '关闭',
-              danger: true,
-              onPressed: onClose,
-            ),
           ],
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _buildWindows(BuildContext context, WorkbenchColors wb) {
+    return Row(
+      children: [
+        const SizedBox(width: 4),
+        Icon(
+          icon,
+          size: context.wbScaled(14),
+          color: focused ? wb.accentBlue : wb.textMuted,
+        ),
+        if (alwaysOnTop) ...[
+          const SizedBox(width: 4),
+          Icon(
+            Icons.push_pin,
+            size: context.wbScaled(11),
+            color: wb.accentBlue,
+          ),
+        ],
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: context.wbScaled(12),
+              fontWeight: FontWeight.w600,
+              color: focused ? wb.primaryText : wb.secondaryText,
+            ),
+          ),
+        ),
+        _SnapMaximizeBtn(
+          maximized: maximized,
+          onMaximize: onMaximize,
+          onShowLayouts: () => unawaited(_showSnapPicker(context)),
+          onSnapLayout: onSnapLayout,
+        ),
+        DesktopCaptionButtons(
+          maximized: maximized,
+          onMinimize: onMinimize,
+          onMaximize: onMaximize,
+          onClose: onClose,
+        ),
+      ],
     );
   }
 }
@@ -764,43 +833,6 @@ class _SnapCell extends StatelessWidget {
                     ),
                   ),
                 ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TitleBtn extends StatelessWidget {
-  const _TitleBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final wb = context.wb;
-    return Tooltip(
-      message: tooltip,
-      waitDuration: const Duration(milliseconds: 400),
-      child: InkWell(
-        onTap: onPressed,
-        canRequestFocus: false,
-        borderRadius: BorderRadius.circular(4),
-        child: SizedBox(
-          width: context.wbScaled(28),
-          height: context.wbScaled(24),
-          child: Icon(
-            icon,
-            size: context.wbScaled(15),
-            color: danger ? const Color(0xFFEF4444) : wb.textMuted,
-          ),
         ),
       ),
     );

@@ -15,6 +15,7 @@ import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 主机资源 + 网络监控：每 5s 拉取；窗口最小化时暂停。
 class MonitorApp extends StatefulWidget {
@@ -226,22 +227,13 @@ late final TabController _tabs;
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 8, 0),
+          DesktopAppToolbar(
             child: Row(
               children: [
                 Icon(Icons.monitor_heart_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    '主机监控',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: wb.primaryText,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                const Flexible(
+                  child: DesktopAppTitle('主机监控'),
                 ),
                 const SizedBox(width: 8),
                 Flexible(
@@ -282,15 +274,11 @@ late final TabController _tabs;
                           ),
                         )
                       else
-                        IconButton(
+                        DesktopToolIcon(
                           tooltip: '刷新',
-                          iconSize: 18,
                           onPressed:
                               connected ? () => unawaited(_tick()) : null,
-                          icon: Icon(
-                            Icons.refresh_rounded,
-                            color: wb.textMuted,
-                          ),
+                          icon: Icons.refresh_rounded,
                         ),
                     ],
                   ),
@@ -306,11 +294,9 @@ late final TabController _tabs;
                 style: TextStyle(color: wb.textMuted, fontSize: 13),
               ),
             ),
-          TabBar(
+          desktopTabBar(
             controller: _tabs,
-            labelColor: wb.accentBlue,
-            unselectedLabelColor: wb.textMuted,
-            indicatorColor: wb.accentBlue,
+            wb: wb,
             tabs: const [
               Tab(text: '资源'),
               Tab(text: '网络'),

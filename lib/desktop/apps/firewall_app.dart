@@ -14,6 +14,7 @@ import '../../widgets/remote_state_view.dart';
 import '../../widgets/sudo_password_dialog.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 防火墙：检测 ufw / firewalld / iptables；UFW 启停与放行/拒绝/删规则；
 /// firewalld 显示 zone 并支持添加 service/port + reload。
@@ -317,42 +318,22 @@ RemoteFirewallSnapshot? _snap;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+        DesktopAppToolbar(
           child: Row(
             children: [
-              Text(
-                '防火墙',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: wb.primaryText,
-                ),
-              ),
+              const DesktopAppTitle('防火墙'),
               const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: wb.panelElevated,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: wb.border),
-                ),
-                child: Text(
-                  snap?.backend.label ?? '…',
-                  style: TextStyle(fontSize: 11, color: wb.textMuted),
-                ),
-              ),
+              DesktopMetaChip(label: snap?.backend.label ?? '…'),
               if (snap?.active != null) ...[
                 const SizedBox(width: 8),
-                Icon(
-                  Icons.circle,
-                  size: 8,
-                  color: snap!.active! ? wb.online : wb.offline,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  snap.active! ? '已启用' : '已关闭',
-                  style: TextStyle(fontSize: 11, color: wb.textMuted),
+                DesktopMetaChip(
+                  label: snap!.active! ? '已启用' : '已关闭',
+                  accent: snap.active!,
+                  leading: Icon(
+                    Icons.circle,
+                    size: 8,
+                    color: snap.active! ? wb.online : wb.offline,
+                  ),
                 ),
               ],
               const Spacer(),
@@ -365,11 +346,11 @@ RemoteFirewallSnapshot? _snap;
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 ),
-              IconButton(
+              DesktopToolIcon(
                 tooltip: '刷新',
                 onPressed:
                     _connected && !_loading ? () => unawaited(_reload()) : null,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                icon: Icons.refresh_rounded,
               ),
             ],
           ),

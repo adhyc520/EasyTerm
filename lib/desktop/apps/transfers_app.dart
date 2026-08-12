@@ -9,6 +9,7 @@ import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 桌面级传输面板：展示会话统一上传/下载队列。
 class TransfersApp extends StatefulWidget {
@@ -120,19 +121,12 @@ class _TransfersAppState extends State<TransfersApp> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+          DesktopAppToolbar(
             child: Row(
               children: [
                 Icon(Icons.swap_vert_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
-                Text(
-                  '传输',
-                  style: TextStyle(
-                    color: wb.primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                const DesktopAppTitle('传输'),
                 const SizedBox(width: 10),
                 Flexible(
                   child: Text(
@@ -184,7 +178,6 @@ class _TransfersAppState extends State<TransfersApp> {
               ],
             ),
           ),
-          Divider(height: 1, color: wb.border),
           Expanded(
             child: tasks.isEmpty
                 ? Center(

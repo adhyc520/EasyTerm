@@ -12,6 +12,7 @@ import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 enum _Sort { name, status, cpu, memory }
 
@@ -401,25 +402,17 @@ class _ContainersAppState extends State<ContainersApp> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
+          DesktopAppToolbar(
             child: Row(
               children: [
                 Icon(Icons.view_in_ar_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
-                Text(
-                  '容器',
-                  style: TextStyle(
-                    color: wb.primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                const DesktopAppTitle('容器'),
                 const SizedBox(width: 10),
-                Text(
-                  _available
+                DesktopMetaChip(
+                  label: _available
                       ? '${list.length} / ${_items.length}'
                       : 'Docker 不可用',
-                  style: TextStyle(fontSize: 12, color: wb.textMuted),
                 ),
                 const Spacer(),
                 LastUpdatedChip(
@@ -453,11 +446,10 @@ class _ContainersAppState extends State<ContainersApp> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 else
-                  IconButton(
+                  DesktopToolIcon(
                     tooltip: '刷新',
-                    iconSize: 18,
                     onPressed: _connected ? () => unawaited(_tick()) : null,
-                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+                    icon: Icons.refresh_rounded,
                   ),
               ],
             ),

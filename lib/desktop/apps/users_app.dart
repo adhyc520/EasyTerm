@@ -12,6 +12,7 @@ import '../../widgets/destructive_action_dialog.dart';
 import '../../widgets/remote_state_view.dart';
 import '../../widgets/sudo_password_dialog.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 用户与组：当前登录、最近登录、passwd 账户列表。
 class UsersApp extends StatefulWidget {
@@ -264,18 +265,10 @@ class _UsersAppState extends State<UsersApp>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+        DesktopAppToolbar(
           child: Row(
             children: [
-              Text(
-                '用户与组',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: wb.primaryText,
-                ),
-              ),
+              const DesktopAppTitle('用户与组'),
               const Spacer(),
               if (_busy)
                 const Padding(
@@ -286,27 +279,25 @@ class _UsersAppState extends State<UsersApp>
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 ),
-              IconButton(
+              DesktopToolIcon(
                 tooltip: '刷新',
                 onPressed: _connected && !_loading && !_busy
                     ? () => unawaited(_reload())
                     : null,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                icon: Icons.refresh_rounded,
               ),
             ],
           ),
         ),
-        TabBar(
+        desktopTabBar(
           controller: _tabs,
-          labelColor: wb.accentBlue,
-          unselectedLabelColor: wb.textMuted,
-          indicatorColor: wb.accentBlue,
+          wb: wb,
           tabs: [
             Tab(
               text: '在线 (${snap?.loggedIn.length ?? 0})',
             ),
-            Tab(text: '最近登录'),
-            Tab(text: '账户'),
+            const Tab(text: '最近登录'),
+            const Tab(text: '账户'),
           ],
         ),
         if (_error != null)

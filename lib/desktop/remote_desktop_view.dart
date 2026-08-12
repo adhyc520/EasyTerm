@@ -35,6 +35,7 @@ import 'desktop_taskbar.dart';
 import 'desktop_widget_manager.dart';
 import 'desktop_window_frame.dart';
 import 'desktop_window_manager.dart';
+import 'widgets/desktop_ui.dart';
 
 /// 远程可视化桌面表面：背景 + 窗口层 + 任务栏。
 class RemoteDesktopView extends StatefulWidget {
@@ -439,7 +440,6 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                   listenable: wm.desktopSettings,
                   builder: (context, _) {
                     return _DesktopBackground(
-                      showGrid: wm.desktopSettings.showGrid,
                       wallpaper: wm.desktopSettings.wallpaper,
                       canOpen: wm.canOpen,
                       onOpenApp: (type) {
@@ -609,13 +609,12 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                   child: Builder(
                     builder: (context) {
                       final l = AppLocalizations.of(context);
-                      return Material(
-                        elevation: 6,
-                        color: wb.panelElevated,
-                        borderRadius: BorderRadius.circular(10),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-                          child: Row(
+                      return DesktopGlass(
+                        elevated: true,
+                        opacity: 0.88,
+                        borderRadius: DesktopUi.rMd,
+                        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                        child: Row(
                             children: [
                               Icon(
                                 Icons.cloud_off_rounded,
@@ -686,7 +685,6 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                               ),
                             ],
                           ),
-                        ),
                       );
                     },
                   ),
@@ -897,14 +895,12 @@ class _DesktopBackground extends StatelessWidget {
     required this.onOpenApp,
     required this.onContextMenu,
     required this.canOpen,
-    this.showGrid = true,
     this.wallpaper = '',
   });
 
   final void Function(DesktopAppType type) onOpenApp;
   final void Function(Offset globalPosition) onContextMenu;
   final bool Function(DesktopAppType type) canOpen;
-  final bool showGrid;
   final String wallpaper;
 
   static const _shortcuts = <(DesktopAppType, IconData, String)>[
@@ -928,30 +924,38 @@ class _DesktopBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wb = context.wb;
-    Decoration decoration;
-    if (wallpaper.isNotEmpty &&
-        (wallpaper.startsWith('file:') || wallpaper.startsWith('/'))) {
-      final path = wallpaper.startsWith('file:')
-          ? Uri.parse(wallpaper).toFilePath()
-          : wallpaper;
+    final imagePath = desktopWallpaperImagePath(wallpaper);
+    late final Decoration decoration;
+    if (imagePath != null) {
       decoration = BoxDecoration(
         image: DecorationImage(
-          image: FileImage(File(path)),
+          image: FileImage(File(imagePath)),
           fit: BoxFit.cover,
         ),
       );
     } else {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final preset = desktopWallpaperPresetColors(wallpaper);
+      final colors = preset ??
+          (isDark
+              ? const [
+                  Color(0xFF0B1220),
+                  Color(0xFF152238),
+                  Color(0xFF1A3350),
+                  Color(0xFF0E1A2A),
+                ]
+              : const [
+                  Color(0xFFDCE6F5),
+                  Color(0xFFC5D5EC),
+                  Color(0xFFB8C8E0),
+                  Color(0xFFE8EEF7),
+                ]);
       decoration = BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            wb.bg,
-            Color.lerp(wb.bg, wb.panel, 0.55)!,
-            Color.lerp(wb.panel, const Color(0xFF1A2332), 0.35)!,
-          ],
-          stops: const [0.0, 0.55, 1.0],
+          colors: colors,
+          stops: colors.length >= 4 ? const [0.0, 0.35, 0.7, 1.0] : null,
         ),
       );
     }
@@ -961,12 +965,7 @@ class _DesktopBackground extends StatelessWidget {
       onSecondaryTapUp: (d) => onContextMenu(d.globalPosition),
       child: DecoratedBox(
         decoration: decoration,
-        child: showGrid
-            ? CustomPaint(
-                painter: _GridPainter(color: wb.border.withValues(alpha: 0.22)),
-                child: _shortcutLayer(),
-              )
-            : _shortcutLayer(),
+        child: _shortcutLayer(),
       ),
     );
   }
@@ -975,7 +974,7 @@ class _DesktopBackground extends StatelessWidget {
     return Align(
       alignment: Alignment.topLeft,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 64),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 56),
         child: Wrap(
           direction: Axis.vertical,
           spacing: 12,
@@ -1015,17 +1014,29 @@ class _DesktopShortcutIcon extends StatelessWidget {
       child: InkWell(
         onTap: onOpen,
         onDoubleTap: onOpen,
-        borderRadius: BorderRadius.circular(10),
-        hoverColor: wb.accentBlue.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(14),
+        hoverColor: Colors.white.withValues(alpha: 0.08),
         child: SizedBox(
-          width: 76,
+          width: 80,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 32, color: wb.primaryText),
-                const SizedBox(height: 6),
+                SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: DesktopGlass(
+                    opacity: 0.28,
+                    sigma: 22,
+                    shadow: false,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Center(
+                      child: Icon(icon, size: 26, color: wb.accentBlue),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Text(
                   label,
                   textAlign: TextAlign.center,
@@ -1034,7 +1045,14 @@ class _DesktopShortcutIcon extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: wb.secondaryText,
+                    letterSpacing: -0.1,
+                    color: wb.primaryText,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        blurRadius: 6,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1044,28 +1062,4 @@ class _DesktopShortcutIcon extends StatelessWidget {
       ),
     );
   }
-}
-
-class _GridPainter extends CustomPainter {
-  _GridPainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1;
-    const step = 48.0;
-    for (var x = 0.0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (var y = 0.0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _GridPainter oldDelegate) =>
-      oldDelegate.color != color;
 }

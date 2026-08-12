@@ -1,10 +1,13 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../theme/workbench_theme.dart';
 import 'desktop_app_registry.dart';
 import 'desktop_window_manager.dart';
+import 'widgets/desktop_ui.dart';
 
-/// 窗口 Exposé：缩略卡片概览（标题 + 应用图标），点击聚焦并关闭。
+/// Mission Control 风格窗口概览。
 class DesktopExposeOverlay extends StatelessWidget {
   const DesktopExposeOverlay({
     super.key,
@@ -26,91 +29,172 @@ class DesktopExposeOverlay extends StatelessWidget {
         .toList();
 
     return Material(
-      color: Colors.black.withValues(alpha: 0.55),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
-              child: Row(
-                children: [
-                  Text(
-                    '窗口概览',
-                    style: TextStyle(
-                      color: wb.primaryText,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: onClose,
-                    icon: Icon(Icons.close, color: wb.textMuted),
-                  ),
-                ],
+      color: Colors.transparent,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            onTap: onClose,
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.42),
               ),
             ),
-            Expanded(
-              child: windows.isEmpty
-                  ? Center(
-                      child: Text(
-                        '当前工作区没有打开的窗口',
-                        style: TextStyle(color: wb.textMuted),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 16, 8),
+                  child: Row(
+                    children: [
+                      Text(
+                        '调度中心',
+                        style: TextStyle(
+                          color: wb.primaryText,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.4,
+                        ),
                       ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.all(20),
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 240,
-                        mainAxisSpacing: 16,
-                        crossAxisSpacing: 16,
-                        childAspectRatio: 1.35,
+                      const Spacer(),
+                      DesktopToolIcon(
+                        icon: Icons.close_rounded,
+                        tooltip: '关闭',
+                        onPressed: onClose,
                       ),
-                      itemCount: windows.length,
-                      itemBuilder: (context, i) {
-                        final w = windows[i];
-                        final meta = metaFor(w.type);
-                        return _ExposeCard(
-                          title: w.title,
-                          subtitle:
-                              '${w.rect.width.round()}×${w.rect.height.round()}',
-                          icon: meta.icon,
-                          accent: wb.accentBlue,
-                          onTap: () {
-                            wm.focus(w.id);
-                            if (w.state == WindowState.minimized) {
-                              wm.restore(w.id);
-                            }
-                            onClose();
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: windows.isEmpty
+                      ? Center(
+                          child: Text(
+                            '当前桌面没有打开的窗口',
+                            style: TextStyle(
+                              color: wb.textMuted,
+                              fontSize: 15,
+                            ),
+                          ),
+                        )
+                      : GridView.builder(
+                          padding: const EdgeInsets.fromLTRB(28, 12, 28, 12),
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 280,
+                            mainAxisSpacing: 20,
+                            crossAxisSpacing: 20,
+                            childAspectRatio: 1.4,
+                          ),
+                          itemCount: windows.length,
+                          itemBuilder: (context, i) {
+                            final w = windows[i];
+                            final meta = metaFor(w.type);
+                            return _ExposeCard(
+                              title: w.title,
+                              subtitle: meta.label,
+                              icon: meta.icon,
+                              focused: w.focused,
+                              onTap: () {
+                                wm.focus(w.id);
+                                if (w.state == WindowState.minimized) {
+                                  wm.restore(w.id);
+                                }
+                                onClose();
+                              },
+                            );
                           },
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                  child: DesktopGlass(
+                    opacity: 0.7,
+                    borderRadius: BorderRadius.circular(18),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: ListenableBuilder(
+                      listenable: wm,
+                      builder: (context, _) {
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0; i < wm.workspaces.length; i++) ...[
+                              if (i > 0) const SizedBox(width: 6),
+                              _SpaceChip(
+                                label: '桌面 ${i + 1}',
+                                selected: i == wm.activeWorkspaceIndex,
+                                count: wm.workspaces[i].windows.length,
+                                onTap: () => wm.switchWorkspace(i),
+                              ),
+                            ],
+                          ],
                         );
                       },
                     ),
+                  ),
+                ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: ListenableBuilder(
-                listenable: wm,
-                builder: (context, _) {
-                  return Wrap(
-                    spacing: 8,
-                    children: [
-                      for (var i = 0; i < wm.workspaces.length; i++)
-                        ChoiceChip(
-                          label: Text('桌面 ${i + 1}'),
-                          selected: i == wm.activeWorkspaceIndex,
-                          onSelected: (_) {
-                            wm.switchWorkspace(i);
-                          },
-                        ),
-                    ],
-                  );
-                },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpaceChip extends StatelessWidget {
+  const _SpaceChip({
+    required this.label,
+    required this.selected,
+    required this.count,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return Material(
+      color: selected
+          ? wb.accentBlue.withValues(alpha: 0.2)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(DesktopUi.radiusPill),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(DesktopUi.radiusPill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? wb.accentBlue : wb.secondaryText,
+                ),
               ),
-            ),
-          ],
+              if (count > 0) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: wb.textMuted,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -122,14 +206,14 @@ class _ExposeCard extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.icon,
-    required this.accent,
+    required this.focused,
     required this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
-  final Color accent;
+  final bool focused;
   final VoidCallback onTap;
 
   @override
@@ -147,46 +231,55 @@ class _ExposeCardState extends State<_ExposeCard> {
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          decoration: BoxDecoration(
-            color: wb.panel.withValues(alpha: _hover ? 0.95 : 0.82),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _hover ? widget.accent : wb.border,
-              width: _hover ? 2 : 1,
+        child: AnimatedScale(
+          scale: _hover ? 1.03 : 1.0,
+          duration: DesktopUi.fast,
+          curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: DesktopUi.fast,
+            decoration: BoxDecoration(
+              color: wb.panel.withValues(alpha: _hover ? 0.95 : 0.8),
+              borderRadius: DesktopUi.rMd,
+              border: Border.all(
+                color: widget.focused || _hover
+                    ? wb.accentBlue.withValues(alpha: 0.7)
+                    : wb.border.withValues(alpha: 0.65),
+                width: widget.focused || _hover ? 1.5 : 1,
+              ),
+              boxShadow: DesktopUi.softShadow(elevated: _hover),
             ),
-            boxShadow: _hover
-                ? [
-                    BoxShadow(
-                      color: widget.accent.withValues(alpha: 0.25),
-                      blurRadius: 16,
-                    ),
-                  ]
-                : null,
-          ),
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(widget.icon, size: 28, color: widget.accent),
-              const Spacer(),
-              Text(
-                widget.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: wb.primaryText,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: wb.accentBlue.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(widget.icon, size: 22, color: wb.accentBlue),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                widget.subtitle,
-                style: TextStyle(color: wb.textMuted, fontSize: 11),
-              ),
-            ],
+                const Spacer(),
+                Text(
+                  widget.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: wb.primaryText,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.subtitle,
+                  style: TextStyle(color: wb.textMuted, fontSize: 11),
+                ),
+              ],
+            ),
           ),
         ),
       ),

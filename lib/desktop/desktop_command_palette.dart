@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui';
 
 import '../services/terminal_session_controller.dart';
 import '../services/remote_exec_capable.dart';
@@ -9,6 +10,7 @@ import '../theme/workbench_theme.dart';
 import '../widgets/desktop_settings_dialog.dart';
 import '../widgets/desktop_shortcuts_cheatsheet.dart';
 import 'desktop_window_manager.dart';
+import 'widgets/desktop_ui.dart';
 
 /// 桌面命令面板：⌘/Ctrl+Shift+P 唤起，模糊搜索执行动作。
 class DesktopCommandPalette extends StatefulWidget {
@@ -426,110 +428,130 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
   Widget build(BuildContext context) {
     final wb = context.wb;
     return Material(
-      color: Colors.black.withValues(alpha: 0.35),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onClose,
-        child: Center(
-          child: GestureDetector(
-            onTap: () {},
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520, maxHeight: 420),
-              child: Material(
-                color: wb.panelElevated,
-                elevation: 12,
-                borderRadius: BorderRadius.circular(12),
-                child: Focus(
-                  focusNode: _focus,
-                  onKeyEvent: _onKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                        child: TextField(
-                          controller: _query,
-                          autofocus: true,
-                          style: TextStyle(color: wb.primaryText),
-                          decoration: InputDecoration(
-                            hintText: '搜索命令…',
-                            hintStyle: TextStyle(color: wb.textMuted),
-                            prefixIcon: Icon(
-                              Icons.search_rounded,
-                              color: wb.textMuted,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            isDense: true,
-                          ),
-                        ),
-                      ),
-                      Flexible(
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _filtered.length,
-                          itemBuilder: (context, i) {
-                            final c = _filtered[i];
-                            final sel = i == _selected;
-                            return ListTile(
-                              dense: true,
-                              selected: sel,
-                              selectedTileColor:
-                                  wb.accentBlue.withValues(alpha: 0.18),
-                              leading: Icon(c.icon, size: 18, color: wb.textMuted),
-                              title: Text(
-                                c.title,
-                                style: TextStyle(color: wb.primaryText),
-                              ),
-                              subtitle: Text(
-                                c.category +
-                                    (c.subtitle == null
-                                        ? ''
-                                        : ' · ${c.subtitle}'),
-                                style: TextStyle(
-                                  color: wb.textMuted,
-                                  fontSize: 11,
-                                ),
-                              ),
-                              trailing: c.shortcut == null
-                                  ? null
-                                  : Text(
-                                      c.shortcut!,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                        color: wb.textMuted,
-                                      ),
-                                    ),
-                              onTap: () {
-                                _selected = i;
-                                _runSelected();
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            '↑↓ 选择 · Enter 执行 · Esc 关闭',
+      color: Colors.transparent,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onClose,
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+          Center(
+            child: GestureDetector(
+              onTap: () {},
+              child: ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: 560, maxHeight: 460),
+                child: DesktopGlass(
+                  elevated: true,
+                  opacity: 0.88,
+                  sigma: 36,
+                  borderRadius: DesktopUi.rLg,
+                  child: Focus(
+                    focusNode: _focus,
+                    onKeyEvent: _onKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                          child: TextField(
+                            controller: _query,
+                            autofocus: true,
                             style: TextStyle(
-                              fontSize: 11,
-                              color: wb.textMuted,
+                              color: wb.primaryText,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: '搜索命令…',
+                              hintStyle: TextStyle(color: wb.textMuted),
+                              prefixIcon: Icon(
+                                Icons.search_rounded,
+                                color: wb.textMuted,
+                              ),
+                              filled: true,
+                              fillColor:
+                                  wb.bg.withValues(alpha: 0.45),
+                              border: OutlineInputBorder(
+                                borderRadius: DesktopUi.rSm,
+                                borderSide: BorderSide.none,
+                              ),
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        Flexible(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            itemCount: _filtered.length,
+                            itemBuilder: (context, i) {
+                              final c = _filtered[i];
+                              final sel = i == _selected;
+                              return DesktopListRow(
+                                selected: sel,
+                                leading: Icon(
+                                  c.icon,
+                                  size: 18,
+                                  color: sel ? wb.accentBlue : wb.textMuted,
+                                ),
+                                title: Text(c.title),
+                                subtitle: Text(
+                                  c.category +
+                                      (c.subtitle == null
+                                          ? ''
+                                          : ' · ${c.subtitle}'),
+                                ),
+                                trailing: c.shortcut == null
+                                    ? null
+                                    : Text(
+                                        c.shortcut!,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontFamily: 'monospace',
+                                          color: wb.textMuted,
+                                        ),
+                                      ),
+                                onTap: () {
+                                  _selected = i;
+                                  _runSelected();
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '↑↓ 选择 · Enter 执行 · Esc 关闭',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: wb.textMuted,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -11,6 +11,7 @@ import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 远端日志查看器：journal / 事件日志 / 文件 tail；支持实时跟随。
 class LogsApp extends StatefulWidget {
@@ -454,8 +455,8 @@ static const _lineChoices = [100, 300, 1000, 2000];
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 8, 6),
+          DesktopAppToolbar(
+            height: 48,
             child: Row(
               children: [
                 Expanded(
@@ -469,13 +470,7 @@ static const _lineChoices = [100, 300, 1000, 2000];
                           color: wb.accentBlue,
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          '日志',
-                          style: TextStyle(
-                            color: wb.primaryText,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        const DesktopAppTitle('日志'),
                         const SizedBox(width: 12),
                         SegmentedButton<RemoteLogSource>(
                           style: const ButtonStyle(
@@ -577,74 +572,49 @@ static const _lineChoices = [100, 300, 1000, 2000];
                   ),
                 ),
                 if (!isWin)
-                  Tooltip(
-                    message: _liveFollow ? '切换为快照轮询' : '切换为实时跟随',
-                    child: IconButton(
-                      iconSize: 18,
-                      onPressed: () {
-                        setState(() {
-                          _liveFollow = !_liveFollow;
-                          _wantLive = _liveFollow;
-                        });
-                        unawaited(_restartMode());
-                      },
-                      icon: Icon(
-                        _liveFollow
-                            ? Icons.stream_rounded
-                            : Icons.photo_camera_outlined,
-                        color: _liveFollow ? wb.accentBlue : wb.textMuted,
-                      ),
-                    ),
-                  ),
-                Tooltip(
-                  message: _autoRefresh ? '暂停' : '继续',
-                  child: IconButton(
-                    iconSize: 18,
+                  DesktopToolIcon(
+                    tooltip: _liveFollow ? '切换为快照轮询' : '切换为实时跟随',
                     onPressed: () {
-                      setState(() => _autoRefresh = !_autoRefresh);
+                      setState(() {
+                        _liveFollow = !_liveFollow;
+                        _wantLive = _liveFollow;
+                      });
                       unawaited(_restartMode());
                     },
-                    icon: Icon(
-                      _autoRefresh
-                          ? Icons.pause_circle_outline_rounded
-                          : Icons.play_circle_outline_rounded,
-                      color: wb.textMuted,
-                    ),
+                    icon: _liveFollow
+                        ? Icons.stream_rounded
+                        : Icons.photo_camera_outlined,
+                    active: _liveFollow,
                   ),
+                DesktopToolIcon(
+                  tooltip: _autoRefresh ? '暂停' : '继续',
+                  onPressed: () {
+                    setState(() => _autoRefresh = !_autoRefresh);
+                    unawaited(_restartMode());
+                  },
+                  icon: _autoRefresh
+                      ? Icons.pause_circle_outline_rounded
+                      : Icons.play_circle_outline_rounded,
                 ),
-                Tooltip(
-                  message: _wrap ? '取消换行' : '自动换行',
-                  child: IconButton(
-                    iconSize: 18,
-                    onPressed: () => setState(() => _wrap = !_wrap),
-                    icon: Icon(
-                      _wrap
-                          ? Icons.wrap_text_rounded
-                          : Icons.notes_rounded,
-                      color: _wrap ? wb.accentBlue : wb.textMuted,
-                    ),
-                  ),
+                DesktopToolIcon(
+                  tooltip: _wrap ? '取消换行' : '自动换行',
+                  onPressed: () => setState(() => _wrap = !_wrap),
+                  icon: _wrap
+                      ? Icons.wrap_text_rounded
+                      : Icons.notes_rounded,
+                  active: _wrap,
                 ),
-                Tooltip(
-                  message: '清空显示',
-                  child: IconButton(
-                    iconSize: 18,
-                    onPressed: () => _clearDisplayed(),
-                    icon: Icon(Icons.clear_all_rounded, color: wb.textMuted),
-                  ),
+                DesktopToolIcon(
+                  tooltip: '清空显示',
+                  onPressed: () => _clearDisplayed(),
+                  icon: Icons.clear_all_rounded,
                 ),
-                Tooltip(
-                  message: '跳到时间',
-                  child: IconButton(
-                    iconSize: 18,
-                    onPressed: lines.isEmpty
-                        ? null
-                        : () => unawaited(_jumpToTime()),
-                    icon: Icon(
-                      Icons.schedule_rounded,
-                      color: wb.textMuted,
-                    ),
-                  ),
+                DesktopToolIcon(
+                  tooltip: '跳到时间',
+                  onPressed: lines.isEmpty
+                      ? null
+                      : () => unawaited(_jumpToTime()),
+                  icon: Icons.schedule_rounded,
                 ),
                 if (_loading)
                   const Padding(
@@ -656,9 +626,8 @@ static const _lineChoices = [100, 300, 1000, 2000];
                     ),
                   )
                 else
-                  IconButton(
+                  DesktopToolIcon(
                     tooltip: '刷新',
-                    iconSize: 18,
                     onPressed: !_connected
                         ? null
                         : () {
@@ -668,7 +637,7 @@ static const _lineChoices = [100, 300, 1000, 2000];
                               unawaited(_tick());
                             }
                           },
-                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+                    icon: Icons.refresh_rounded,
                   ),
               ],
             ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
@@ -13,8 +14,12 @@ import '../widgets/desktop_settings_dialog.dart';
 import '../widgets/desktop_shortcuts_cheatsheet.dart';
 import 'desktop_app_registry.dart';
 import 'desktop_window_manager.dart';
+import 'widgets/desktop_ui.dart';
 
-/// 底部任务栏：启动器 + 窗口按钮 + 工作区 + 系统托盘。
+/// 底部 Dock：浮动毛玻璃条 + 启动器 / 窗口图标 / 工作区 / 托盘。
+///
+/// Dock 固定占满托盘左侧区域（宽度不随窗口数量变化）；托盘贴右。
+/// 极窄时托盘进入紧凑模式，再窄则 Dock+托盘合成一条。
 class DesktopTaskbar extends StatelessWidget {
   const DesktopTaskbar({
     super.key,
@@ -25,44 +30,150 @@ class DesktopTaskbar extends StatelessWidget {
   final DesktopWindowManager wm;
   final TerminalSessionController controller;
 
+  static const _gap = 8.0;
+  static const _compactTrayBelow = 560.0;
+  static const _mergeBelow = 420.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: DesktopWindowManager.taskbarH,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final w = constraints.maxWidth;
+            final compactTray = w < _compactTrayBelow;
+            final merge = w < _mergeBelow;
+
+            final tray = DesktopGlass(
+              elevated: true,
+              opacity: 0.38,
+              sigma: 36,
+              borderRadius: BorderRadius.circular(14),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: _TrayArea(
+                wm: wm,
+                controller: controller,
+                compact: compactTray,
+              ),
+            );
+
+            // 极窄：合成一条，避免两块玻璃争宽度
+            if (merge) {
+              return Align(
+                alignment: Alignment.bottomCenter,
+                child: SizedBox(
+                  width: w,
+                  child: DesktopGlass(
+                    elevated: true,
+                    opacity: 0.38,
+                    sigma: 36,
+                    borderRadius: BorderRadius.circular(16),
+                    padding: const EdgeInsets.fromLTRB(5, 3, 5, 3),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _DockStrip(wm: wm, showWorkspaces: false),
+                        ),
+                        const SizedBox(width: 4),
+                        _DockDivider(),
+                        const SizedBox(width: 4),
+                        _TrayArea(
+                          wm: wm,
+                          controller: controller,
+                          compact: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            // 常规：Dock 固定占满左侧，托盘贴右
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: DesktopGlass(
+                    elevated: true,
+                    opacity: 0.38,
+                    sigma: 36,
+                    borderRadius: BorderRadius.circular(16),
+                    padding: const EdgeInsets.fromLTRB(5, 3, 5, 3),
+                    child: _DockStrip(
+                      wm: wm,
+                      showWorkspaces: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: _gap),
+                tray,
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _DockStrip extends StatelessWidget {
+  const _DockStrip({
+    required this.wm,
+    this.showWorkspaces = true,
+  });
+
+  final DesktopWindowManager wm;
+  final bool showWorkspaces;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: wm,
+      builder: (context, _) {
+        final groups = _groupTaskbarWindows(wm.windows);
+        return Row(
+          children: [
+            _LauncherButton(wm: wm),
+            const SizedBox(width: 2),
+            _DockDivider(),
+            const SizedBox(width: 2),
+            Expanded(
+              child: groups.isEmpty
+                  ? const SizedBox(height: 32)
+                  : _TaskbarWindowStrip(
+                      itemCount: groups.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 1),
+                      itemBuilder: (context, i) {
+                        final g = groups[i];
+                        return _TaskbarWindowButton(group: g, wm: wm);
+                      },
+                    ),
+            ),
+            if (showWorkspaces) ...[
+              const SizedBox(width: 2),
+              _DockDivider(),
+              const SizedBox(width: 2),
+              _WorkspaceIndicator(wm: wm),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _DockDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    return Material(
-      color: wb.topBar,
-      child: Container(
-        height: DesktopWindowManager.taskbarH,
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: wb.border)),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          children: [
-            _LauncherButton(wm: wm),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ListenableBuilder(
-                listenable: wm,
-                builder: (context, _) {
-                  final groups = _groupTaskbarWindows(wm.windows);
-                  return _TaskbarWindowStrip(
-                    itemCount: groups.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 4),
-                    itemBuilder: (context, i) {
-                      final g = groups[i];
-                      return _TaskbarWindowButton(group: g, wm: wm);
-                    },
-                  );
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            _WorkspaceIndicator(wm: wm),
-            const SizedBox(width: 8),
-            _TrayArea(wm: wm, controller: controller),
-          ],
-        ),
-      ),
+    return Container(
+      width: 1,
+      height: 20,
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+      color: wb.border.withValues(alpha: 0.7),
     );
   }
 }
@@ -135,9 +246,14 @@ class _WorkspaceIndicator extends StatelessWidget {
 }
 
 class _TrayArea extends StatefulWidget {
-  const _TrayArea({required this.wm, required this.controller});
+  const _TrayArea({
+    required this.wm,
+    required this.controller,
+    this.compact = false,
+  });
   final DesktopWindowManager wm;
   final TerminalSessionController controller;
+  final bool compact;
 
   @override
   State<_TrayArea> createState() => _TrayAreaState();
@@ -267,7 +383,9 @@ class _TrayAreaState extends State<_TrayArea> {
             ),
           ),
         ),
-        if (ds.trayShowMetrics && (cpu != null || mem != null))
+        if (!widget.compact &&
+            ds.trayShowMetrics &&
+            (cpu != null || mem != null))
           Padding(
             padding: const EdgeInsets.only(left: 4),
             child: Text(
@@ -278,16 +396,30 @@ class _TrayAreaState extends State<_TrayArea> {
               style: TextStyle(fontSize: 11, color: wb.textMuted),
             ),
           ),
-        if (ds.trayShowClock)
+        if (ds.trayShowClock && (!widget.compact || !ds.trayShowMetrics))
           Padding(
-            padding: const EdgeInsets.only(left: 8),
+            padding: EdgeInsets.only(left: widget.compact ? 4 : 8),
             child: Text(
               _clock,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: widget.compact ? 11.0 : 12.0,
                 color: wb.secondaryText,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
+            ),
+          ),
+        if (widget.compact &&
+            ds.trayShowMetrics &&
+            (cpu != null || mem != null))
+          Tooltip(
+            message: [
+              if (cpu != null) 'CPU ${(cpu * 100).round()}%',
+              if (mem != null) 'MEM ${(mem * 100).round()}%',
+              if (ds.trayShowClock) _clock,
+            ].join(' · '),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Icon(Icons.speed_rounded, size: 14, color: wb.textMuted),
             ),
           ),
         ListenableBuilder(
@@ -382,157 +514,378 @@ class _TrayAreaState extends State<_TrayArea> {
 
 enum _TrayAction { settings, shortcuts, lockSudo }
 
+/// Windows 风格启动菜单：贴任务栏上方的紧凑网格，避免纵向长列表过高。
 class _LauncherButton extends StatelessWidget {
   const _LauncherButton({required this.wm});
 
   final DesktopWindowManager wm;
 
+  static const double _menuWidth = 360;
+  static const double _gapAboveButton = 10;
+
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    return PopupMenuButton<_LaunchAction>(
-      tooltip: '启动器',
-      offset: const Offset(0, -8),
-      position: PopupMenuPosition.over,
-      color: wb.panelElevated,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: wb.border),
+    return _DockIconButton(
+      onTap: () => unawaited(_openStartMenu(context)),
+      child: _DockIconShell(
+        tooltip: '启动器',
+        child: Icon(Icons.grid_view_rounded, size: 18, color: wb.primaryText),
       ),
-      onSelected: (action) {
-        switch (action) {
-          case _LaunchAction.terminal:
-            wm.openTerminal();
-          case _LaunchAction.files:
-            wm.open(DesktopAppType.files);
-          case _LaunchAction.browser:
-            wm.open(DesktopAppType.browser);
-          case _LaunchAction.monitor:
-            wm.open(DesktopAppType.monitor);
-          case _LaunchAction.tasks:
-            wm.open(DesktopAppType.tasks);
-          case _LaunchAction.logs:
-            wm.open(DesktopAppType.logs);
-          case _LaunchAction.containers:
-            wm.open(DesktopAppType.containers);
-          case _LaunchAction.diskUsage:
-            wm.open(DesktopAppType.diskUsage);
-          case _LaunchAction.transfers:
-            wm.open(DesktopAppType.transfers);
-          case _LaunchAction.editor:
-            wm.open(DesktopAppType.files);
-          case _LaunchAction.forwards:
-            wm.open(DesktopAppType.forwards);
-          case _LaunchAction.runCommand:
-            wm.open(DesktopAppType.runCommand);
-          case _LaunchAction.cron:
-            wm.open(DesktopAppType.cron);
-          case _LaunchAction.users:
-            wm.open(DesktopAppType.users);
-          case _LaunchAction.packages:
-            wm.open(DesktopAppType.packages);
-          case _LaunchAction.firewall:
-            wm.open(DesktopAppType.firewall);
-          case _LaunchAction.settings:
-            showDesktopSettingsDialog(context, wm: wm);
-        }
-      },
-      itemBuilder: (context) => [
-        for (final app in appsForCapabilities(wm.controller.capabilities))
-          if (app.id != DesktopAppType.editor)
-            _item(
-              context,
-              value: _launchActionFor(app.id),
-              icon: app.icon,
-              label: app.label,
+    );
+  }
+
+  Future<void> _openStartMenu(BuildContext context) async {
+    final box = context.findRenderObject() as RenderBox?;
+    final overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlayBox == null) return;
+
+    final buttonTopLeft = box.localToGlobal(Offset.zero, ancestor: overlayBox);
+    final buttonRect = buttonTopLeft & box.size;
+    final screen = overlayBox.size;
+
+    final apps = appsForCapabilities(wm.controller.capabilities)
+        .where((a) => a.id != DesktopAppType.editor)
+        .toList();
+
+    final selected = await showGeneralDialog<_StartMenuResult>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '关闭启动菜单',
+      barrierColor: Colors.black.withValues(alpha: 0.18),
+      transitionDuration: DesktopUi.fast,
+      pageBuilder: (ctx, anim, _) {
+        final maxLeft = math.max(8.0, screen.width - _menuWidth - 8);
+        // 左对齐启动按钮，超出右缘时回拉。
+        final left = buttonRect.left.clamp(8.0, maxLeft);
+        final bottom = screen.height - buttonRect.top + _gapAboveButton;
+
+        return Stack(
+          children: [
+            Positioned(
+              left: left,
+              bottom: bottom,
+              width: _menuWidth,
+              child: FadeTransition(
+                opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.96, end: 1).animate(
+                    CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+                  ),
+                  alignment: Alignment.bottomLeft,
+                  child: _StartMenuPanel(
+                    apps: apps,
+                    onOpenApp: (id) =>
+                        Navigator.of(ctx).pop(_StartMenuResult.app(id)),
+                    onOpenSettings: () =>
+                        Navigator.of(ctx).pop(const _StartMenuResult.settings()),
+                  ),
+                ),
+              ),
             ),
-        if (wm.canOpen(DesktopAppType.editor))
-          _item(
-            context,
-            value: _LaunchAction.editor,
-            icon: Icons.folder_open_rounded,
-            label: '打开文件…',
-          ),
-        if (wm.canOpen(DesktopAppType.editor)) const PopupMenuDivider(),
-        _item(
-          context,
-          value: _LaunchAction.settings,
-          icon: Icons.settings_rounded,
-          label: '桌面设置',
-        ),
-      ],
-      child: Container(
-        width: 36,
-        height: 32,
-        decoration: BoxDecoration(
-          color: wb.panelElevated,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: wb.border),
-        ),
-        child: Icon(Icons.apps_rounded, size: 18, color: wb.primaryText),
-      ),
+          ],
+        );
+      },
+      transitionBuilder: (ctx, anim, _, child) => child,
     );
-  }
 
-  PopupMenuItem<_LaunchAction> _item(
-    BuildContext context, {
-    required _LaunchAction value,
-    required IconData icon,
-    required String label,
-  }) {
-    final wb = context.wb;
-    return PopupMenuItem<_LaunchAction>(
-      value: value,
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: wb.primaryText),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(label, style: TextStyle(color: wb.primaryText)),
-          ),
-        ],
-      ),
-    );
+    if (!context.mounted || selected == null) return;
+    if (selected.isSettings) {
+      showDesktopSettingsDialog(context, wm: wm);
+      return;
+    }
+    final id = selected.appId;
+    if (id == null) return;
+    if (id == DesktopAppType.terminal) {
+      wm.openTerminal();
+    } else {
+      wm.open(id);
+    }
   }
-
-  static _LaunchAction _launchActionFor(DesktopAppType id) => switch (id) {
-        DesktopAppType.terminal => _LaunchAction.terminal,
-        DesktopAppType.files => _LaunchAction.files,
-        DesktopAppType.browser => _LaunchAction.browser,
-        DesktopAppType.monitor => _LaunchAction.monitor,
-        DesktopAppType.tasks => _LaunchAction.tasks,
-        DesktopAppType.logs => _LaunchAction.logs,
-        DesktopAppType.containers => _LaunchAction.containers,
-        DesktopAppType.diskUsage => _LaunchAction.diskUsage,
-        DesktopAppType.transfers => _LaunchAction.transfers,
-        DesktopAppType.editor => _LaunchAction.editor,
-        DesktopAppType.forwards => _LaunchAction.forwards,
-        DesktopAppType.runCommand => _LaunchAction.runCommand,
-        DesktopAppType.cron => _LaunchAction.cron,
-        DesktopAppType.users => _LaunchAction.users,
-        DesktopAppType.packages => _LaunchAction.packages,
-        DesktopAppType.firewall => _LaunchAction.firewall,
-      };
 }
 
-enum _LaunchAction {
-  terminal,
-  files,
-  browser,
-  monitor,
-  tasks,
-  logs,
-  containers,
-  diskUsage,
-  transfers,
-  editor,
-  forwards,
-  runCommand,
-  cron,
-  users,
-  packages,
-  firewall,
-  settings,
+class _StartMenuResult {
+  const _StartMenuResult._({this.appId, this.isSettings = false});
+  const _StartMenuResult.settings() : this._(isSettings: true);
+  const _StartMenuResult.app(DesktopAppType id) : this._(appId: id);
+
+  final DesktopAppType? appId;
+  final bool isSettings;
+}
+
+class _StartMenuPanel extends StatefulWidget {
+  const _StartMenuPanel({
+    required this.apps,
+    required this.onOpenApp,
+    required this.onOpenSettings,
+  });
+
+  final List<AppMeta> apps;
+  final ValueChanged<DesktopAppType> onOpenApp;
+  final VoidCallback onOpenSettings;
+
+  @override
+  State<_StartMenuPanel> createState() => _StartMenuPanelState();
+}
+
+class _StartMenuPanelState extends State<_StartMenuPanel> {
+  final _query = TextEditingController();
+  String _filter = '';
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  List<AppMeta> get _filtered {
+    final q = _filter.trim().toLowerCase();
+    if (q.isEmpty) return widget.apps;
+    return widget.apps.where((a) {
+      if (a.label.toLowerCase().contains(q)) return true;
+      return a.keywords.any((k) => k.toLowerCase().contains(q));
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    final apps = _filtered;
+
+    return Material(
+      type: MaterialType.transparency,
+      child: DesktopGlass(
+        elevated: true,
+        opacity: 0.88,
+        sigma: 36,
+        borderRadius: DesktopUi.rLg,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _StartMenuSearch(
+              controller: _query,
+              onChanged: (v) => setState(() => _filter = v),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '应用',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: wb.textMuted,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 268),
+              child: apps.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Center(
+                        child: Text(
+                          '无匹配应用',
+                          style: TextStyle(fontSize: 13, color: wb.textMuted),
+                        ),
+                      ),
+                    )
+                  : GridView.builder(
+                      shrinkWrap: true,
+                      physics: const ClampingScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        mainAxisSpacing: 4,
+                        crossAxisSpacing: 4,
+                        childAspectRatio: 0.92,
+                      ),
+                      itemCount: apps.length,
+                      itemBuilder: (context, i) {
+                        final app = apps[i];
+                        return _StartMenuTile(
+                          icon: app.icon,
+                          label: app.label,
+                          onTap: () => widget.onOpenApp(app.id),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 8),
+            Divider(height: 1, color: wb.border.withValues(alpha: 0.7)),
+            const SizedBox(height: 6),
+            _StartMenuFooterButton(
+              icon: Icons.settings_rounded,
+              label: '桌面设置',
+              onTap: widget.onOpenSettings,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StartMenuSearch extends StatelessWidget {
+  const _StartMenuSearch({
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      autofocus: true,
+      style: TextStyle(fontSize: 13, color: wb.primaryText),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: '搜索应用',
+        hintStyle: TextStyle(fontSize: 13, color: wb.textMuted),
+        prefixIcon: Icon(Icons.search_rounded, size: 18, color: wb.textMuted),
+        prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        filled: true,
+        fillColor: wb.panel.withValues(alpha: 0.85),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: DesktopUi.rSm,
+          borderSide: BorderSide(color: wb.border.withValues(alpha: 0.7)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: DesktopUi.rSm,
+          borderSide: BorderSide(color: wb.border.withValues(alpha: 0.7)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: DesktopUi.rSm,
+          borderSide: BorderSide(color: wb.accentBlue.withValues(alpha: 0.7)),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartMenuTile extends StatefulWidget {
+  const _StartMenuTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_StartMenuTile> createState() => _StartMenuTileState();
+}
+
+class _StartMenuTileState extends State<_StartMenuTile> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: DesktopUi.fast,
+          decoration: BoxDecoration(
+            color: _hover
+                ? wb.primaryText.withValues(alpha: 0.08)
+                : Colors.transparent,
+            borderRadius: DesktopUi.rSm,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, size: 22, color: wb.primaryText),
+              const SizedBox(height: 6),
+              Text(
+                widget.label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.15,
+                  fontWeight: FontWeight.w500,
+                  color: wb.primaryText,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StartMenuFooterButton extends StatefulWidget {
+  const _StartMenuFooterButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_StartMenuFooterButton> createState() => _StartMenuFooterButtonState();
+}
+
+class _StartMenuFooterButtonState extends State<_StartMenuFooterButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: DesktopUi.fast,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: _hover
+                ? wb.primaryText.withValues(alpha: 0.08)
+                : Colors.transparent,
+            borderRadius: DesktopUi.rSm,
+          ),
+          child: Row(
+            children: [
+              Icon(widget.icon, size: 18, color: wb.primaryText),
+              const SizedBox(width: 10),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: wb.primaryText,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// 按 [DesktopAppType] 分组：保留首次出现顺序。
@@ -582,12 +935,6 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
   Timer? _hoverFocus;
 
   IconData _icon() => iconForApp(widget.group.type);
-
-  String get _label {
-    final g = widget.group;
-    if (g.windows.length == 1) return g.windows.first.title;
-    return metaFor(g.type).label;
-  }
 
   @override
   void dispose() {
@@ -719,7 +1066,10 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
         },
         onDragExited: (_) => _hoverFocus?.cancel(),
         onDragDone: (_) => _hoverFocus?.cancel(),
-        child: InkWell(
+        child: _DockIconButton(
+          active: active,
+          dimmed: allMinimized,
+          badge: count > 1 ? '$count' : (pinned ? '•' : null),
           onTap: _onPrimaryTap,
           onSecondaryTapUp: (d) =>
               unawaited(_showContextMenu(context, d.globalPosition)),
@@ -729,72 +1079,14 @@ class _TaskbarWindowButtonState extends State<_TaskbarWindowButton> {
             final global = box.localToGlobal(Offset(box.size.width / 2, 0));
             unawaited(_showContextMenu(context, global));
           },
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 96, maxWidth: 160),
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: active ? wb.panelElevated : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color:
-                    active ? wb.accentBlue.withValues(alpha: 0.55) : wb.border,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (pinned)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 4),
-                    child:
-                        Icon(Icons.push_pin, size: 10, color: wb.accentBlue),
-                  ),
-                Icon(
-                  _icon(),
-                  size: 14,
-                  color: active ? wb.accentBlue : wb.textMuted,
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    _label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: active ? wb.primaryText : wb.secondaryText,
-                      decoration: allMinimized
-                          ? TextDecoration.lineThrough
-                          : null,
-                      decorationColor: wb.textMuted,
-                    ),
-                  ),
-                ),
-                if (count > 1) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    constraints: const BoxConstraints(minWidth: 16),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    height: 16,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: wb.accentBlue.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '$count',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: wb.accentBlue,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+          child: Icon(
+            _icon(),
+            size: 18,
+            color: active
+                ? wb.accentBlue
+                : allMinimized
+                    ? wb.textMuted.withValues(alpha: 0.55)
+                    : wb.primaryText,
           ),
         ),
       ),
@@ -858,7 +1150,6 @@ class _TaskbarWindowStripState extends State<_TaskbarWindowStrip> {
 
   @override
   Widget build(BuildContext context) {
-    final wb = context.wb;
     return Stack(
       children: [
         ListView.separated(
@@ -879,8 +1170,8 @@ class _TaskbarWindowStripState extends State<_TaskbarWindowStrip> {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      wb.topBar,
-                      wb.topBar.withValues(alpha: 0),
+                      Colors.black.withValues(alpha: 0.18),
+                      Colors.transparent,
                     ],
                   ),
                 ),
@@ -898,8 +1189,8 @@ class _TaskbarWindowStripState extends State<_TaskbarWindowStrip> {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      wb.topBar.withValues(alpha: 0),
-                      wb.topBar,
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.18),
                     ],
                   ),
                 ),
@@ -907,6 +1198,129 @@ class _TaskbarWindowStripState extends State<_TaskbarWindowStrip> {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _DockIconShell extends StatelessWidget {
+  const _DockIconShell({required this.child, this.tooltip});
+
+  final Widget child;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = SizedBox(
+      width: DesktopUi.dockIcon,
+      height: DesktopUi.dockIcon,
+      child: Center(child: child),
+    );
+    if (tooltip == null) return body;
+    return Tooltip(message: tooltip!, child: body);
+  }
+}
+
+class _DockIconButton extends StatefulWidget {
+  const _DockIconButton({
+    required this.child,
+    required this.onTap,
+    this.onSecondaryTapUp,
+    this.onLongPress,
+    this.active = false,
+    this.dimmed = false,
+    this.badge,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+  final void Function(TapUpDetails)? onSecondaryTapUp;
+  final VoidCallback? onLongPress;
+  final bool active;
+  final bool dimmed;
+  final String? badge;
+
+  @override
+  State<_DockIconButton> createState() => _DockIconButtonState();
+}
+
+class _DockIconButtonState extends State<_DockIconButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final wb = context.wb;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onSecondaryTapUp: widget.onSecondaryTapUp,
+        onLongPress: widget.onLongPress,
+        child: AnimatedScale(
+          scale: _hover ? 1.12 : 1.0,
+          duration: DesktopUi.fast,
+          curve: Curves.easeOutCubic,
+          child: SizedBox(
+            width: DesktopUi.dockIcon,
+            height: DesktopUi.dockIcon + 4,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: DesktopUi.fast,
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: widget.active || _hover
+                        ? wb.primaryText.withValues(alpha: 0.08)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Center(child: widget.child),
+                ),
+                if (widget.badge != null)
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 14),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      height: 14,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: wb.accentBlue,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        widget.badge!,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  bottom: 0,
+                  child: AnimatedContainer(
+                    duration: DesktopUi.fast,
+                    width: widget.active ? 6 : (widget.dimmed ? 0 : 4),
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: widget.active
+                          ? wb.primaryText
+                          : wb.textMuted.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

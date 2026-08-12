@@ -15,6 +15,7 @@ import '../../widgets/destructive_action_dialog.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 enum _ProcSort { name, pid, user, cpu, memory }
 
@@ -880,41 +881,16 @@ class _TitleBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 8, 6, 4),
+    return DesktopAppToolbar(
+      height: 44,
       child: Row(
         children: [
-          Icon(Icons.memory_rounded, size: 18, color: wb.accentBlue),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              '任务管理器',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: wb.primaryText,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+          const DesktopAppTitle('任务管理器'),
           const SizedBox(width: 10),
           Flexible(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: wb.panel,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: wb.border),
-                ),
-                child: Text(
-                  osLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: wb.textMuted),
-                ),
-              ),
+              child: DesktopMetaChip(label: osLabel),
             ),
           ),
           const SizedBox(width: 8),
@@ -931,17 +907,19 @@ class _TitleBar extends StatelessWidget {
                   onIntervalChanged: onIntervalChanged,
                 ),
                 if (loading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: wb.accentBlue,
+                    ),
                   )
                 else
-                  IconButton(
+                  DesktopToolIcon(
                     tooltip: '刷新',
-                    iconSize: 18,
                     onPressed: connected ? onRefresh : null,
-                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+                    icon: Icons.refresh_rounded,
                   ),
               ],
             ),

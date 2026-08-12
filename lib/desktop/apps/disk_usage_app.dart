@@ -15,6 +15,7 @@ import '../../widgets/sudo_password_dialog.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 enum _DiskSort { size, name }
 
@@ -489,18 +490,13 @@ static const _maxEntries = 60;
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 4, 4),
+          DesktopAppToolbar(
             child: Row(
               children: [
-                IconButton(
+                DesktopToolIcon(
                   tooltip: '上级',
-                  iconSize: 18,
                   onPressed: parent == null ? null : _goParent,
-                  icon: Icon(
-                    Icons.arrow_upward_rounded,
-                    color: parent == null ? wb.border : wb.textMuted,
-                  ),
+                  icon: Icons.arrow_upward_rounded,
                 ),
                 Icon(Icons.pie_chart_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
@@ -609,11 +605,10 @@ static const _maxEntries = 60;
                     ),
                   ),
                 ] else
-                  IconButton(
+                  DesktopToolIcon(
                     tooltip: '刷新',
-                    iconSize: 18,
                     onPressed: () => unawaited(_load()),
-                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+                    icon: Icons.refresh_rounded,
                   ),
               ],
             ),

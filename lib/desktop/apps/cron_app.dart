@@ -12,6 +12,7 @@ import '../../widgets/destructive_action_dialog.dart';
 import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_scrollable_actions.dart';
+import '../widgets/desktop_ui.dart';
 
 /// 当前用户 crontab：列表预览 + 全文编辑安装。
 class CronApp extends StatefulWidget {
@@ -359,39 +360,17 @@ final _editCtrl = TextEditingController();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+        DesktopAppToolbar(
+          height: 48,
           child: DesktopHScrollRow(
             children: [
-              Text(
-                '计划任务',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: wb.primaryText,
-                ),
-              ),
+              const DesktopAppTitle('计划任务'),
               const SizedBox(width: 8),
-              Text(
-                '当前用户 crontab',
-                style: TextStyle(fontSize: 11, color: wb.textMuted),
-              ),
+              const DesktopMetaChip(label: '当前用户 crontab'),
               const SizedBox(width: 8),
-              Chip(
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                padding: EdgeInsets.zero,
-                label: Text(
-                  _serviceActive ? '运行中' : '已停止',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _serviceActive
-                        ? const Color(0xFF22C55E)
-                        : wb.textMuted,
-                  ),
-                ),
-                backgroundColor: wb.panelElevated,
-                side: BorderSide(color: wb.border),
+              DesktopMetaChip(
+                label: _serviceActive ? '运行中' : '已停止',
+                accent: _serviceActive,
               ),
               const SizedBox(width: 12),
               if (_lastCrontab != null)
@@ -434,7 +413,7 @@ final _editCtrl = TextEditingController();
                       : const Text('安装'),
                 ),
               ],
-              IconButton(
+              DesktopToolIcon(
                 tooltip: 'crontab 语法说明',
                 onPressed: () {
                   final wb = context.wb;
@@ -468,14 +447,14 @@ final _editCtrl = TextEditingController();
                     ),
                   );
                 },
-                icon: const Icon(Icons.help_outline_rounded, size: 18),
+                icon: Icons.help_outline_rounded,
               ),
-              IconButton(
+              DesktopToolIcon(
                 tooltip: '刷新',
                 onPressed: _connected && !_loading
                     ? () => unawaited(_reload())
                     : null,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                icon: Icons.refresh_rounded,
               ),
             ],
           ),
