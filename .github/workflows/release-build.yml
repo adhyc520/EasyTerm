@@ -91,6 +91,11 @@ jobs:
           echo "APP_VERSION=${TAG#v}" >> "$GITHUB_ENV"
           echo "APP_TAG=$TAG" >> "$GITHUB_ENV"
 
+      # libserialport (via flutter_libserialport) runs autogen/configure in pod prepare;
+      # macos runners do not ship automake/libtool by default.
+      - name: Install libserialport build deps
+        run: brew install automake libtool
+
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
       - run: flutter build macos --release --build-name "$APP_VERSION" --build-number "$GITHUB_RUN_NUMBER"
