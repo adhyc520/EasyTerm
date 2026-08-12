@@ -151,19 +151,25 @@ class BulkCommandExecutor {
     }
 
     if (host is RemoteExecCapable) {
+      final exec = host as RemoteExecCapable;
       try {
-        final out = await (host as RemoteExecCapable).runQueued(command, timeout: timeout);
+        final out = await exec.runQueued(
+          command,
+          timeout: timeout,
+          // Avoid injecting into the user's interactive Telnet console.
+          allowInteractiveFallback: false,
+        );
         sw.stop();
         if (out == null) {
           return BulkCommandResult(
             host: label,
             duration: sw.elapsed,
-            error: (host as RemoteExecCapable).lastRemoteCommandError ?? '执行失败',
+            error: exec.lastRemoteCommandError ?? '执行失败',
           );
         }
         return BulkCommandResult(
           host: label,
-          exitCode: 0,
+          exitCode: exec.lastRemoteExitCode,
           stdout: _trimOutput(out),
           duration: sw.elapsed,
         );

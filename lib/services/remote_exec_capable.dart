@@ -11,6 +11,8 @@ abstract class RemoteExecCapable {
     String command, {
     Duration timeout = const Duration(seconds: 15),
     List<int>? stdinBytes,
+    /// Telnet: when false, do not fall back to the interactive primary session.
+    bool allowInteractiveFallback = true,
   });
 
   /// Alias used by metrics helpers (same as [runQueued]).
@@ -21,8 +23,14 @@ abstract class RemoteExecCapable {
 
   String? get lastRemoteCommandError;
 
+  /// Exit code from the most recent [runQueued] when available.
+  int? get lastRemoteExitCode;
+
   /// Telnet/Serial 等仿真 exec：调用方应避免额外的重量级命令（如 docker stats）。
   bool get lightweightRemoteExec;
+
+  /// True when exec shares the interactive terminal (Telnet primary fallback / Serial).
+  bool get execSharesInteractiveSession;
 
   Future<RemoteStream> startRemoteStream(
     String command, {

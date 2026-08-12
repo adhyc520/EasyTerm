@@ -354,8 +354,15 @@ class SerialWorkspaceController extends ChangeNotifier
     String command, {
     Duration timeout = const Duration(seconds: 15),
     List<int>? stdinBytes,
+    bool allowInteractiveFallback = true,
   }) async {
     if (!_connected || _dropped) return null;
+    // Serial always shares the interactive console — refuse background/status
+    // injects so tray metrics / LLM / bulk do not steal the user's session.
+    if (!allowInteractiveFallback) {
+      _lastExecError = '串口 exec 与交互终端共用，已禁止后台注入';
+      return null;
+    }
     try {
       _ensureEmulator();
       final emu = _emulator;
@@ -374,13 +381,20 @@ class SerialWorkspaceController extends ChangeNotifier
   }
 
   @override
-  Future<String?> runRemoteForStatus(String command) => runQueued(command);
+  Future<String?> runRemoteForStatus(String command) =>
+      runQueued(command, allowInteractiveFallback: false);
 
   @override
   String? get lastRemoteCommandError => _lastExecError ?? _emulator?.lastError;
 
   @override
+  int? get lastRemoteExitCode => _emulator?.lastExitCode;
+
+  @override
   bool get lightweightRemoteExec => true;
+
+  @override
+  bool get execSharesInteractiveSession => true;
 
   @override
   Future<RemoteStream> startRemoteStream(
@@ -412,7 +426,11 @@ class SerialWorkspaceController extends ChangeNotifier
   String get remoteCwd => _remoteCwd;
 
   Future<void> _refreshRemoteCwd() async {
-    final out = await runQueued('pwd', timeout: const Duration(seconds: 3));
+    final out = await runQueued(
+      'pwd',
+      timeout: const Duration(seconds: 3),
+      allowInteractiveFallback: false,
+    );
     final line = out
         ?.split(RegExp(r'[\r\n]+'))
         .map((s) => s.trim())

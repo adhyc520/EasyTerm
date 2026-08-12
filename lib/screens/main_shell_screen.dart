@@ -699,18 +699,39 @@ class _MainShellScreenState extends State<MainShellScreen> {
   Future<ProxyConfig?> _resolveProxyConfig(SavedHostProfile profile) async {
     final proxy = profile.proxyConfig;
     if (proxy == null || proxy.host.trim().isEmpty) return null;
+
+    Future<ProxyConfig> withPem(ProxyConfig base, String? pem) async {
+      if (pem != null && pem.trim().isNotEmpty) {
+        return base.copyWith(privateKeyPem: pem);
+      }
+      return base;
+    }
+
+    // 1) 已有运行时 PEM（少见）或自身 keyPath。
     if (proxy.privateKeyPem != null && proxy.privateKeyPem!.trim().isNotEmpty) {
       return proxy;
     }
+    if (proxy.keyPath != null && proxy.keyPath!.trim().isNotEmpty) {
+      try {
+        final pem = await loadPrivateKeyFromPath(proxy.keyPath);
+        return withPem(proxy, pem);
+      } catch (_) {
+        return proxy;
+      }
+    }
+
+    // 2) 在已保存主机中按 endpoint / label（别名）匹配跳板凭据。
     for (final other in _profiles.profiles) {
       if (other.id == profile.id) continue;
-      if (!other.matchesEndpoint(
+      final endpointMatch = other.matchesEndpoint(
         host: proxy.host,
         port: proxy.port,
         username: proxy.username,
-      )) {
-        continue;
-      }
+      );
+      final labelOrHostMatch =
+          other.label == proxy.host || other.host == proxy.host;
+      if (!endpointMatch && !labelOrHostMatch) continue;
+
       String? jumpPem;
       try {
         jumpPem = await loadPrivateKeyFromPath(other.keyPath);
@@ -719,8 +740,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
         type: proxy.type,
         host: other.host,
         port: other.port,
-        username: other.username,
+        username: other.username.isNotEmpty ? other.username : proxy.username,
         password: other.password ?? proxy.password,
+        keyPath: other.keyPath ?? proxy.keyPath,
         privateKeyPem: jumpPem ?? proxy.privateKeyPem,
       );
     }

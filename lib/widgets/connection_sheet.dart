@@ -410,6 +410,8 @@ class _NewHostSheetBodyState extends State<_NewHostSheetBody> {
           port: jump.port,
           username: jump.username,
           password: jump.password,
+          keyPath: jump.keyPath,
+          // 仅内存；持久化走 keyPath，不会写入 JSON。
           privateKeyPem: jumpPem,
         );
       }

@@ -66,6 +66,7 @@ class ShellExecEmulator {
   bool _draining = false;
   int _seq = 0;
   String? _lastError;
+  int? _lastExitCode;
   final StringBuffer _buf = StringBuffer();
 
   /// Exclusive holder: completes when the current run/stream finishes.
@@ -78,6 +79,9 @@ class ShellExecEmulator {
   bool _followActive = false;
 
   String? get lastError => _lastError;
+
+  /// Exit code from the most recent completed [run] (null on timeout/fail).
+  int? get lastExitCode => _lastExitCode;
 
   Future<void> _enterExclusive({
     Duration waitTimeout = const Duration(seconds: 12),
@@ -116,6 +120,7 @@ class ShellExecEmulator {
     Duration timeout = const Duration(seconds: 15),
     List<int>? stdinBytes,
   }) async {
+    _lastExitCode = null;
     try {
       await _enterExclusive();
     } on TimeoutException {
@@ -137,7 +142,7 @@ class ShellExecEmulator {
     final id = _nextId();
     final begin = '\x01B$id\x01';
     final end = '\x01E$id\x01';
-    final completer = Completer<String?>();
+    final completer = Completer<_RunOutcome?>();
     final job = _QueuedJob(
       id: id,
       begin: begin,
@@ -157,8 +162,9 @@ class ShellExecEmulator {
     }
 
     try {
-      return await completer.future.timeout(timeout, onTimeout: () {
+      final outcome = await completer.future.timeout(timeout, onTimeout: () {
         _lastError = 'exec timeout (${timeout.inSeconds}s)';
+        _lastExitCode = null;
         _queue.remove(job);
         try {
           _backend.write([0x03]);
@@ -167,8 +173,15 @@ class ShellExecEmulator {
         if (!completer.isCompleted) completer.complete(null);
         return null;
       });
+      if (outcome == null) {
+        _lastExitCode = null;
+        return null;
+      }
+      _lastExitCode = outcome.exitCode;
+      return outcome.output;
     } catch (e) {
       _lastError = '$e';
+      _lastExitCode = null;
       return null;
     }
   }
@@ -408,7 +421,9 @@ class ShellExecEmulator {
         final codeMatch =
             RegExp('^${RegExp.escape(job.end)}:(\\d+)').firstMatch(afterEnd);
         var consumeTo = ei + job.end.length;
+        int? code;
         if (codeMatch != null) {
+          code = int.tryParse(codeMatch.group(1) ?? '');
           consumeTo = ei + codeMatch.group(0)!.length;
         }
         if (consumeTo < text.length &&
@@ -431,7 +446,9 @@ class ShellExecEmulator {
         body = _stripCommandEcho(body, job);
         _queue.removeAt(0);
         if (!job.completer.isCompleted) {
-          job.completer.complete(body);
+          job.completer.complete(
+            _RunOutcome(output: body, exitCode: code),
+          );
         }
       }
     } finally {
@@ -476,6 +493,13 @@ class ShellExecEmulator {
   }
 }
 
+class _RunOutcome {
+  const _RunOutcome({required this.output, required this.exitCode});
+
+  final String output;
+  final int? exitCode;
+}
+
 class _QueuedJob {
   _QueuedJob({
     required this.id,
@@ -487,7 +511,7 @@ class _QueuedJob {
   final String id;
   final String begin;
   final String end;
-  final Completer<String?> completer;
+  final Completer<_RunOutcome?> completer;
 }
 
 class _StreamJob {

@@ -51,21 +51,21 @@ class TelnetLoginMatcher {
         ..clear()
         ..write(s);
     }
-    final lower = s.toLowerCase();
-    if (_looksLikeLoginPrompt(lower)) _sawLoginPrompt = true;
-    if (_looksLikePasswordPrompt(lower)) _sawPasswordPrompt = true;
+    final plain = _stripAnsi(s).toLowerCase();
+    if (_looksLikeLoginPrompt(plain)) _sawLoginPrompt = true;
+    if (_looksLikePasswordPrompt(plain)) _sawPasswordPrompt = true;
 
     if (!enabled || injectComplete) return const [];
     final out = <int>[];
 
     if (!_userSent && username.isNotEmpty) {
-      if (_sawLoginPrompt || _looksLikeLoginPrompt(lower)) {
+      if (_sawLoginPrompt || _looksLikeLoginPrompt(plain)) {
         _userSent = true;
         out.addAll(_encoding.encode('$username\r'));
       }
     }
     if (_userSent && !_passSent && password.isNotEmpty) {
-      if (_sawPasswordPrompt || _looksLikePasswordPrompt(lower)) {
+      if (_sawPasswordPrompt || _looksLikePasswordPrompt(plain)) {
         _passSent = true;
         out.addAll(_encoding.encode('$password\r'));
       }
@@ -91,19 +91,36 @@ class TelnetLoginMatcher {
     return false;
   }
 
+  static String _stripAnsi(String text) {
+    return text
+        .replaceAll(RegExp(r'\x1B\[[0-9;?]*[ -/]*[@-~]'), '')
+        .replaceAll(RegExp(r'\x1B\][^\x07]*\x07'), '')
+        .replaceAll(RegExp(r'\x1B.'), '');
+  }
+
+  /// Last non-empty line, or the whole buffer when it has no newlines yet.
+  static String _tailLine(String lower) {
+    final lines = lower.split(RegExp(r'[\r\n]+'));
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final line = lines[i].trimRight();
+      if (line.trim().isNotEmpty) return line;
+    }
+    return lower.trimRight();
+  }
+
   static bool _looksLikeLoginPrompt(String lower) {
-    return lower.contains('login:') ||
-        lower.contains('username:') ||
-        lower.contains('user name:') ||
-        lower.contains('user:') ||
-        lower.endsWith('login: ') ||
-        RegExp(r'(^|\n)\s*(login|user(name)?)\s*:\s*$').hasMatch(lower);
+    // Require the prompt at end-of-line so MOTD prose like
+    // "invalid login: see admin" (text after colon) does not match.
+    // Allow prefixes: "Please login:", "host login:", ANSI-stripped colors.
+    final tail = _tailLine(lower).trimRight();
+    return RegExp(r'(^|.*\s)(login|user(\s*name)?)\s*:\s*$').hasMatch(tail);
   }
 
   static bool _looksLikePasswordPrompt(String lower) {
-    return lower.contains('password:') ||
-        lower.contains('passwd:') ||
-        RegExp(r'(^|\n)\s*pass(word|wd)?\s*:\s*$').hasMatch(lower);
+    // End-anchored so "Change your password: see docs" does not match.
+    // Allow prefixes: "root's password:", "Password for alice:".
+    final tail = _tailLine(lower).trimRight();
+    return RegExp(r'pass(word|wd)?\s*:\s*$').hasMatch(tail);
   }
 
   void reset() {

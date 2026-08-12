@@ -32,9 +32,11 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
-# MSVC 14.51+ (VS 18 / 2026) turns <experimental/coroutine> into a hard error
-# (STL1011). flutter_inappwebview_windows still pulls that header via C++/WinRT
-# while compiling as C++17. Silence it project-wide so it propagates to plugins.
+# Local / newer MSVC (14.51+, VS 18 / 2026): <experimental/coroutine> becomes a
+# hard error (STL1011). flutter_inappwebview_windows still pulls that header via
+# C++/WinRT while compiling as C++17. Silence project-wide so it reaches plugins.
+# Upstream: https://github.com/pichillilorenzo/flutter_inappwebview/issues/2672
+# Remove once the plugin drops experimental coroutines / fixes its CMake.
 if(MSVC)
   add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
 endif()

@@ -371,7 +371,22 @@ class ProxyConnector {
         timeout: connectTimeout,
       );
       List<SSHKeyPair>? jumpIdentities;
-      final jumpPem = jumpHost.privateKeyPem?.trim();
+      var jumpPem = jumpHost.privateKeyPem?.trim();
+      if ((jumpPem == null || jumpPem.isEmpty) &&
+          jumpHost.keyPath != null &&
+          jumpHost.keyPath!.trim().isNotEmpty) {
+        try {
+          final file = File(jumpHost.keyPath!.trim());
+          if (await file.exists()) {
+            jumpPem = (await file.readAsString()).trim();
+            if (jumpPem.isNotEmpty && jumpPem.codeUnitAt(0) == 0xFEFF) {
+              jumpPem = jumpPem.substring(1);
+            }
+          }
+        } catch (_) {
+          jumpPem = null;
+        }
+      }
       if (jumpPem != null && jumpPem.isNotEmpty) {
         jumpIdentities = SSHKeyPair.fromPem(
           jumpPem,

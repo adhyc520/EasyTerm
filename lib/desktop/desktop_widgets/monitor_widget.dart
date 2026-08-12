@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/terminal_session_controller.dart';
 import '../../services/remote_exec_capable.dart';
-import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import 'desktop_widget.dart';
 
@@ -65,8 +64,11 @@ class _MonitorBodyState extends State<_MonitorBody> {
   Future<void> _tick() async {
     final c = widget.controller;
     if (!c.connected || c.dropped) return;
+    final exec = c is RemoteExecCapable ? c as RemoteExecCapable : null;
+    // Avoid attaching Telnet primary / Serial shared exec just for a widget.
+    if (exec?.execSharesInteractiveSession == true) return;
     try {
-      final snap = await (c as RemoteExecCapable).snapshot();
+      final snap = await exec?.snapshot();
       if (mounted) setState(() => _snap = snap);
     } catch (_) {}
   }

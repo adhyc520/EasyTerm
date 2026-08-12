@@ -1895,8 +1895,20 @@ abstract class AppLocalizations {
   /// No description provided for @updateReleaseNotes.
   ///
   /// In en, this message translates to:
-  /// **'Release notes'**
+  /// **'What\'s new'**
   String get updateReleaseNotes;
+
+  /// No description provided for @updateNoReleaseNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'No detailed release notes available.'**
+  String get updateNoReleaseNotes;
+
+  /// No description provided for @updateViewOnGithub.
+  ///
+  /// In en, this message translates to:
+  /// **'View on GitHub'**
+  String get updateViewOnGithub;
 
   /// No description provided for @updateDownloadInstall.
   ///

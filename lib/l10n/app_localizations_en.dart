@@ -1005,7 +1005,13 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get updateReleaseNotes => 'Release notes';
+  String get updateReleaseNotes => 'What\'s new';
+
+  @override
+  String get updateNoReleaseNotes => 'No detailed release notes available.';
+
+  @override
+  String get updateViewOnGithub => 'View on GitHub';
 
   @override
   String get updateDownloadInstall => 'Download and install';

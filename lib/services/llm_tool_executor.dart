@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -84,12 +85,19 @@ int? _argInt(Map<String, dynamic> args, String key) {
   return null;
 }
 
-Future<String?> _runShell(ToolContext ctx, String command) async {
+Future<String?> _runShell(
+  ToolContext ctx,
+  String command, {
+  bool allowInteractiveFallback = false,
+}) async {
   final c = ctx.controller;
   if (!c.connected) return null;
   final exec = c is RemoteExecCapable ? c as RemoteExecCapable : null;
   if (exec == null) return null;
-  return exec.runRemoteForStatus(command);
+  return exec.runQueued(
+    command,
+    allowInteractiveFallback: allowInteractiveFallback,
+  );
 }
 
 Future<String> _sftpReadAbsolute(
@@ -108,12 +116,16 @@ Future<String> _sftpReadAbsolute(
   try {
     final stat = await file.stat();
     final size = stat.size ?? 0;
-    final bytes = await file.readBytes();
-    var text = utf8.decode(bytes, allowMalformed: true);
-    var truncated = false;
-    if (utf8.encode(text).length > maxBytes) {
+    // Cap at maxBytes+1 so we can detect truncation without loading the whole file.
+    final readLen = size <= 0 ? maxBytes + 1 : math.min(size, maxBytes + 1);
+    final bytes = await file.readBytes(length: readLen);
+    var truncated = size > maxBytes || bytes.length > maxBytes;
+    final slice = truncated && bytes.length > maxBytes
+        ? bytes.sublist(0, maxBytes)
+        : bytes;
+    var text = utf8.decode(slice, allowMalformed: true);
+    if (truncated) {
       text = truncateToolOutput(text, maxBytes: maxBytes);
-      truncated = true;
     }
     return toolJsonOk({
       'path': absolutePath,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform, Process;
 
 import 'package:flutter/material.dart';
 
@@ -100,6 +101,20 @@ class _AppUpdateDialogState extends State<_AppUpdateDialog> {
     }
   }
 
+  Future<void> _openReleasePage(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      if (Platform.isMacOS) {
+        await Process.start('open', [uri.toString()]);
+      } else if (Platform.isWindows) {
+        await Process.start('cmd', ['/c', 'start', '', uri.toString()]);
+      }
+    } catch (_) {
+      // Best-effort; dialog remains usable without the browser link.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -133,36 +148,75 @@ class _AppUpdateDialogState extends State<_AppUpdateDialog> {
     switch (result.kind) {
       case AppUpdateCheckKind.updateAvailable:
         final release = result.release!;
+        final notes = release.body.trim();
+        final installed = result.installed?.toTagLabel();
         return AlertDialog(
           title: Text(l10n.updateAvailableTitle),
           content: SizedBox(
-            width: 420,
+            width: 440,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  l10n.updateAvailableMessage(release.tagName),
-                  style: TextStyle(color: wb.textMuted),
+                  installed == null
+                      ? l10n.updateAvailableMessage(release.tagName)
+                      : '$installed → ${release.tagName}',
+                  style: TextStyle(color: wb.textMuted, height: 1.35),
                 ),
-                if (release.body.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    l10n.updateReleaseNotes,
-                    style: Theme.of(context).textTheme.titleSmall,
+                const SizedBox(height: 14),
+                Text(
+                  l10n.updateReleaseNotes,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: wb.panelElevated,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: wb.border),
                   ),
-                  const SizedBox(height: 6),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        release.body,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: wb.primaryText,
-                          height: 1.4,
-                        ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minHeight: 72,
+                      maxHeight: 220,
+                    ),
+                    child: Scrollbar(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                        child: notes.isEmpty
+                            ? Text(
+                                l10n.updateNoReleaseNotes,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: wb.textMuted,
+                                  height: 1.4,
+                                ),
+                              )
+                            : SelectableText(
+                                notes,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: wb.primaryText,
+                                  height: 1.45,
+                                ),
+                              ),
                       ),
+                    ),
+                  ),
+                ),
+                if (release.htmlUrl.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () => unawaited(_openReleasePage(release.htmlUrl)),
+                      child: Text(l10n.updateViewOnGithub),
                     ),
                   ),
                 ],

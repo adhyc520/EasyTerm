@@ -229,191 +229,32 @@ final class LlmOpenAiChatService {
         final argsRaw = f['arguments'];
         final args = parseToolArgs(argsRaw);
 
-        if (name == _terminalToolName) {
-          final cmd = _parseTerminalTextArg(argsRaw);
-          if (cmd == null || cmd.isEmpty) {
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: jsonEncode({'ok': false, 'error': 'missing_text'}),
-                status: 'failure',
-                detail: 'missing_text',
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          onToolProgress?.call(name, 'running', detail: cmd);
-          final approved = await onRequestTerminalApproval(cmd);
-          if (!approved) {
-            onToolProgress?.call(name, 'failure', detail: 'user_denied');
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: jsonEncode({
-                  'ok': false,
-                  'error': 'user_denied',
-                  'detail': 'User declined to run this command.',
-                }),
-                status: 'failure',
-                detail: 'user_denied',
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          final result = await _runTerminalToolWithCapture(cmd, ssh);
-          final ok = _toolResultOk(result);
-          onToolProgress?.call(
-            name,
-            ok ? 'success' : 'failure',
-            detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
-          );
-          messages.add(
-            _toolResultMessage(
-              id: id,
-              name: name,
-              content: result,
-              status: ok ? 'success' : 'failure',
-              detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
-            ),
-          );
-          touchMessages();
-          continue;
-        }
-
-        if (name == _fileWriteToolName) {
-          final path = (args['path'] as String?)?.trim() ?? '';
-          final content = args['content'] as String? ?? '';
-          if (path.isEmpty) {
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: toolJsonErr('missing_path'),
-                status: 'failure',
-                detail: 'missing_path',
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          final preview = content.length > 4000
-              ? '${content.substring(0, 4000)}…'
-              : content;
-          onToolProgress?.call(name, 'running', detail: path);
-          final approve =
-              onRequestFileWriteApproval ??
-              ((p, _) => onRequestTerminalApproval('file_write $p'));
-          final approved = await approve(path, preview);
-          if (!approved) {
-            onToolProgress?.call(name, 'failure', detail: 'user_denied');
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: jsonEncode({
-                  'ok': false,
-                  'error': 'user_denied',
-                  'detail': 'User declined to write this file.',
-                }),
-                status: 'failure',
-                detail: path,
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          if (ssh == null || !ssh.connected) {
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: toolJsonErr('no_active_ssh_session'),
-                status: 'failure',
-                detail: path,
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          final result = await toolRegistry.execute(
-            name,
-            args,
-            ToolContext(
-              controller: ssh,
-              onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
-            ),
-          );
-          final ok = _toolResultOk(result);
-          onToolProgress?.call(name, ok ? 'success' : 'failure', detail: path);
-          messages.add(
-            _toolResultMessage(
-              id: id,
-              name: name,
-              content: result,
-              status: ok ? 'success' : 'failure',
-              detail: path,
-            ),
-          );
-          touchMessages();
-          continue;
-        }
-
-        if (toolRegistry.contains(name)) {
-          if (ssh == null || !ssh.connected) {
-            messages.add(
-              _toolResultMessage(
-                id: id,
-                name: name,
-                content: toolJsonErr('no_active_ssh_session'),
-                status: 'failure',
-              ),
-            );
-            touchMessages();
-            continue;
-          }
-          onToolProgress?.call(name, 'running');
-          final result = await toolRegistry.execute(
-            name,
-            args,
-            ToolContext(
-              controller: ssh,
-              onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
-            ),
-          );
-          final ok = _toolResultOk(result);
-          final detail = _summarizeToolArgs(name, args);
-          onToolProgress?.call(name, ok ? 'success' : 'failure', detail: detail);
-          messages.add(
-            _toolResultMessage(
-              id: id,
-              name: name,
-              content: result,
-              status: ok ? 'success' : 'failure',
-              detail: detail,
-            ),
-          );
-          touchMessages();
-          continue;
-        }
-
-        messages.add(
-          _toolResultMessage(
+        try {
+          await _executeOneToolCall(
             id: id,
-            name: name.isEmpty ? 'unknown' : name,
-            content: jsonEncode({
-              'ok': false,
-              'error': 'unknown_tool',
-              'name': name,
-            }),
-            status: 'failure',
-            detail: 'unknown_tool',
-          ),
-        );
-        touchMessages();
+            name: name,
+            args: args,
+            argsRaw: argsRaw,
+            messages: messages,
+            ssh: ssh,
+            onRequestTerminalApproval: onRequestTerminalApproval,
+            onRequestFileWriteApproval: onRequestFileWriteApproval,
+            onToolProgress: onToolProgress,
+            touchMessages: touchMessages,
+          );
+        } catch (e) {
+          onToolProgress?.call(name, 'failure', detail: '$e');
+          messages.add(
+            _toolResultMessage(
+              id: id,
+              name: name.isEmpty ? 'unknown' : name,
+              content: toolJsonErr('exception', detail: '$e'),
+              status: 'failure',
+              detail: '$e',
+            ),
+          );
+          touchMessages();
+        }
       }
     }
     messages.add({
@@ -423,6 +264,217 @@ final class LlmOpenAiChatService {
           : '(Too many tool rounds; try a shorter task.)',
     });
     touchMessages();
+  }
+
+  Future<void> _executeOneToolCall({
+    required String id,
+    required String name,
+    required Map<String, dynamic> args,
+    required Object? argsRaw,
+    required List<Map<String, Object?>> messages,
+    required TerminalSessionController? ssh,
+    required Future<bool> Function(String commandText) onRequestTerminalApproval,
+    required Future<bool> Function(String path, String contentPreview)?
+        onRequestFileWriteApproval,
+    required void Function(String toolName, String status, {String? detail})?
+        onToolProgress,
+    required void Function() touchMessages,
+  }) async {
+    if (name == _terminalToolName) {
+      final cmd = _parseTerminalTextArg(argsRaw);
+      if (cmd == null || cmd.isEmpty) {
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: jsonEncode({'ok': false, 'error': 'missing_text'}),
+            status: 'failure',
+            detail: 'missing_text',
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      onToolProgress?.call(name, 'running', detail: cmd);
+      final approved = await onRequestTerminalApproval(cmd);
+      if (!approved) {
+        onToolProgress?.call(name, 'failure', detail: 'user_denied');
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: jsonEncode({
+              'ok': false,
+              'error': 'user_denied',
+              'detail': 'User declined to run this command.',
+            }),
+            status: 'failure',
+            detail: 'user_denied',
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      final result = await _runTerminalToolWithCapture(cmd, ssh);
+      final ok = _toolResultOk(result);
+      onToolProgress?.call(
+        name,
+        ok ? 'success' : 'failure',
+        detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
+      );
+      messages.add(
+        _toolResultMessage(
+          id: id,
+          name: name,
+          content: result,
+          status: ok ? 'success' : 'failure',
+          detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
+        ),
+      );
+      touchMessages();
+      return;
+    }
+
+    if (name == _fileWriteToolName) {
+      final path = (_argString(args, 'path') ?? '').trim();
+      final content = _argString(args, 'content') ?? '';
+      if (path.isEmpty) {
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: toolJsonErr('missing_path'),
+            status: 'failure',
+            detail: 'missing_path',
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      // Normalize args so FileWriteExecutor always sees strings.
+      args['path'] = path;
+      args['content'] = content;
+      final preview = content.length > 4000
+          ? '${content.substring(0, 4000)}…'
+          : content;
+      onToolProgress?.call(name, 'running', detail: path);
+      final approve =
+          onRequestFileWriteApproval ??
+          ((p, _) => onRequestTerminalApproval('file_write $p'));
+      final approved = await approve(path, preview);
+      if (!approved) {
+        onToolProgress?.call(name, 'failure', detail: 'user_denied');
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: jsonEncode({
+              'ok': false,
+              'error': 'user_denied',
+              'detail': 'User declined to write this file.',
+            }),
+            status: 'failure',
+            detail: path,
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      if (ssh == null || !ssh.connected) {
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: toolJsonErr('no_active_ssh_session'),
+            status: 'failure',
+            detail: path,
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      final result = await toolRegistry.execute(
+        name,
+        args,
+        ToolContext(
+          controller: ssh,
+          onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
+        ),
+      );
+      final ok = _toolResultOk(result);
+      onToolProgress?.call(name, ok ? 'success' : 'failure', detail: path);
+      messages.add(
+        _toolResultMessage(
+          id: id,
+          name: name,
+          content: result,
+          status: ok ? 'success' : 'failure',
+          detail: path,
+        ),
+      );
+      touchMessages();
+      return;
+    }
+
+    if (toolRegistry.contains(name)) {
+      if (ssh == null || !ssh.connected) {
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name,
+            content: toolJsonErr('no_active_ssh_session'),
+            status: 'failure',
+          ),
+        );
+        touchMessages();
+        return;
+      }
+      onToolProgress?.call(name, 'running');
+      final result = await toolRegistry.execute(
+        name,
+        args,
+        ToolContext(
+          controller: ssh,
+          onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
+        ),
+      );
+      final ok = _toolResultOk(result);
+      final detail = _summarizeToolArgs(name, args);
+      onToolProgress?.call(name, ok ? 'success' : 'failure', detail: detail);
+      messages.add(
+        _toolResultMessage(
+          id: id,
+          name: name,
+          content: result,
+          status: ok ? 'success' : 'failure',
+          detail: detail,
+        ),
+      );
+      touchMessages();
+      return;
+    }
+
+    messages.add(
+      _toolResultMessage(
+        id: id,
+        name: name.isEmpty ? 'unknown' : name,
+        content: jsonEncode({
+          'ok': false,
+          'error': 'unknown_tool',
+          'name': name,
+        }),
+        status: 'failure',
+        detail: 'unknown_tool',
+      ),
+    );
+    touchMessages();
+  }
+
+  static String? _argString(Map<String, dynamic> args, String key) {
+    final v = args[key];
+    if (v is String) return v;
+    if (v == null) return null;
+    return v.toString();
   }
 
   static Map<String, Object?> _toolResultMessage({

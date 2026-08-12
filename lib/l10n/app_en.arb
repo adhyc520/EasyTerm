@@ -445,7 +445,9 @@
       "version": {"type": "String"}
     }
   },
-  "updateReleaseNotes": "Release notes",
+  "updateReleaseNotes": "What's new",
+  "updateNoReleaseNotes": "No detailed release notes available.",
+  "updateViewOnGithub": "View on GitHub",
   "updateDownloadInstall": "Download and install",
   "updateLater": "Later",
   "updateSkipVersion": "Skip this version",

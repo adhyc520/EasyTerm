@@ -925,47 +925,48 @@ class _DesktopBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imagePath = desktopWallpaperImagePath(wallpaper);
-    late final Decoration decoration;
+    final colors = desktopWallpaperResolvedColors(context, wallpaper);
+    final gradient = BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: colors,
+        stops: colors.length >= 4 ? const [0.0, 0.35, 0.7, 1.0] : null,
+      ),
+    );
+
+    Widget background;
     if (imagePath != null) {
-      decoration = BoxDecoration(
-        image: DecorationImage(
-          image: FileImage(File(imagePath)),
-          fit: BoxFit.cover,
-        ),
+      background = Stack(
+        fit: StackFit.expand,
+        children: [
+          // 底层渐变：图片加载失败或沙盒无权限时仍可见。
+          DecoratedBox(decoration: gradient),
+          Image.file(
+            File(imagePath),
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+        ],
       );
     } else {
-      final isDark = Theme.of(context).brightness == Brightness.dark;
-      final preset = desktopWallpaperPresetColors(wallpaper);
-      final colors = preset ??
-          (isDark
-              ? const [
-                  Color(0xFF0B1220),
-                  Color(0xFF152238),
-                  Color(0xFF1A3350),
-                  Color(0xFF0E1A2A),
-                ]
-              : const [
-                  Color(0xFFDCE6F5),
-                  Color(0xFFC5D5EC),
-                  Color(0xFFB8C8E0),
-                  Color(0xFFE8EEF7),
-                ]);
-      decoration = BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: colors,
-          stops: colors.length >= 4 ? const [0.0, 0.35, 0.7, 1.0] : null,
-        ),
-      );
+      background = DecoratedBox(decoration: gradient);
     }
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onSecondaryTapUp: (d) => onContextMenu(d.globalPosition),
-      child: DecoratedBox(
-        decoration: decoration,
-        child: _shortcutLayer(),
+      child: SizedBox.expand(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            background,
+            _shortcutLayer(),
+          ],
+        ),
       ),
     );
   }

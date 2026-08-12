@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../desktop/desktop_window_manager.dart';
 import '../desktop/widgets/desktop_ui.dart';
@@ -75,7 +77,11 @@ List<Color>? desktopWallpaperPresetColors(String wallpaper) {
 
 bool desktopWallpaperIsImage(String wallpaper) {
   if (wallpaper.isEmpty || wallpaper.startsWith('preset:')) return false;
-  return wallpaper.startsWith('file:') || wallpaper.startsWith('/');
+  if (wallpaper.startsWith('file:') || wallpaper.startsWith('/')) return true;
+  // Windows: C:\... 或 \\server\share
+  if (RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(wallpaper)) return true;
+  if (wallpaper.startsWith(r'\\')) return true;
+  return false;
 }
 
 String? desktopWallpaperImagePath(String wallpaper) {
@@ -84,6 +90,51 @@ String? desktopWallpaperImagePath(String wallpaper) {
     return Uri.parse(wallpaper).toFilePath();
   }
   return wallpaper;
+}
+
+/// 将用户选择的壁纸复制进应用沙盒，避免 macOS 沙盒在选图会话结束后无法再读原路径。
+Future<String> importDesktopWallpaper(String sourcePath) async {
+  final src = File(sourcePath);
+  if (!await src.exists()) {
+    throw StateError('壁纸文件不存在：$sourcePath');
+  }
+  final support = await getApplicationSupportDirectory();
+  final dir = Directory(p.join(support.path, 'wallpapers'));
+  if (!await dir.exists()) {
+    await dir.create(recursive: true);
+  }
+  final ext = p.extension(sourcePath);
+  final safeExt = ext.isEmpty ? '.img' : ext.toLowerCase();
+  final destPath = p.join(
+    dir.path,
+    'wallpaper_${DateTime.now().millisecondsSinceEpoch}$safeExt',
+  );
+  await src.copy(destPath);
+  return destPath;
+}
+
+List<Color> desktopWallpaperFallbackColors(BuildContext context) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  return isDark
+      ? kDesktopWallpaperPresets.first.colors
+      : const [
+          Color(0xFFDCE6F5),
+          Color(0xFFC5D5EC),
+          Color(0xFFB8C8E0),
+          Color(0xFFE8EEF7),
+        ];
+}
+
+List<Color> desktopWallpaperResolvedColors(
+  BuildContext context,
+  String wallpaper,
+) {
+  // 「默认」id 为空：随主题切换浅/深默认渐变，不强制深色预设。
+  if (wallpaper.isEmpty) {
+    return desktopWallpaperFallbackColors(context);
+  }
+  return desktopWallpaperPresetColors(wallpaper) ??
+      desktopWallpaperFallbackColors(context);
 }
 
 Future<void> showDesktopSettingsDialog(
@@ -134,7 +185,10 @@ class _DesktopSettingsDialogState extends State<_DesktopSettingsDialog> {
       if (r == null || r.files.isEmpty) return;
       final path = r.files.single.path;
       if (path == null || path.isEmpty) return;
-      setState(() => _wallpaper = path);
+      // 复制进沙盒：macOS 用户选中文件权限不会随路径持久化。
+      final imported = await importDesktopWallpaper(path);
+      if (!mounted) return;
+      setState(() => _wallpaper = imported);
     } on PlatformException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -275,7 +329,9 @@ class _DesktopSettingsDialogState extends State<_DesktopSettingsDialog> {
                   for (final p in kDesktopWallpaperPresets)
                     _PresetChip(
                       label: p.label,
-                      colors: p.colors,
+                      colors: p.id.isEmpty
+                          ? desktopWallpaperFallbackColors(context)
+                          : p.colors,
                       selected: _wallpaper == p.id,
                       onTap: () => setState(() => _wallpaper = p.id),
                     ),
@@ -366,17 +422,7 @@ class _WallpaperPreview extends StatelessWidget {
   }
 
   Widget _gradientFallback(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final preset = desktopWallpaperPresetColors(wallpaper);
-    final colors = preset ??
-        (isDark
-            ? kDesktopWallpaperPresets.first.colors
-            : const [
-                Color(0xFFDCE6F5),
-                Color(0xFFC5D5EC),
-                Color(0xFFB8C8E0),
-                Color(0xFFE8EEF7),
-              ]);
+    final colors = desktopWallpaperResolvedColors(context, wallpaper);
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(

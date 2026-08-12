@@ -974,7 +974,13 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get updateReleaseNotes => '更新说明';
+  String get updateReleaseNotes => '本次更新';
+
+  @override
+  String get updateNoReleaseNotes => '暂无详细更新说明。';
+
+  @override
+  String get updateViewOnGithub => '在 GitHub 查看';
 
   @override
   String get updateDownloadInstall => '下载并安装';

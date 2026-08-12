@@ -397,7 +397,7 @@ class TelnetWorkspaceController extends ChangeNotifier
     notifyListeners();
   }
 
-  Future<void> _ensureExecBackend() async {
+  Future<void> _ensureExecBackend({bool allowInteractiveFallback = true}) async {
     while (true) {
       if (_sessionDisposed || !_connected || _dropped) return;
       if (_emulator != null) return;
@@ -418,14 +418,26 @@ class TelnetWorkspaceController extends ChangeNotifier
         if (secondaryOk) return;
 
         // 2) Fall back to primary connection (like Serial) — required when the
-        // host allows only one Telnet session.
-        _attachPrimaryEmulator();
+        // host allows only one Telnet session. Skipped for bulk/LLM to avoid
+        // injecting into the interactive console.
+        if (allowInteractiveFallback) {
+          _attachPrimaryEmulator();
+        } else {
+          _lastExecError =
+              'Telnet 无法建立独立 exec 会话；已禁止使用主终端执行以免干扰交互';
+        }
         return;
       } catch (e) {
         debugPrint('telnet ensureExec: $e');
         await _closeSecondarySocket();
-        if (_emulator == null && _connected && !_dropped) {
+        if (_emulator == null &&
+            _connected &&
+            !_dropped &&
+            allowInteractiveFallback) {
           _attachPrimaryEmulator();
+        } else if (_emulator == null) {
+          _lastExecError =
+              'Telnet exec 后端启动失败；已禁止主终端 fallback：$e';
         }
         return;
       } finally {
@@ -596,22 +608,40 @@ class TelnetWorkspaceController extends ChangeNotifier
     String command, {
     Duration timeout = const Duration(seconds: 15),
     List<int>? stdinBytes,
+    bool allowInteractiveFallback = true,
   }) async {
     if (!_connected || _dropped) return null;
+    // Already on primary: refuse when caller forbids interactive injection
+    // (tray/metrics/LLM), otherwise probes keep eating the user's console.
+    if (!allowInteractiveFallback && _usePrimaryExec) {
+      _lastExecError = 'Telnet 正使用主终端 exec；已禁止再次注入以免干扰交互';
+      return null;
+    }
     try {
       try {
-        await _ensureExecBackend().timeout(const Duration(seconds: 25));
+        await _ensureExecBackend(
+          allowInteractiveFallback: allowInteractiveFallback,
+        ).timeout(const Duration(seconds: 25));
       } on TimeoutException {
-        // Last resort: primary session if ensure hung on secondary connect.
-        if (_emulator == null) _attachPrimaryEmulator();
+        if (allowInteractiveFallback && _emulator == null) {
+          _attachPrimaryEmulator();
+        }
         if (_emulator == null) {
-          _lastExecError = 'Telnet exec 后端启动超时';
+          _lastExecError = allowInteractiveFallback
+              ? 'Telnet exec 后端启动超时'
+              : 'Telnet exec 后端启动超时（已禁止主终端 fallback）';
           return null;
         }
       }
+      if (!allowInteractiveFallback && _usePrimaryExec) {
+        _lastExecError = 'Telnet 无法建立独立 exec 会话；已禁止使用主终端执行以免干扰交互';
+        return null;
+      }
       final emu = _emulator;
       if (emu == null) {
-        _lastExecError ??= 'Telnet exec 不可用';
+        _lastExecError ??= allowInteractiveFallback
+            ? 'Telnet exec 不可用'
+            : 'Telnet 无法建立独立 exec 会话；已禁止使用主终端执行以免干扰交互';
         return null;
       }
       final out = await emu.run(
@@ -628,13 +658,20 @@ class TelnetWorkspaceController extends ChangeNotifier
   }
 
   @override
-  Future<String?> runRemoteForStatus(String command) => runQueued(command);
+  Future<String?> runRemoteForStatus(String command) =>
+      runQueued(command, allowInteractiveFallback: false);
 
   @override
   String? get lastRemoteCommandError => _lastExecError ?? _emulator?.lastError;
 
   @override
+  int? get lastRemoteExitCode => _emulator?.lastExitCode;
+
+  @override
   bool get lightweightRemoteExec => true;
+
+  @override
+  bool get execSharesInteractiveSession => _usePrimaryExec;
 
   @override
   Future<RemoteStream> startRemoteStream(
@@ -666,7 +703,11 @@ class TelnetWorkspaceController extends ChangeNotifier
   String get remoteCwd => _remoteCwd;
 
   Future<void> _refreshRemoteCwd() async {
-    final out = await runQueued('pwd', timeout: const Duration(seconds: 3));
+    final out = await runQueued(
+      'pwd',
+      timeout: const Duration(seconds: 3),
+      allowInteractiveFallback: false,
+    );
     final line = out
         ?.split(RegExp(r'[\r\n]+'))
         .map((s) => s.trim())

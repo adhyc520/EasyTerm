@@ -17,17 +17,24 @@ concurrency:
   group: release-build-${{ github.ref }}
   cancel-in-progress: true
 
+# Pin Flutter so a same-day stable bump cannot break a release mid-flight.
+# Bump intentionally when ready to adopt a newer SDK.
+env:
+  FLUTTER_VERSION: "3.41.9"
+
 jobs:
   build-windows:
     name: Windows (x64)
-    runs-on: windows-2025-vs2026
+    # Prefer VS2022 image: windows-2025 / windows-latest now ship VS2026, and the
+    # temporary windows-2025-vs2026 label is for migration testing only.
+    runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: latest
+          version: ${{ env.FLUTTER_VERSION }}
           cache: true
           cache-sdk: true
 
@@ -55,7 +62,7 @@ jobs:
           $out = "easyterm-${{ github.ref_name }}-windows-x64.zip"
           tar -a -c -f $out -C build/windows/x64/runner/Release .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: easyterm-${{ github.ref_name }}-windows-x64
           path: easyterm-${{ github.ref_name }}-windows-x64.zip
@@ -64,12 +71,12 @@ jobs:
     name: macOS (arm64)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: flutter-actions/setup-flutter@v4
         with:
           channel: stable
-          version: latest
+          version: ${{ env.FLUTTER_VERSION }}
           cache: true
           cache-sdk: true
 
@@ -93,7 +100,7 @@ jobs:
           cd build/macos/Build/Products/Release
           zip -r "$GITHUB_WORKSPACE/easyterm-${{ github.ref_name }}-macos-arm64.zip" EasyTerm.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: easyterm-${{ github.ref_name }}-macos-arm64
           path: easyterm-${{ github.ref_name }}-macos-arm64.zip
@@ -106,23 +113,51 @@ jobs:
       contents: write
       actions: read
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: easyterm-${{ github.ref_name }}-windows-x64
           path: release-assets
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: easyterm-${{ github.ref_name }}-macos-arm64
           path: release-assets
 
+      # Build bullet notes from commits so in-app update dialogs can preview changes.
+      # GitHub's generate_release_notes often yields only a compare link for this repo.
+      - name: Build release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          PREV="$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)"
+          {
+            echo "## What's new"
+            echo
+            if [[ -n "$PREV" ]]; then
+              git log --pretty=format:'- %s' --no-merges "${PREV}..${TAG}"
+              echo
+              echo
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
+            else
+              git log --pretty=format:'- %s' --no-merges -20 "${TAG}"
+              echo
+            fi
+          } > release_notes.md
+          echo "---- release_notes.md ----"
+          cat release_notes.md
+
       - name: Create release and upload assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: release_notes.md
           files: release-assets/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -390,7 +390,9 @@
       "version": {"type": "String"}
     }
   },
-  "updateReleaseNotes": "更新说明",
+  "updateReleaseNotes": "本次更新",
+  "updateNoReleaseNotes": "暂无详细更新说明。",
+  "updateViewOnGithub": "在 GitHub 查看",
   "updateDownloadInstall": "下载并安装",
   "updateLater": "稍后",
   "updateSkipVersion": "跳过此版本",

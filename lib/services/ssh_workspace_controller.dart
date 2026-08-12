@@ -716,10 +716,11 @@ class SshWorkspaceController extends ChangeNotifier
         if (_sessionDisposed) return;
         try {
           late final SSHSocket socket;
-          final proxy = _proxyConfig;
+          var proxy = _proxyConfig;
           if (proxy != null &&
               proxy.host.trim().isNotEmpty &&
               proxy.username.trim().isNotEmpty) {
+            proxy = await hydrateProxyPrivateKey(proxy);
             final forwarded = await ProxyConnector.openForwardedSocket(
               jumpHost: proxy,
               targetHost: host,
@@ -2198,21 +2199,30 @@ class SshWorkspaceController extends ChangeNotifier
   /// 排队执行一次性命令（多窗口轮询共享，限制并发）。
   ///
   /// [stdinBytes] 写入远端 stdin 后关闭（例如 `sudo -S`）。
+  @override
   Future<String?> runQueued(
     String command, {
     Duration timeout = const Duration(seconds: 15),
     List<int>? stdinBytes,
+    bool allowInteractiveFallback = true,
   }) {
     if (!_connected || dropped) return Future.value(null);
     return _cmdQueue.run(command, timeout: timeout, stdinBytes: stdinBytes);
   }
 
   /// 最近一次排队命令失败原因（供托盘 / UI 展示）。
+  @override
   String? get lastRemoteCommandError => _cmdQueue.lastError;
   DateTime? get lastRemoteCommandErrorAt => _cmdQueue.lastErrorAt;
 
   @override
+  int? get lastRemoteExitCode => null;
+
+  @override
   bool get lightweightRemoteExec => false;
+
+  @override
+  bool get execSharesInteractiveSession => false;
 
   /// 当前登记的本地端口转发（桌面转发管理器）。
   List<LocalPortForwarder> get desktopForwards =>
@@ -2465,6 +2475,22 @@ Future<String?> loadPrivateKeyFromPath(String? path) async {
     pem = pem.substring(1);
   }
   return pem;
+}
+
+/// 连接前把 [ProxyConfig.keyPath] 加载为内存 [ProxyConfig.privateKeyPem]。
+Future<ProxyConfig> hydrateProxyPrivateKey(ProxyConfig proxy) async {
+  if (proxy.privateKeyPem != null && proxy.privateKeyPem!.trim().isNotEmpty) {
+    return proxy;
+  }
+  final path = proxy.keyPath?.trim();
+  if (path == null || path.isEmpty) return proxy;
+  try {
+    final pem = await loadPrivateKeyFromPath(path);
+    if (pem == null || pem.isEmpty) return proxy;
+    return proxy.copyWith(privateKeyPem: pem);
+  } catch (_) {
+    return proxy;
+  }
 }
 
 bool looksLikeTextBytes(Uint8List data, {int sample = 4096}) {

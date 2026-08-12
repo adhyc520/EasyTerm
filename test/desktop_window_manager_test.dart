@@ -49,7 +49,7 @@ void main() {
     });
 
     test('moveWindowToWorkspace and switch', () {
-      final a = wm.open(DesktopAppType.files);
+      final a = wm.open(DesktopAppType.files)!;
       wm.moveWindowToWorkspace(a.id, 1);
       expect(wm.windows, isEmpty);
       wm.switchWorkspace(1);
@@ -57,14 +57,14 @@ void main() {
     });
 
     test('alwaysOnTop toggles', () {
-      final w = wm.open(DesktopAppType.tasks);
+      final w = wm.open(DesktopAppType.tasks)!;
       expect(w.alwaysOnTop, isFalse);
       wm.toggleAlwaysOnTop(w.id);
       expect(w.alwaysOnTop, isTrue);
     });
 
     test('tile left half', () {
-      final w = wm.open(DesktopAppType.browser);
+      final w = wm.open(DesktopAppType.browser)!;
       wm.tile(w.id, TileZone.left);
       expect(w.rect.left, 0);
       expect(w.rect.width, closeTo(600, 0.5));
@@ -84,7 +84,7 @@ void main() {
     });
 
     test('notifyConnectionRestored invokes hooks', () {
-      final w = wm.open(DesktopAppType.monitor);
+      final w = wm.open(DesktopAppType.monitor)!;
       var n = 0;
       w.onConnectionRestored = () => n++;
       wm.notifyConnectionRestored();
@@ -92,15 +92,15 @@ void main() {
     });
 
     test('close clears connection restored hook', () {
-      final w = wm.open(DesktopAppType.logs);
+      final w = wm.open(DesktopAppType.logs)!;
       w.onConnectionRestored = () {};
       wm.close(w.id);
       expect(wm.windows, isEmpty);
     });
 
     test('each window owns a focus scope disposed on close', () {
-      final a = wm.open(DesktopAppType.files);
-      final b = wm.open(DesktopAppType.packages);
+      final a = wm.open(DesktopAppType.files)!;
+      final b = wm.open(DesktopAppType.packages)!;
       expect(a.focusScope, isNot(same(b.focusScope)));
       expect(b.focused, isTrue);
       expect(a.focused, isFalse);

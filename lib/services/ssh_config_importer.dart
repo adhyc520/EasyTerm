@@ -148,7 +148,9 @@ class SshConfigImporter {
   }
 
   static bool _isWildcardPattern(String pattern) {
-    return pattern.contains('*') || pattern.contains('?') || pattern.contains('!');
+    return pattern.contains('*') ||
+        pattern.contains('?') ||
+        pattern.contains('!');
   }
 
   static String? _expandHome(String? path) {
@@ -167,6 +169,9 @@ class SshConfigImporter {
   }
 
   List<SavedHostProfile> toProfiles(List<SshConfigEntry> entries) {
+    final byAlias = <String, SshConfigEntry>{
+      for (final e in entries) e.host: e,
+    };
     final now = DateTime.now().millisecondsSinceEpoch;
     return [
       for (var i = 0; i < entries.length; i++)
@@ -179,16 +184,18 @@ class SshConfigImporter {
           keyPath: entries[i].identityFile,
           password: null,
           updatedAtMs: now + i,
-          // ProxyJump 仅记录字符串到 proxyConfig.host 字段不够；导入时若有 ProxyJump
-          // 先把跳板别名写入 password 以外的扩展：用 proxyConfig 存跳板主机名占位。
-          proxyConfig: _proxyFromJump(entries[i].proxyJump),
+          proxyConfig: proxyFromJump(entries[i].proxyJump, byAlias: byAlias),
         ),
     ];
   }
 
-  static ProxyConfig? _proxyFromJump(String? proxyJump) {
+  /// 解析 ProxyJump：若引用同文件 Host 别名，展开 HostName/User/Port/IdentityFile。
+  static ProxyConfig? proxyFromJump(
+    String? proxyJump, {
+    Map<String, SshConfigEntry>? byAlias,
+  }) {
     if (proxyJump == null || proxyJump.trim().isEmpty) return null;
-    // 仅取第一跳；格式可为 user@host:port 或 host
+    // 仅取第一跳；格式可为 user@host:port 或 host（别名）
     final first = proxyJump.split(',').first.trim();
     if (first.isEmpty) return null;
     var user = '';
@@ -220,11 +227,27 @@ class SshConfigImporter {
         }
       }
     }
+
+    String? keyPath;
+    final alias = byAlias?[host];
+    if (alias != null) {
+      host = alias.hostname;
+      if (user.isEmpty && alias.user.isNotEmpty) {
+        user = alias.user;
+      }
+      // 仅当 ProxyJump 未显式写端口时采用别名 Port
+      if (!hostPort.contains(':') && !hostPort.startsWith('[')) {
+        port = alias.port;
+      }
+      keyPath = alias.identityFile;
+    }
+
     return ProxyConfig(
       type: ProxyType.sshJump,
       host: host,
       port: port,
       username: user.isEmpty ? 'root' : user,
+      keyPath: keyPath,
     );
   }
 
@@ -236,15 +259,14 @@ class SshConfigImporter {
   }) async {
     await store.ensureLoaded();
     final parsed = entries ?? await parseConfig(configPath);
+    // 整表导入以便 ProxyJump 别名互查；单条草稿仍按 entry 写入。
+    final drafts = toProfiles(parsed);
     var imported = 0;
     var skipped = 0;
     var overwritten = 0;
     var duplicated = 0;
 
-    for (final entry in parsed) {
-      final profiles = toProfiles([entry]);
-      if (profiles.isEmpty) continue;
-      final draft = profiles.first;
+    for (final draft in drafts) {
       SavedHostProfile? existing;
       for (final p in store.profiles) {
         if (p.label == draft.label ||

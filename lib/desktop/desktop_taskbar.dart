@@ -306,13 +306,34 @@ class _TrayAreaState extends State<_TrayArea> {
     final ds = widget.wm.desktopSettings;
     if (!ds.trayShowClock && !ds.trayShowMetrics) return;
     try {
-      final snap = await _exec?.snapshot();
+      final exec = _exec;
+      // Never inject tray probes into Telnet/Serial interactive consoles.
+      final shareInteractive = exec?.execSharesInteractiveSession == true;
+      final light = exec?.lightweightRemoteExec == true;
+      RemoteHostSnapshot? snap = _snap;
+      if (ds.trayShowMetrics && !shareInteractive) {
+        snap = await exec?.snapshot();
+      }
       if (!mounted) return;
       String clock = _clock;
       if (ds.trayShowClock) {
-        final raw = await _exec?.runQueued(r"date '+%H:%M'");
-        if (raw != null && raw.isNotEmpty) {
-          clock = raw.split(RegExp(r'\s')).first;
+        // Prefer local clock when remote exec would hit the user's PTY.
+        if (shareInteractive || light) {
+          final now = DateTime.now();
+          clock =
+              '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        } else {
+          final raw = await exec?.runQueued(
+            r"date '+%H:%M'",
+            allowInteractiveFallback: false,
+          );
+          if (raw != null && raw.isNotEmpty) {
+            clock = raw.split(RegExp(r'\s')).first;
+          } else {
+            final now = DateTime.now();
+            clock =
+                '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+          }
         }
       }
       setState(() {
