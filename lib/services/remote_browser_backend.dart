@@ -194,3 +194,19 @@ BrowserAddressTarget parseBrowserAddressBar(String input) {
     https: https || effectivePort == 443,
   );
 }
+
+/// Direct public-URL browsing (no SSH tunnel). Used when the session has no
+/// port-forward capability (Telnet / Serial).
+class DirectOnlyBrowserBackend implements RemoteBrowserBackend {
+  @override
+  String get modeLabel => '直连';
+
+  @override
+  Future<Uri> resolveUrl(String input) async {
+    final t = parseBrowserAddressBar(input);
+    return buildDirectBrowserNavigationUri(t);
+  }
+
+  @override
+  Future<void> close() async {}
+}

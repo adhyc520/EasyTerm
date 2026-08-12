@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import 'assistant_chat_bubble.dart';
 import 'assistant_chat_text.dart';
+import 'assistant_tool_call_card.dart';
 
 /// 将 API 消息列表转为可滚动气泡组件。
 List<Widget> buildAssistantChatMessageTiles({
@@ -12,6 +13,7 @@ List<Widget> buildAssistantChatMessageTiles({
   required bool busy,
   required String streamReasoning,
   required String streamContent,
+  bool zh = true,
 }) {
   final palette = AssistantChatPalette.of(context);
   final tiles = <Widget>[];
@@ -62,12 +64,31 @@ List<Widget> buildAssistantChatMessageTiles({
 
       final toolCalls = m['tool_calls'];
       if (toolCalls is List && toolCalls.isNotEmpty) {
-        tiles.add(
-          _ToolStatusRow(
-            text: l.assistantToolRunning(_toolNames(toolCalls)),
-            color: palette.metaText,
-          ),
-        );
+        for (final t in toolCalls) {
+          if (t is! Map) continue;
+          final fn = t['function'];
+          final name = fn is Map && fn['name'] is String
+              ? fn['name'] as String
+              : 'tool';
+          final tid = t['id'] as String?;
+          final matched = tid == null
+              ? null
+              : _findToolResult(messages, tid);
+          if (matched != null) {
+            // 结果卡片在 tool role 处渲染，此处跳过避免重复。
+            continue;
+          }
+          tiles.add(
+            AssistantToolCallCard(
+              toolName: name,
+              status: busy
+                  ? AssistantToolCallStatus.running
+                  : AssistantToolCallStatus.failure,
+              detail: busy ? null : (zh ? '无结果' : 'no result'),
+              zh: zh,
+            ),
+          );
+        }
       }
 
       final answer = normalizeChatText(
@@ -94,11 +115,33 @@ List<Widget> buildAssistantChatMessageTiles({
     }
 
     if (role == 'tool') {
+      final ui = m['_ui_tool'];
+      final toolName = ui is Map && ui['name'] is String
+          ? ui['name'] as String
+          : 'tool';
+      final statusRaw = ui is Map ? ui['status'] as String? : null;
+      final detail = ui is Map ? ui['detail'] as String? : null;
+      final status = switch (statusRaw) {
+        'success' => AssistantToolCallStatus.success,
+        'failure' => AssistantToolCallStatus.failure,
+        'running' => AssistantToolCallStatus.running,
+        _ => _inferStatusFromContent((m['content'] as String?) ?? ''),
+      };
+      tiles.add(
+        AssistantToolCallCard(
+          toolName: toolName,
+          status: status,
+          detail: detail,
+          zh: zh,
+        ),
+      );
+
       final tile = _toolResultTile(
         context: context,
         l: l,
         raw: (m['content'] as String?) ?? '',
         palette: palette,
+        toolName: toolName,
       );
       if (tile != null) tiles.add(tile);
     }
@@ -144,43 +187,22 @@ List<Widget> buildAssistantChatMessageTiles({
   return tiles;
 }
 
-String _toolNames(List<dynamic> toolCalls) {
-  final names = <String>[];
-  for (final t in toolCalls) {
-    if (t is! Map) continue;
-    final fn = t['function'];
-    if (fn is Map) {
-      final name = fn['name'];
-      if (name is String && name.isNotEmpty) names.add(name);
-    }
+Map<String, Object?>? _findToolResult(
+  List<Map<String, Object?>> messages,
+  String toolCallId,
+) {
+  for (final m in messages) {
+    if (m['role'] == 'tool' && m['tool_call_id'] == toolCallId) return m;
   }
-  return names.isEmpty ? 'terminal_run' : names.join(', ');
+  return null;
 }
 
-class _ToolStatusRow extends StatelessWidget {
-  const _ToolStatusRow({required this.text, required this.color});
-
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6, left: 4),
-      child: Row(
-        children: [
-          Icon(Icons.bolt_rounded, size: 16, color: color),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: color, fontSize: 11.5, height: 1.3),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+AssistantToolCallStatus _inferStatusFromContent(String raw) {
+  final parsed = tryParseToolJson(raw);
+  if (parsed == null) return AssistantToolCallStatus.success;
+  return parsed['ok'] == true
+      ? AssistantToolCallStatus.success
+      : AssistantToolCallStatus.failure;
 }
 
 Widget? _toolResultTile({
@@ -188,14 +210,22 @@ Widget? _toolResultTile({
   required AppLocalizations l,
   required String raw,
   required AssistantChatPalette palette,
+  required String toolName,
 }) {
   final parsed = tryParseToolJson(raw);
   if (parsed != null) {
     final ok = parsed['ok'] == true;
     final tail = parsed['terminal_tail'];
+    final content = parsed['content'];
+    final listing = parsed['listing'];
+    final matches = parsed['matches'];
+    final info = parsed['info'];
+    final processes = parsed['processes'];
+    final usage = parsed['usage'];
+    final network = parsed['network'];
+    final packages = parsed['packages'];
     final error = parsed['error'];
     final detail = parsed['detail'];
-    final output = tail is String ? normalizeChatText(tail) : '';
 
     if (!ok) {
       final err = normalizeChatText(
@@ -211,14 +241,43 @@ Widget? _toolResultTile({
       );
     }
 
+    String output = '';
+    if (tail is String && tail.isNotEmpty) {
+      output = normalizeChatText(tail);
+    } else if (content is String && content.isNotEmpty) {
+      output = normalizeChatText(content);
+    } else if (listing is String) {
+      output = normalizeChatText(listing);
+    } else if (matches is String) {
+      output = normalizeChatText(matches);
+    } else if (info is String) {
+      output = normalizeChatText(info);
+    } else if (processes is String) {
+      output = normalizeChatText(processes);
+    } else if (usage is String) {
+      output = normalizeChatText(usage);
+    } else if (network is String) {
+      output = normalizeChatText(network);
+    } else if (packages is String) {
+      output = normalizeChatText(packages);
+    } else if (toolName == 'file_list' && parsed['entries'] is List) {
+      final entries = parsed['entries'] as List;
+      output = entries
+          .take(80)
+          .map((e) {
+            if (e is! Map) return '$e';
+            final name = e['name'];
+            final isDir = e['is_dir'] == true;
+            return '${isDir ? 'd' : '-'} $name';
+          })
+          .join('\n');
+    } else if (parsed['paths'] is List) {
+      output = (parsed['paths'] as List).map((e) => '$e').join('\n');
+    }
+
     if (output.isEmpty) {
-      return _ToolResultCard(
-        palette: palette,
-        header: l.assistantToolResultHeader,
-        ok: true,
-        body: l.assistantToolResultEmpty,
-        bodyColor: palette.metaText,
-      );
+      // 成功但无可展示正文时，卡片标题已足够。
+      return null;
     }
 
     return _ToolResultCard(
@@ -286,12 +345,16 @@ class _ToolResultCard extends StatelessWidget {
                   color: ok ? palette.assistantLabel : palette.errorText,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  header,
-                  style: TextStyle(
-                    color: palette.metaText,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Text(
+                    header,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.metaText,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],

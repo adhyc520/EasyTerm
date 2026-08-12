@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'llm_tool_executor.dart';
+import 'terminal_session_controller.dart';
 import 'ssh_workspace_controller.dart';
 
 /// 用户中断当前流式请求（例如助手面板「停止」）。
@@ -20,60 +22,68 @@ final class LlmOpenAiChatService {
     required this.baseUrl,
     required this.model,
     required this.apiKey,
-  });
+    LlmToolRegistry? toolRegistry,
+  }) : toolRegistry = toolRegistry ?? LlmToolRegistry.standard();
 
   final String baseUrl;
   final String model;
   final String apiKey;
+  final LlmToolRegistry toolRegistry;
 
   static const _terminalToolName = 'terminal_run';
+  static const _fileWriteToolName = 'file_write';
 
-  static List<Map<String, Object?>> terminalToolsZh() => [
-    {
-      'type': 'function',
-      'function': {
-        'name': _terminalToolName,
-        'description':
-            '向当前 SSH 终端注入 shell 文本（如同用户键入）。'
-            '若文本未以换行或回车结尾，客户端会追加回车（与终端 Return 键一致）以便 PTY 提交行；多行可自行带换行。'
-            '每一次调用前用户都会在弹窗中单独确认是否执行；同意后工具返回中含终端尾部输出，请据实分析。',
-        'parameters': {
-          'type': 'object',
-          'properties': {
-            'text': {
-              'type': 'string',
-              'description': '要发送到远端 shell 的完整文本，可含多行。',
-            },
+  static Map<String, Object?> _terminalToolZh() => {
+    'type': 'function',
+    'function': {
+      'name': _terminalToolName,
+      'description':
+          '向当前 SSH 终端注入 shell 文本（如同用户键入）。'
+          '若文本未以换行或回车结尾，客户端会追加回车（与终端 Return 键一致）以便 PTY 提交行；多行可自行带换行。'
+          '每一次调用前用户都会在弹窗中单独确认是否执行；同意后工具返回中含终端尾部输出，请据实分析。',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'text': {
+            'type': 'string',
+            'description': '要发送到远端 shell 的完整文本，可含多行。',
           },
-          'required': ['text'],
         },
+        'required': ['text'],
       },
     },
-  ];
+  };
 
-  static List<Map<String, Object?>> terminalToolsEn() => [
-    {
-      'type': 'function',
-      'function': {
-        'name': _terminalToolName,
-        'description':
-            'Inject shell text into the current SSH terminal (as if typed). '
-            'If the text does not end with a newline or carriage return, the client appends a carriage return (same as the terminal Return key) to submit the line; '
-            'multi-line snippets may include their own newlines. '
-            'The user must approve every call in a dialog; the tool result includes a terminal tail—use it faithfully.',
-        'parameters': {
-          'type': 'object',
-          'properties': {
-            'text': {
-              'type': 'string',
-              'description':
-                  'Full text to send to the remote shell; may be multi-line.',
-            },
+  static Map<String, Object?> _terminalToolEn() => {
+    'type': 'function',
+    'function': {
+      'name': _terminalToolName,
+      'description':
+          'Inject shell text into the current SSH terminal (as if typed). '
+          'If the text does not end with a newline or carriage return, the client appends a carriage return (same as the terminal Return key) to submit the line; '
+          'multi-line snippets may include their own newlines. '
+          'The user must approve every call in a dialog; the tool result includes a terminal tail—use it faithfully.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'text': {
+            'type': 'string',
+            'description':
+                'Full text to send to the remote shell; may be multi-line.',
           },
-          'required': ['text'],
         },
+        'required': ['text'],
       },
     },
+  };
+
+  static List<Map<String, Object?>> terminalToolsZh() => [_terminalToolZh()];
+
+  static List<Map<String, Object?>> terminalToolsEn() => [_terminalToolEn()];
+
+  List<Map<String, Object?>> allTools({required bool zh}) => [
+    ...toolRegistry.openAiTools(zh: zh),
+    if (zh) _terminalToolZh() else _terminalToolEn(),
   ];
 
   static Uri resolveChatCompletionsUri(String raw) {
@@ -160,12 +170,18 @@ final class LlmOpenAiChatService {
   }
 
   /// 流式一轮：累积 assistant 消息（含 reasoning / tool_calls），执行工具并写回 [messages]。
+  ///
+  /// [terminal_run] / [file_write] 需用户确认；其余注册工具自动执行。
   Future<void> runTurnStreaming({
     required List<Map<String, Object?>> messages,
-    required SshWorkspaceController? ssh,
+    required TerminalSessionController? ssh,
     required bool useZhTools,
     required Future<bool> Function(String commandText)
     onRequestTerminalApproval,
+    Future<bool> Function(String path, String contentPreview)?
+    onRequestFileWriteApproval,
+    void Function(String toolName, String status, {String? detail})?
+    onToolProgress,
     required void Function({String? reasoningDelta, String? contentDelta})
     onStreamDelta,
     void Function()? onStreamRoundStart,
@@ -174,7 +190,7 @@ final class LlmOpenAiChatService {
     int maxToolRounds = 8,
   }) async {
     void touchMessages() => onMessagesChanged?.call();
-    final toolList = useZhTools ? terminalToolsZh() : terminalToolsEn();
+    final toolList = allTools(zh: useZhTools);
     for (var round = 0; round < maxToolRounds; round++) {
       if (cancel?.isCancelled == true) {
         return;
@@ -209,48 +225,195 @@ final class LlmOpenAiChatService {
         final fn = tc['function'];
         if (id == null || fn is! Map) continue;
         final f = Map<String, Object?>.from(Map<String, dynamic>.from(fn));
-        final name = f['name'] as String?;
+        final name = f['name'] as String? ?? '';
         final argsRaw = f['arguments'];
+        final args = parseToolArgs(argsRaw);
+
         if (name == _terminalToolName) {
           final cmd = _parseTerminalTextArg(argsRaw);
           if (cmd == null || cmd.isEmpty) {
-            messages.add({
-              'role': 'tool',
-              'tool_call_id': id,
-              'content': jsonEncode({'ok': false, 'error': 'missing_text'}),
-            });
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: jsonEncode({'ok': false, 'error': 'missing_text'}),
+                status: 'failure',
+                detail: 'missing_text',
+              ),
+            );
             touchMessages();
             continue;
           }
+          onToolProgress?.call(name, 'running', detail: cmd);
           final approved = await onRequestTerminalApproval(cmd);
           if (!approved) {
-            messages.add({
-              'role': 'tool',
-              'tool_call_id': id,
-              'content': jsonEncode({
-                'ok': false,
-                'error': 'user_denied',
-                'detail': 'User declined to run this command.',
-              }),
-            });
+            onToolProgress?.call(name, 'failure', detail: 'user_denied');
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: jsonEncode({
+                  'ok': false,
+                  'error': 'user_denied',
+                  'detail': 'User declined to run this command.',
+                }),
+                status: 'failure',
+                detail: 'user_denied',
+              ),
+            );
             touchMessages();
             continue;
           }
           final result = await _runTerminalToolWithCapture(cmd, ssh);
-          messages.add({'role': 'tool', 'tool_call_id': id, 'content': result});
+          final ok = _toolResultOk(result);
+          onToolProgress?.call(
+            name,
+            ok ? 'success' : 'failure',
+            detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
+          );
+          messages.add(
+            _toolResultMessage(
+              id: id,
+              name: name,
+              content: result,
+              status: ok ? 'success' : 'failure',
+              detail: cmd.length > 80 ? '${cmd.substring(0, 80)}…' : cmd,
+            ),
+          );
           touchMessages();
-        } else {
-          messages.add({
-            'role': 'tool',
-            'tool_call_id': id,
-            'content': jsonEncode({
+          continue;
+        }
+
+        if (name == _fileWriteToolName) {
+          final path = (args['path'] as String?)?.trim() ?? '';
+          final content = args['content'] as String? ?? '';
+          if (path.isEmpty) {
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: toolJsonErr('missing_path'),
+                status: 'failure',
+                detail: 'missing_path',
+              ),
+            );
+            touchMessages();
+            continue;
+          }
+          final preview = content.length > 4000
+              ? '${content.substring(0, 4000)}…'
+              : content;
+          onToolProgress?.call(name, 'running', detail: path);
+          final approve =
+              onRequestFileWriteApproval ??
+              ((p, _) => onRequestTerminalApproval('file_write $p'));
+          final approved = await approve(path, preview);
+          if (!approved) {
+            onToolProgress?.call(name, 'failure', detail: 'user_denied');
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: jsonEncode({
+                  'ok': false,
+                  'error': 'user_denied',
+                  'detail': 'User declined to write this file.',
+                }),
+                status: 'failure',
+                detail: path,
+              ),
+            );
+            touchMessages();
+            continue;
+          }
+          if (ssh == null || !ssh.connected) {
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: toolJsonErr('no_active_ssh_session'),
+                status: 'failure',
+                detail: path,
+              ),
+            );
+            touchMessages();
+            continue;
+          }
+          final result = await toolRegistry.execute(
+            name,
+            args,
+            ToolContext(
+              controller: ssh,
+              onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
+            ),
+          );
+          final ok = _toolResultOk(result);
+          onToolProgress?.call(name, ok ? 'success' : 'failure', detail: path);
+          messages.add(
+            _toolResultMessage(
+              id: id,
+              name: name,
+              content: result,
+              status: ok ? 'success' : 'failure',
+              detail: path,
+            ),
+          );
+          touchMessages();
+          continue;
+        }
+
+        if (toolRegistry.contains(name)) {
+          if (ssh == null || !ssh.connected) {
+            messages.add(
+              _toolResultMessage(
+                id: id,
+                name: name,
+                content: toolJsonErr('no_active_ssh_session'),
+                status: 'failure',
+              ),
+            );
+            touchMessages();
+            continue;
+          }
+          onToolProgress?.call(name, 'running');
+          final result = await toolRegistry.execute(
+            name,
+            args,
+            ToolContext(
+              controller: ssh,
+              onProgress: (n, s) => onToolProgress?.call(n, 'running', detail: s),
+            ),
+          );
+          final ok = _toolResultOk(result);
+          final detail = _summarizeToolArgs(name, args);
+          onToolProgress?.call(name, ok ? 'success' : 'failure', detail: detail);
+          messages.add(
+            _toolResultMessage(
+              id: id,
+              name: name,
+              content: result,
+              status: ok ? 'success' : 'failure',
+              detail: detail,
+            ),
+          );
+          touchMessages();
+          continue;
+        }
+
+        messages.add(
+          _toolResultMessage(
+            id: id,
+            name: name.isEmpty ? 'unknown' : name,
+            content: jsonEncode({
               'ok': false,
               'error': 'unknown_tool',
               'name': name,
             }),
-          });
-          touchMessages();
-        }
+            status: 'failure',
+            detail: 'unknown_tool',
+          ),
+        );
+        touchMessages();
       }
     }
     messages.add({
@@ -260,6 +423,45 @@ final class LlmOpenAiChatService {
           : '(Too many tool rounds; try a shorter task.)',
     });
     touchMessages();
+  }
+
+  static Map<String, Object?> _toolResultMessage({
+    required String id,
+    required String name,
+    required String content,
+    required String status,
+    String? detail,
+  }) {
+    return {
+      'role': 'tool',
+      'tool_call_id': id,
+      'content': content,
+      '_ui_tool': {
+        'name': name,
+        'status': status,
+        if (detail != null && detail.isNotEmpty) 'detail': detail,
+      },
+    };
+  }
+
+  static bool _toolResultOk(String content) {
+    try {
+      final d = jsonDecode(content);
+      return d is Map && d['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String? _summarizeToolArgs(String name, Map<String, dynamic> args) {
+    for (final key in ['path', 'pattern', 'query', 'filter', 'text']) {
+      final v = args[key];
+      if (v is String && v.trim().isNotEmpty) {
+        final s = v.trim();
+        return s.length > 80 ? '${s.substring(0, 80)}…' : s;
+      }
+    }
+    return name;
   }
 
   static Map<String, Object?> _stoppedAssistantApiMessage(
@@ -446,7 +648,7 @@ final class LlmOpenAiChatService {
 
   static Future<String> _runTerminalToolWithCapture(
     String text,
-    SshWorkspaceController? ssh,
+    TerminalSessionController? ssh,
   ) async {
     if (ssh == null || !ssh.connected) {
       return jsonEncode({'ok': false, 'error': 'no_active_ssh_session'});

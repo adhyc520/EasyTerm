@@ -24,12 +24,14 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
   static const _kLlmBaseUrl = 'wb_llm_base_url';
   static const _kLlmModel = 'wb_llm_model';
   static const _kLlmApiKey = 'wb_llm_api_key';
+  static const _kLlmSystemPrompt = 'wb_llm_system_prompt';
   static const _kAssistantCollapsed = 'wb_assistant_collapsed';
   static const _kAssistantWidth = 'wb_assistant_width';
   static const _kUiScale = 'wb_ui_scale';
   static const _kFollowTerminalCwd = 'wb_follow_terminal_cwd';
   static const _kInjectOsc7 = 'wb_inject_osc7';
   static const _kSmartRightClick = 'wb_smart_right_click';
+  static const _kTouchAssistBar = 'wb_touch_assist_bar';
 
   /// 界面语言：`zh` 或 `en`，默认中文。
   String appLocaleCode = 'zh';
@@ -71,13 +73,16 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
   String terminalTermType = 'xterm-256color';
 
   /// 终端回滚缓冲行数（较大值占用更多内存）。
-  int terminalMaxLines = 1000;
+  int terminalMaxLines = 2000;
 
   double terminalFontSize = 14;
 
   String terminalFontFamily = 'Courier New';
 
   bool selectToCopy = false;
+
+  /// 触控设备上显示终端辅助按键栏。
+  bool touchAssistBar = false;
 
   /// Assign UI scale and notify listeners (for live slider preview).
   void setUiScaleFactor(double value) {
@@ -107,6 +112,10 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
 
   /// API Key（仅存于本机 SharedPreferences）。
   String llmApiKey = '';
+
+  /// 可选自定义系统提示模板；支持 `{{host}}` `{{user}}` `{{cwd}}` `{{os}}`。
+  /// 为空时使用内置上下文构建器。
+  String llmSystemPrompt = '';
 
   /// 右侧助手栏是否收起为窄条。
   bool assistantPanelCollapsed = true;
@@ -188,7 +197,7 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     if (!terminalTypeChoices.contains(terminalTermType)) {
       terminalTermType = 'xterm-256color';
     }
-    terminalMaxLines = (p.getInt(_kBufferLines) ?? 1000).clamp(100, 100000);
+    terminalMaxLines = (p.getInt(_kBufferLines) ?? 2000).clamp(100, 100000);
 
     double dpr = 1.0;
     try {
@@ -228,6 +237,7 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     } else {
       smartRightClick = !kIsWeb && Platform.isWindows;
     }
+    touchAssistBar = p.getBool(_kTouchAssistBar) ?? false;
 
     appLocaleCode = p.getString(_kAppLocale) ?? 'zh';
     if (appLocaleCode != 'en' && appLocaleCode != 'zh') {
@@ -244,6 +254,7 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     llmModel = (p.getString(_kLlmModel) ?? llmModel).trim();
     if (llmModel.isEmpty) llmModel = 'gpt-4o-mini';
     llmApiKey = p.getString(_kLlmApiKey) ?? '';
+    llmSystemPrompt = p.getString(_kLlmSystemPrompt) ?? '';
     assistantPanelCollapsed = p.getBool(_kAssistantCollapsed) ?? true;
     assistantPanelWidth = (p.getDouble(_kAssistantWidth) ?? 320).clamp(
       240,
@@ -269,11 +280,13 @@ final class WorkbenchSettingsStore extends ChangeNotifier {
     await p.setBool(_kFollowTerminalCwd, followTerminalCwd);
     await p.setBool(_kInjectOsc7, injectOsc7Cwd);
     await p.setBool(_kSmartRightClick, smartRightClick);
+    await p.setBool(_kTouchAssistBar, touchAssistBar);
     await p.setString(_kAppLocale, appLocaleCode);
     await p.setString(_kThemeMode, appThemeMode);
     await p.setString(_kLlmBaseUrl, llmBaseUrl);
     await p.setString(_kLlmModel, llmModel);
     await p.setString(_kLlmApiKey, llmApiKey);
+    await p.setString(_kLlmSystemPrompt, llmSystemPrompt);
     await p.setBool(_kAssistantCollapsed, assistantPanelCollapsed);
     await p.setDouble(_kAssistantWidth, assistantPanelWidth);
     notifyListeners();

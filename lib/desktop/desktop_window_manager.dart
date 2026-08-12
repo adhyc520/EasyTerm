@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/desktop_settings_store.dart';
 import '../services/desktop_window_size_store.dart';
-import '../services/ssh_workspace_controller.dart';
+import '../services/terminal_session_controller.dart';
 import '../services/workbench_settings_store.dart';
 import 'desktop_app_registry.dart';
 
@@ -133,7 +133,7 @@ class DesktopWindowManager extends ChangeNotifier {
     _initWorkspaces(this.desktopSettings.workspaceCount);
   }
 
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final String hostKey;
   final WorkbenchSettingsStore settings;
   final DesktopSettingsStore desktopSettings;
@@ -376,7 +376,13 @@ class DesktopWindowManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  DesktopWindow open(
+  /// Whether [type] is allowed for the current session capabilities.
+  bool canOpen(DesktopAppType type) {
+    final needs = metaFor(type).needs;
+    return needs.every(controller.capabilities.contains);
+  }
+
+  DesktopWindow? open(
     DesktopAppType type, {
     Map<String, dynamic>? args,
     Rect? rect,
@@ -384,6 +390,7 @@ class DesktopWindowManager extends ChangeNotifier {
     WindowState state = WindowState.normal,
     double? z,
   }) {
+    if (!canOpen(type)) return null;
     final a = Map<String, dynamic>.from(args ?? const {});
     final r = rect ?? _staggeredDefaultRect(type);
     final win = DesktopWindow(
@@ -573,6 +580,18 @@ class DesktopWindowManager extends ChangeNotifier {
     w.preMaxRect = null;
     w.state = WindowState.normal;
     w.rect = _clampNormalRect(target);
+    _clearSnapPreview(notify: false);
+    focus(id);
+    notifyListeners();
+  }
+
+  /// 将窗口设为指定矩形（normal 态），用于三分等非 [TileZone] 贴靠布局。
+  void setWindowRect(String id, Rect rect) {
+    final w = _find(id);
+    if (w == null || desktopSize == Size.zero) return;
+    w.preMaxRect = null;
+    w.state = WindowState.normal;
+    w.rect = _clampNormalRect(rect);
     _clearSnapPreview(notify: false);
     focus(id);
     notifyListeners();
@@ -807,8 +826,7 @@ class DesktopWindowManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> prepareFreshDesktop() async {
-    if (_layoutRestored || _disposed) return;
+  Future<void> prepareFreshDesktop() async {    if (_layoutRestored || _disposed) return;
     _layoutRestored = true;
     _disposeAllWindowFocus();
     for (final ws in _workspaces) {
@@ -848,7 +866,7 @@ class DesktopWindowManager extends ChangeNotifier {
     return false;
   }
 
-  DesktopWindow openTerminal({bool preferPrimary = true}) {
+  DesktopWindow? openTerminal({bool preferPrimary = true}) {
     if (preferPrimary && !hasPrimaryTerminal) {
       return open(DesktopAppType.terminal, args: const {'usePrimary': true});
     }

@@ -1,5 +1,5 @@
 import 'remote_process_list.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 磁盘挂载点用量。
 class RemoteDiskMount {
@@ -224,7 +224,7 @@ const String kWindowsStatusBundle =
     r'''powershell -NoProfile -NonInteractive -Command "$os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; $mem=1-($os.FreePhysicalMemory/[double]$os.TotalVisibleMemorySize); $disk=0; if($d -and $d.Size -gt 0){$disk=1-($d.FreeSpace/[double]$d.Size)}; $up=(Get-Date)-$os.LastBootUpTime; Write-Output '__WA__'; Write-Output ([math]::Round($mem,4)); Write-Output '__WB__'; Write-Output ([math]::Round(($cpu/100.0),4)); Write-Output '__WC__'; Write-Output ([math]::Round($disk,4)); Write-Output '__WD__'; Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | ForEach-Object { if($_.Size -gt 0){ $u=1-($_.FreeSpace/[double]$_.Size); $_.DeviceID + '|' + [int64]$_.Size + '|' + [int64]($_.Size-$_.FreeSpace) + '|' + [int64]$_.FreeSpace + '|' + ([math]::Round($u,4)) } }; Write-Output '__WG__'; Write-Output ($up.Days.ToString()+'d '+$up.Hours.ToString()+'h '+$up.Minutes.ToString()+'m'); Write-Output '__WH__'; Write-Output ($env:COMPUTERNAME + ' · ' + $os.Caption + ' · ' + $os.Version); Write-Output '__WZ__'"''';
 
 Future<RemoteHostSnapshot?> fetchRemoteHostSnapshot(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;

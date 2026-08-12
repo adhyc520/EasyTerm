@@ -1,9 +1,9 @@
-import 'ssh_workspace_controller.dart';
+import 'terminal_session_controller.dart';
 
 /// 终端分屏方向：水平 = 左右，垂直 = 上下。
 enum SessionPaneAxis { horizontal, vertical }
 
-/// 分屏树节点：叶子为独立 SSH 终端，中间节点为可拖拽比例的二分布局。
+/// 分屏树节点：叶子为独立终端会话，中间节点为可拖拽比例的二分布局。
 sealed class SessionPaneNode {
   const SessionPaneNode();
 
@@ -24,7 +24,7 @@ final class SessionPaneLeaf extends SessionPaneNode {
   SessionPaneLeaf({required this.paneId, required this.controller});
 
   final int paneId;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   Iterable<SessionPaneLeaf> get leaves sync* {

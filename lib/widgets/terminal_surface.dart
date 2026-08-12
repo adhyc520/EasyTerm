@@ -10,9 +10,16 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../l10n/app_localizations.dart';
+import '../services/command_bookmark_store.dart';
+import '../services/session_player.dart';
+import '../services/session_recorder.dart';
+import '../services/terminal_copy_mode.dart';
+import '../services/terminal_search_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
+import 'command_palette_overlay.dart';
+import 'terminal_recording_controls.dart';
 
 /// 纯终端渲染 / 输入 / 选择 / 菜单 / 断线浮层，不依赖 [SshWorkspaceController]。
 class TerminalSurface extends StatefulWidget {
@@ -34,6 +41,12 @@ class TerminalSurface extends StatefulWidget {
     this.showLeftBorder = true,
     this.tapRegionGroupId,
     this.releaseFocusOnTapOutside = true,
+    this.sessionRecorder,
+    this.sessionPlayer,
+    this.onToggleRecording,
+    this.onSaveRecording,
+    this.bookmarkStore,
+    this.hostLabel,
   });
 
   final Terminal terminal;
@@ -65,6 +78,21 @@ class TerminalSurface extends StatefulWidget {
   /// 点击终端区域外时是否释放键盘焦点（桌面窗口内通常关闭）。
   final bool releaseFocusOnTapOutside;
 
+  /// Optional session recorder (e.g. from [SshWorkspaceController]).
+  final SessionRecorder? sessionRecorder;
+
+  /// Optional replay player; when playing, output is written via [onOutput].
+  final SessionPlayer? sessionPlayer;
+
+  final VoidCallback? onToggleRecording;
+  final VoidCallback? onSaveRecording;
+
+  /// Shared bookmark store; if null a local store is created.
+  final CommandBookmarkStore? bookmarkStore;
+
+  /// Host name for bookmark hostPattern filtering.
+  final String? hostLabel;
+
   @override
   State<TerminalSurface> createState() => TerminalSurfaceState();
 }
@@ -95,8 +123,17 @@ class TerminalSurfaceState extends State<TerminalSurface>
   bool _findOpen = false;
   final TextEditingController _findCtrl = TextEditingController();
   final FocusNode _findFocus = FocusNode(debugLabel: 'terminalFind');
-  List<int> _findHits = const [];
+  List<TerminalMatch> _findHits = const [];
   int _findIndex = -1;
+  bool _findCaseSensitive = false;
+  bool _findRegex = false;
+
+  // --- Copy mode / bookmarks / recording UI ---
+  late final TerminalCopyMode _copyMode = TerminalCopyMode(widget.terminal);
+  late final CommandBookmarkStore _bookmarks =
+      widget.bookmarkStore ?? CommandBookmarkStore();
+  bool _paletteOpen = false;
+  bool _ownsBookmarkStore = false;
 
   static TerminalTheme _workbenchTerminalTheme(Color terminalBg) {
     const base = TerminalThemes.defaultTheme;
@@ -131,17 +168,31 @@ class TerminalSurfaceState extends State<TerminalSurface>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _ownsBookmarkStore = widget.bookmarkStore == null;
     _jumpPulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 420),
     );
     _termScroll.addListener(_onTermScrolled);
     widget.terminal.addListener(_onTerminalBufferChanged);
+    widget.sessionRecorder?.addListener(_onRecordingChanged);
+    widget.sessionPlayer?.addListener(_onRecordingChanged);
+    _wirePlayerOutput(widget.sessionPlayer);
     if (widget.autofocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) requestKeyboardFocus();
       });
     }
+  }
+
+  void _onRecordingChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _wirePlayerOutput(SessionPlayer? player) {
+    player?.onOutput = (data) {
+      widget.terminal.write(data);
+    };
   }
 
   @override
@@ -193,6 +244,17 @@ class TerminalSurfaceState extends State<TerminalSurface>
     if (!identical(oldWidget.terminal, widget.terminal)) {
       oldWidget.terminal.removeListener(_onTerminalBufferChanged);
       widget.terminal.addListener(_onTerminalBufferChanged);
+      _copyMode.terminal = widget.terminal;
+    }
+    if (!identical(oldWidget.sessionRecorder, widget.sessionRecorder)) {
+      oldWidget.sessionRecorder?.removeListener(_onRecordingChanged);
+      widget.sessionRecorder?.addListener(_onRecordingChanged);
+    }
+    if (!identical(oldWidget.sessionPlayer, widget.sessionPlayer)) {
+      oldWidget.sessionPlayer?.removeListener(_onRecordingChanged);
+      oldWidget.sessionPlayer?.onOutput = null;
+      widget.sessionPlayer?.addListener(_onRecordingChanged);
+      _wirePlayerOutput(widget.sessionPlayer);
     }
   }
 
@@ -208,6 +270,12 @@ class TerminalSurfaceState extends State<TerminalSurface>
     _findCtrl.dispose();
     _findFocus.dispose();
     widget.terminal.removeListener(_onTerminalBufferChanged);
+    widget.sessionRecorder?.removeListener(_onRecordingChanged);
+    widget.sessionPlayer?.removeListener(_onRecordingChanged);
+    widget.sessionPlayer?.onOutput = null;
+    if (_ownsBookmarkStore) {
+      _bookmarks.dispose();
+    }
     _viewController.dispose();
     super.dispose();
   }
@@ -239,19 +307,13 @@ class TerminalSurfaceState extends State<TerminalSurface>
       _findIndex = -1;
       return;
     }
-    final text = widget.terminal.buffer.getText();
-    final lower = text.toLowerCase();
-    final needle = q.toLowerCase();
-    final hits = <int>[];
-    var from = 0;
-    while (true) {
-      final i = lower.indexOf(needle, from);
-      if (i < 0) break;
-      hits.add(i);
-      from = i + 1;
-    }
-    _findHits = hits;
-    _findIndex = hits.isEmpty ? -1 : 0;
+    _findHits = TerminalSearchController.search(
+      widget.terminal,
+      q,
+      caseSensitive: _findCaseSensitive,
+      regex: _findRegex,
+    );
+    _findIndex = _findHits.isEmpty ? -1 : 0;
   }
 
   /// Walks buffer the same way [Buffer.getText] emits chars; maps a char
@@ -302,8 +364,9 @@ class TerminalSurfaceState extends State<TerminalSurface>
       _viewController.clearSelection();
       return;
     }
-    final start = _findHits[_findIndex];
-    final len = _findCtrl.text.length;
+    final hit = _findHits[_findIndex];
+    final start = hit.start;
+    final len = hit.length;
     final (begin, end) = _cellsForCharRange(start, len);
     if (begin == null || end == null) {
       // Fallback: approximate line from flat offset / cols.
@@ -370,6 +433,79 @@ class TerminalSurfaceState extends State<TerminalSurface>
     _rebuildFindHits();
     setState(() {});
     _selectFindHit();
+  }
+
+  void _toggleFindCaseSensitive() {
+    setState(() => _findCaseSensitive = !_findCaseSensitive);
+    _rebuildFindHits();
+    setState(() {});
+    _selectFindHit();
+  }
+
+  void _toggleFindRegex() {
+    setState(() => _findRegex = !_findRegex);
+    _rebuildFindHits();
+    setState(() {});
+    _selectFindHit();
+  }
+
+  void enterCopyMode() {
+    _copyMode.enter();
+    setState(() {});
+    requestKeyboardFocus();
+  }
+
+  void exitCopyMode() {
+    if (!_copyMode.active) return;
+    _copyMode.exit();
+    _viewController.clearSelection();
+    setState(() {});
+  }
+
+  void openCommandPalette() {
+    setState(() => _paletteOpen = true);
+  }
+
+  void closeCommandPalette() {
+    if (!_paletteOpen) return;
+    setState(() => _paletteOpen = false);
+    requestKeyboardFocus();
+  }
+
+  void _onBookmarkSelected(String command) {
+    if (!widget.connected) return;
+    // Submit as typed input (not bracketed paste) so shells run the line.
+    final t = command.endsWith('\n') || command.endsWith('\r')
+        ? command
+        : '$command\r';
+    widget.terminal.textInput(t);
+  }
+
+  /// Export entire buffer text to clipboard (or return it for save).
+  Future<String> exportBuffer({bool toClipboard = true}) async {
+    final text = widget.terminal.buffer.getText();
+    if (toClipboard && text.isNotEmpty) {
+      await Clipboard.setData(ClipboardData(text: text));
+    }
+    return text;
+  }
+
+  void _syncCopyModeSelection() {
+    if (!_copyMode.active || !_copyMode.visualMode) {
+      return;
+    }
+    final sel = _copyMode.selection;
+    if (sel == null) {
+      _viewController.clearSelection();
+      return;
+    }
+    final (begin, end) = sel;
+    final term = widget.terminal;
+    _viewController.setSelection(
+      term.buffer.createAnchorFromOffset(begin),
+      term.buffer.createAnchorFromOffset(end),
+    );
+    _scrollToBufferLine(begin.y);
   }
 
   void _onTerminalBufferChanged() {
@@ -639,6 +775,31 @@ class TerminalSurfaceState extends State<TerminalSurface>
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+
+    if (_copyMode.active) {
+      final key = event.logicalKey;
+      final ch = event.character;
+      final yank = key == LogicalKeyboardKey.keyY || ch == 'y';
+      final handled = _copyMode.handleKey(key, character: ch);
+      if (yank && handled) {
+        final text = _copyMode.yankText();
+        if (text.isNotEmpty) {
+          unawaited(Clipboard.setData(ClipboardData(text: text)));
+        }
+        exitCopyMode();
+        return KeyEventResult.handled;
+      }
+      if (handled) {
+        if (!_copyMode.active) {
+          _viewController.clearSelection();
+        } else {
+          _syncCopyModeSelection();
+        }
+        setState(() {});
+        return KeyEventResult.handled;
+      }
+    }
+
     if (workbenchUsesMetaPrimaryModifier()) {
       return KeyEventResult.ignored;
     }
@@ -698,6 +859,10 @@ class TerminalSurfaceState extends State<TerminalSurface>
       globalPosition.dy - topLeft.dy + 1,
     );
     final hasSelection = _viewController.selection != null;
+    final selectedText = hasSelection
+        ? term.buffer.getText(_viewController.selection!)
+        : '';
+    final messenger = ScaffoldMessenger.maybeOf(context);
     showMenu<String>(
       context: context,
       position: rel,
@@ -740,6 +905,32 @@ class TerminalSurfaceState extends State<TerminalSurface>
         ),
         const PopupMenuDivider(),
         PopupMenuItem(
+          value: 'bookmark',
+          enabled: selectedText.trim().isNotEmpty,
+          child: Text(
+            '添加到书签',
+            style: TextStyle(color: context.wb.primaryText),
+          ),
+        ),
+        PopupMenuItem(
+          value: 'exportBuffer',
+          child: Text(
+            '导出缓冲区',
+            style: TextStyle(color: context.wb.primaryText),
+          ),
+        ),
+        if (widget.onToggleRecording != null)
+          PopupMenuItem(
+            value: 'toggleRecord',
+            child: Text(
+              (widget.sessionRecorder?.isRecording ?? false)
+                  ? '停止录制'
+                  : '开始录制',
+              style: TextStyle(color: context.wb.primaryText),
+            ),
+          ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
           value: 'clearBuffer',
           child: Text(
             '清空缓冲区',
@@ -769,6 +960,29 @@ class TerminalSurfaceState extends State<TerminalSurface>
         );
       } else if (v == 'clearSelection') {
         _viewController.clearSelection();
+      } else if (v == 'bookmark') {
+        final text = selectedText.trim();
+        if (text.isEmpty) return;
+        try {
+          await _bookmarks.ensureLoaded();
+          await _bookmarks.create(label: text.split('\n').first, command: text);
+          if (!mounted) return;
+          messenger?.showSnackBar(
+            const SnackBar(content: Text('已添加到命令书签')),
+          );
+        } catch (_) {}
+      } else if (v == 'exportBuffer') {
+        final text = await exportBuffer(toClipboard: true);
+        if (!mounted) return;
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text(
+              text.isEmpty ? '缓冲区为空' : '已复制缓冲区到剪贴板',
+            ),
+          ),
+        );
+      } else if (v == 'toggleRecord') {
+        widget.onToggleRecording?.call();
       } else if (v == 'clearBuffer') {
         term.eraseScrollbackOnly();
         term.eraseDisplay();
@@ -894,29 +1108,104 @@ class TerminalSurfaceState extends State<TerminalSurface>
               ),
             ),
           ),
+        if (_copyMode.active)
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: Material(
+              color: context.wb.panelElevated,
+              elevation: 2,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Text(
+                  _copyMode.visualMode
+                      ? '复制模式 · VISUAL · y 复制 · Esc 退出'
+                      : '复制模式 · h/j/k/l 移动 · v 选择 · Esc 退出',
+                  style: TextStyle(fontSize: 11, color: context.wb.primaryText),
+                ),
+              ),
+            ),
+          ),
       ],
     );
+
+    final recording = widget.sessionRecorder?.isRecording ?? false;
+    final player = widget.sessionPlayer;
+    final showRecordingBar = recording ||
+        (player != null &&
+            (player.isPlaying ||
+                player.isPaused ||
+                (player.state == SessionPlayerState.stopped &&
+                    player.events.isNotEmpty)));
 
     final withFind = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_findOpen) _buildFindBar(context),
+        if (showRecordingBar)
+          TerminalRecordingControls(
+            recorder: widget.sessionRecorder,
+            player: player,
+            onToggleRecord: widget.onToggleRecording,
+            onSave: widget.onSaveRecording,
+            onPlay: player == null ? null : () => player.play(speed: player.speed),
+            onPause: player?.pause,
+            onStop: player?.stop,
+            onSeek: player?.seek,
+            onSpeedChanged: player?.setSpeed,
+          ),
         Expanded(child: withJump),
       ],
     );
 
     final shortcuts = <ShortcutActivator, VoidCallback>{
       ...workbenchBindActivators(
-        workbenchMetaOrControl(LogicalKeyboardKey.keyF),
+        workbenchTerminalFindActivators(),
         openFind,
       ),
-      if (_findOpen)
-        const SingleActivator(LogicalKeyboardKey.escape): _closeFind,
+      ...workbenchBindActivators(
+        workbenchTerminalCopyModeActivators(),
+        () {
+          if (_copyMode.active) {
+            exitCopyMode();
+          } else {
+            enterCopyMode();
+          }
+        },
+      ),
+      ...workbenchBindActivators(
+        workbenchTerminalCommandPaletteActivators(),
+        openCommandPalette,
+      ),
+      if (_findOpen || _copyMode.active || _paletteOpen)
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          if (_paletteOpen) {
+            closeCommandPalette();
+          } else if (_copyMode.active) {
+            exitCopyMode();
+          } else {
+            _closeFind();
+          }
+        },
     };
 
     Widget body = CallbackShortcuts(
       bindings: shortcuts,
-      child: withFind,
+      child: Stack(
+        children: [
+          Positioned.fill(child: withFind),
+          if (_paletteOpen)
+            Positioned.fill(
+              child: CommandPaletteOverlay(
+                store: _bookmarks,
+                host: widget.hostLabel,
+                onClose: closeCommandPalette,
+                onSelect: _onBookmarkSelected,
+              ),
+            ),
+        ],
+      ),
     );
 
     if (widget.connected) return SizedBox.expand(child: body);
@@ -1058,12 +1347,78 @@ class TerminalSurfaceState extends State<TerminalSurface>
                 style: TextStyle(fontSize: 11, color: wb.textMuted),
               ),
             ),
+            _FindOptionChip(
+              wb: wb,
+              label: 'Aa',
+              tooltip: '区分大小写',
+              selected: _findCaseSensitive,
+              onTap: _toggleFindCaseSensitive,
+            ),
+            _FindOptionChip(
+              wb: wb,
+              label: '.*',
+              tooltip: '正则表达式',
+              selected: _findRegex,
+              onTap: _toggleFindRegex,
+            ),
             IconButton(
               iconSize: 18,
               onPressed: _closeFind,
               icon: Icon(Icons.close, color: wb.textMuted),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FindOptionChip extends StatelessWidget {
+  const _FindOptionChip({
+    required this.wb,
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final WorkbenchColors wb;
+  final String label;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 2),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected
+                  ? wb.accentBlue.withValues(alpha: 0.22)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: selected ? wb.accentBlue : wb.border,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'monospace',
+                color: selected ? wb.accentBlue : wb.textMuted,
+              ),
+            ),
+          ),
         ),
       ),
     );

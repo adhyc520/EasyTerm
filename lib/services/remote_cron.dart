@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 一条 crontab 行（含注释与空行，便于原样回写）。
 class CronLine {
@@ -88,7 +88,7 @@ List<CronLine> parseCrontab(String raw) {
   return out;
 }
 
-Future<String?> fetchCrontabText(SshWorkspaceController c) async {
+Future<String?> fetchCrontabText(RemoteExecCapable c) async {
   final out = await c.runQueued('crontab -l 2>/dev/null');
   if (out == null) return null;
   // 空 crontab 时部分系统把错误打到 stdout；规范化。
@@ -97,7 +97,7 @@ Future<String?> fetchCrontabText(SshWorkspaceController c) async {
   return out;
 }
 
-Future<String?> installCrontab(SshWorkspaceController c, String text) async {
+Future<String?> installCrontab(RemoteExecCapable c, String text) async {
   final normalized = text.replaceAll('\r\n', '\n');
   final b64 = base64Encode(utf8.encode(normalized.endsWith('\n') || normalized.isEmpty
       ? normalized

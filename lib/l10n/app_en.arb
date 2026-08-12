@@ -173,7 +173,6 @@
   "settingsFollowTerminalCwdDescription": "Sync the file browser when the shell cds; also injects cwd reporting into bash/zsh.",
   "settingsInjectOsc7Label": "Enable cwd reporting",
   "settingsInjectOsc7Description": "Inject an OSC 7 hook into bash/zsh after connect (also auto-enabled with Follow terminal folder).",
-  "statusBarCwdNoOsc7Hint": "No cwd reports yet — follow may not work",
   "settingsSmartRightClickLabel": "Smart right-click copy/paste",
   "settingsSmartRightClickDescription": "With a selection, right-click copies and clears; otherwise pastes (Windows Terminal style).",
   "settingsUiScaleLabel": "UI scale",
@@ -363,61 +362,6 @@
       "detail": {"type": "String"}
     }
   },
-  "statusNotConnected": "Not connected",
-  "statusNoRemoteInfo": "Remote metrics unavailable",
-  "statusPickHost": "Pick a host on the left and connect",
-  "statusBeijingTimeLabel": "Beijing",
-  "statusRemoteUptimePrefix": "Remote",
-  "statusRemoteUptimeLine": "Remote: {uptime}",
-  "@statusRemoteUptimeLine": {
-    "placeholders": {
-      "uptime": {"type": "String"}
-    }
-  },
-  "tooltipMemNoData": "Memory usage\n(no data)",
-  "tooltipMem": "Memory usage\nAbout {percent}% (vs MemAvailable / MemTotal)",
-  "@tooltipMem": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
-  "tooltipCpuNoData": "CPU usage\n(no data; needs vmstat sampling)",
-  "tooltipCpu": "CPU usage\nAbout {percent}% (vmstat 1s sample)",
-  "@tooltipCpu": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
-  "tooltipDiskTitle": "Disk space on /",
-  "tooltipDiskUsed": "\nUsed: about {percent}%",
-  "@tooltipDiskUsed": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
-  "tooltipDiskNoUsage": "\nUsage: no data",
-  "tooltipInodeTitle": "Inodes on /",
-  "tooltipInodeUsed": "\nUsed: about {percent}%",
-  "@tooltipInodeUsed": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
-  "tooltipInodeNoUsage": "\nUsage: no data",
-  "tooltipLoadTitle": "Load average",
-  "tooltipLoadLine": "\n1 / 5 / 15 min: {line}",
-  "@tooltipLoadLine": {
-    "placeholders": {
-      "line": {"type": "String"}
-    }
-  },
-  "tooltipLoadNoData": "\n(no /proc/loadavg)",
-  "tooltipLoadPressure": "\nPressure vs CPU count: about {percent}%",
-  "@tooltipLoadPressure": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
   "sshAuthFailKeyAndPassword": "Authentication failed: the server rejected the key, or the key passphrase / SSH password is wrong. Double-check each.",
   "sshAuthFailKey": "Authentication failed: the key does not match this account, or the key passphrase is wrong.",
   "sshAuthFailPassword": "Could not connect: wrong username or SSH password (authentication failed). If the server allows keys only, configure a key and avoid mixing passwords incorrectly.",
@@ -539,5 +483,88 @@
   "sudoLockedSnack": "sudo password locked",
   "sudoCancel": "Cancel",
   "sudoShowPassword": "Show",
-  "sudoHidePassword": "Hide"
+  "sudoHidePassword": "Hide",
+
+  "bulkOperationTitle": "Bulk command",
+  "bulkTargetHosts": "Target hosts",
+  "bulkNoConnectedHosts": "No connected sessions. Open tabs first, then run bulk commands.",
+  "bulkNoHostsSelected": "Select at least one connected host.",
+  "bulkCommandEmpty": "Enter a command to run.",
+  "bulkCommandLabel": "Command",
+  "bulkParallel": "Run in parallel",
+  "bulkTimeoutSec": "Timeout (s)",
+  "bulkExecute": "Run",
+  "bulkResults": "Results",
+
+  "sshConfigImportTitle": "Import SSH config",
+  "sshConfigImportSource": "Source: {path}",
+  "@sshConfigImportSource": {
+    "placeholders": {
+      "path": {"type": "String"}
+    }
+  },
+  "sshConfigImportEmpty": "No Host entries found (wildcards like Host * are skipped).",
+  "sshConfigImportFound": "Found {count} host entries",
+  "@sshConfigImportFound": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sshConfigConflictLabel": "On conflict",
+  "sshConfigConflictSkip": "Skip",
+  "sshConfigConflictOverwrite": "Overwrite",
+  "sshConfigConflictDuplicate": "Create duplicate",
+  "sshConfigImportAll": "Import all",
+  "sshConfigImportSelected": "Import selected",
+  "sshConfigImportDone": "Imported {imported}, skipped {skipped}, overwritten {overwritten}, duplicated {duplicated}",
+  "@sshConfigImportDone": {
+    "placeholders": {
+      "imported": {"type": "int"},
+      "skipped": {"type": "int"},
+      "overwritten": {"type": "int"},
+      "duplicated": {"type": "int"}
+    }
+  },
+
+  "hostGroupEditorTitle": "Host groups",
+  "hostGroupsHeader": "Groups",
+  "hostGroupsEmpty": "No groups yet.",
+  "hostGroupCreateTitle": "New group",
+  "hostGroupRenameTitle": "Rename group",
+  "hostGroupDeleteTitle": "Delete group",
+  "hostGroupDeleteConfirm": "Delete group “{name}”? Hosts are not deleted.",
+  "@hostGroupDeleteConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "hostGroupNameLabel": "Group name",
+  "hostGroupMemberCount": "{count} hosts",
+  "@hostGroupMemberCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "hostGroupSelectHint": "Select a group to assign hosts.",
+  "hostGroupMembersOf": "Members · {name}",
+  "@hostGroupMembersOf": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "hostGroupNoMembers": "No members in this group.",
+  "hostGroupAddMember": "Add host",
+  "hostGroupRemoveMember": "Remove from group",
+  "hostSearchHint": "Search hosts…",
+  "hostUngroupedHeader": "Ungrouped ({count})",
+  "@hostUngroupedHeader": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "connectionAdvancedSection": "Advanced",
+  "connectionJumpHostLabel": "Jump host (ProxyJump)",
+  "connectionJumpHostNone": "None",
+  "connectionTimeoutSecLabel": "Connect timeout (s)"
 }

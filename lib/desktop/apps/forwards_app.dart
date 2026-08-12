@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 
 import '../../services/desktop_forwards_store.dart';
 import '../../services/local_port_forwarder.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
@@ -24,13 +26,15 @@ class ForwardsApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<ForwardsApp> createState() => _ForwardsAppState();
 }
 
 class _ForwardsAppState extends State<ForwardsApp> {
+  SshWorkspaceController get _ssh => widget.controller as SshWorkspaceController;
+
   late final DesktopForwardsStore _store;
   final List<_ForwardRow> _rows = [];
   /// localPort → TCP probe result (null = not probed yet).
@@ -52,7 +56,7 @@ class _ForwardsAppState extends State<ForwardsApp> {
 
   static const _restartCooldown = Duration(seconds: 30);
 
-  SshWorkspaceController get c => widget.controller;
+  SshWorkspaceController get c => _ssh;
 
   String get _hostKey => '${c.username}@${c.host}:${c.port}';
 

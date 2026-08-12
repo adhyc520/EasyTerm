@@ -986,12 +986,6 @@ abstract class AppLocalizations {
   /// **'Inject an OSC 7 hook into bash/zsh after connect (also auto-enabled with Follow terminal folder).'**
   String get settingsInjectOsc7Description;
 
-  /// No description provided for @statusBarCwdNoOsc7Hint.
-  ///
-  /// In en, this message translates to:
-  /// **'No cwd reports yet — follow may not work'**
-  String get statusBarCwdNoOsc7Hint;
-
   /// No description provided for @settingsSmartRightClickLabel.
   ///
   /// In en, this message translates to:
@@ -1550,126 +1544,6 @@ abstract class AppLocalizations {
   /// **'Syntax error: {detail}'**
   String remoteEditorSyntaxError(String detail);
 
-  /// No description provided for @statusNotConnected.
-  ///
-  /// In en, this message translates to:
-  /// **'Not connected'**
-  String get statusNotConnected;
-
-  /// No description provided for @statusNoRemoteInfo.
-  ///
-  /// In en, this message translates to:
-  /// **'Remote metrics unavailable'**
-  String get statusNoRemoteInfo;
-
-  /// No description provided for @statusPickHost.
-  ///
-  /// In en, this message translates to:
-  /// **'Pick a host on the left and connect'**
-  String get statusPickHost;
-
-  /// No description provided for @statusBeijingTimeLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Beijing'**
-  String get statusBeijingTimeLabel;
-
-  /// No description provided for @statusRemoteUptimePrefix.
-  ///
-  /// In en, this message translates to:
-  /// **'Remote'**
-  String get statusRemoteUptimePrefix;
-
-  /// No description provided for @statusRemoteUptimeLine.
-  ///
-  /// In en, this message translates to:
-  /// **'Remote: {uptime}'**
-  String statusRemoteUptimeLine(String uptime);
-
-  /// No description provided for @tooltipMemNoData.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory usage\n(no data)'**
-  String get tooltipMemNoData;
-
-  /// No description provided for @tooltipMem.
-  ///
-  /// In en, this message translates to:
-  /// **'Memory usage\nAbout {percent}% (vs MemAvailable / MemTotal)'**
-  String tooltipMem(String percent);
-
-  /// No description provided for @tooltipCpuNoData.
-  ///
-  /// In en, this message translates to:
-  /// **'CPU usage\n(no data; needs vmstat sampling)'**
-  String get tooltipCpuNoData;
-
-  /// No description provided for @tooltipCpu.
-  ///
-  /// In en, this message translates to:
-  /// **'CPU usage\nAbout {percent}% (vmstat 1s sample)'**
-  String tooltipCpu(String percent);
-
-  /// No description provided for @tooltipDiskTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Disk space on /'**
-  String get tooltipDiskTitle;
-
-  /// No description provided for @tooltipDiskUsed.
-  ///
-  /// In en, this message translates to:
-  /// **'\nUsed: about {percent}%'**
-  String tooltipDiskUsed(String percent);
-
-  /// No description provided for @tooltipDiskNoUsage.
-  ///
-  /// In en, this message translates to:
-  /// **'\nUsage: no data'**
-  String get tooltipDiskNoUsage;
-
-  /// No description provided for @tooltipInodeTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Inodes on /'**
-  String get tooltipInodeTitle;
-
-  /// No description provided for @tooltipInodeUsed.
-  ///
-  /// In en, this message translates to:
-  /// **'\nUsed: about {percent}%'**
-  String tooltipInodeUsed(String percent);
-
-  /// No description provided for @tooltipInodeNoUsage.
-  ///
-  /// In en, this message translates to:
-  /// **'\nUsage: no data'**
-  String get tooltipInodeNoUsage;
-
-  /// No description provided for @tooltipLoadTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Load average'**
-  String get tooltipLoadTitle;
-
-  /// No description provided for @tooltipLoadLine.
-  ///
-  /// In en, this message translates to:
-  /// **'\n1 / 5 / 15 min: {line}'**
-  String tooltipLoadLine(String line);
-
-  /// No description provided for @tooltipLoadNoData.
-  ///
-  /// In en, this message translates to:
-  /// **'\n(no /proc/loadavg)'**
-  String get tooltipLoadNoData;
-
-  /// No description provided for @tooltipLoadPressure.
-  ///
-  /// In en, this message translates to:
-  /// **'\nPressure vs CPU count: about {percent}%'**
-  String tooltipLoadPressure(String percent);
-
   /// No description provided for @sshAuthFailKeyAndPassword.
   ///
   /// In en, this message translates to:
@@ -2191,6 +2065,257 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide'**
   String get sudoHidePassword;
+
+  /// No description provided for @bulkOperationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bulk command'**
+  String get bulkOperationTitle;
+
+  /// No description provided for @bulkTargetHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'Target hosts'**
+  String get bulkTargetHosts;
+
+  /// No description provided for @bulkNoConnectedHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'No connected sessions. Open tabs first, then run bulk commands.'**
+  String get bulkNoConnectedHosts;
+
+  /// No description provided for @bulkNoHostsSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Select at least one connected host.'**
+  String get bulkNoHostsSelected;
+
+  /// No description provided for @bulkCommandEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a command to run.'**
+  String get bulkCommandEmpty;
+
+  /// No description provided for @bulkCommandLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Command'**
+  String get bulkCommandLabel;
+
+  /// No description provided for @bulkParallel.
+  ///
+  /// In en, this message translates to:
+  /// **'Run in parallel'**
+  String get bulkParallel;
+
+  /// No description provided for @bulkTimeoutSec.
+  ///
+  /// In en, this message translates to:
+  /// **'Timeout (s)'**
+  String get bulkTimeoutSec;
+
+  /// No description provided for @bulkExecute.
+  ///
+  /// In en, this message translates to:
+  /// **'Run'**
+  String get bulkExecute;
+
+  /// No description provided for @bulkResults.
+  ///
+  /// In en, this message translates to:
+  /// **'Results'**
+  String get bulkResults;
+
+  /// No description provided for @sshConfigImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import SSH config'**
+  String get sshConfigImportTitle;
+
+  /// No description provided for @sshConfigImportSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Source: {path}'**
+  String sshConfigImportSource(String path);
+
+  /// No description provided for @sshConfigImportEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No Host entries found (wildcards like Host * are skipped).'**
+  String get sshConfigImportEmpty;
+
+  /// No description provided for @sshConfigImportFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Found {count} host entries'**
+  String sshConfigImportFound(int count);
+
+  /// No description provided for @sshConfigConflictLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'On conflict'**
+  String get sshConfigConflictLabel;
+
+  /// No description provided for @sshConfigConflictSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get sshConfigConflictSkip;
+
+  /// No description provided for @sshConfigConflictOverwrite.
+  ///
+  /// In en, this message translates to:
+  /// **'Overwrite'**
+  String get sshConfigConflictOverwrite;
+
+  /// No description provided for @sshConfigConflictDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create duplicate'**
+  String get sshConfigConflictDuplicate;
+
+  /// No description provided for @sshConfigImportAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Import all'**
+  String get sshConfigImportAll;
+
+  /// No description provided for @sshConfigImportSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Import selected'**
+  String get sshConfigImportSelected;
+
+  /// No description provided for @sshConfigImportDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Imported {imported}, skipped {skipped}, overwritten {overwritten}, duplicated {duplicated}'**
+  String sshConfigImportDone(
+    int imported,
+    int skipped,
+    int overwritten,
+    int duplicated,
+  );
+
+  /// No description provided for @hostGroupEditorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Host groups'**
+  String get hostGroupEditorTitle;
+
+  /// No description provided for @hostGroupsHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups'**
+  String get hostGroupsHeader;
+
+  /// No description provided for @hostGroupsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No groups yet.'**
+  String get hostGroupsEmpty;
+
+  /// No description provided for @hostGroupCreateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New group'**
+  String get hostGroupCreateTitle;
+
+  /// No description provided for @hostGroupRenameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename group'**
+  String get hostGroupRenameTitle;
+
+  /// No description provided for @hostGroupDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete group'**
+  String get hostGroupDeleteTitle;
+
+  /// No description provided for @hostGroupDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete group “{name}”? Hosts are not deleted.'**
+  String hostGroupDeleteConfirm(String name);
+
+  /// No description provided for @hostGroupNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name'**
+  String get hostGroupNameLabel;
+
+  /// No description provided for @hostGroupMemberCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} hosts'**
+  String hostGroupMemberCount(int count);
+
+  /// No description provided for @hostGroupSelectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a group to assign hosts.'**
+  String get hostGroupSelectHint;
+
+  /// No description provided for @hostGroupMembersOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Members · {name}'**
+  String hostGroupMembersOf(String name);
+
+  /// No description provided for @hostGroupNoMembers.
+  ///
+  /// In en, this message translates to:
+  /// **'No members in this group.'**
+  String get hostGroupNoMembers;
+
+  /// No description provided for @hostGroupAddMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Add host'**
+  String get hostGroupAddMember;
+
+  /// No description provided for @hostGroupRemoveMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from group'**
+  String get hostGroupRemoveMember;
+
+  /// No description provided for @hostSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search hosts…'**
+  String get hostSearchHint;
+
+  /// No description provided for @hostUngroupedHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Ungrouped ({count})'**
+  String hostUngroupedHeader(int count);
+
+  /// No description provided for @connectionAdvancedSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced'**
+  String get connectionAdvancedSection;
+
+  /// No description provided for @connectionJumpHostLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump host (ProxyJump)'**
+  String get connectionJumpHostLabel;
+
+  /// No description provided for @connectionJumpHostNone.
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get connectionJumpHostNone;
+
+  /// No description provided for @connectionTimeoutSecLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect timeout (s)'**
+  String get connectionTimeoutSecLabel;
 }
 
 class _AppLocalizationsDelegate

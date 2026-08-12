@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'remote_sudo.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 class RemoteLoggedInUser {
   const RemoteLoggedInUser({
@@ -275,7 +275,7 @@ List<RemotePasswdEntry> _parsePasswd(
   return out;
 }
 
-Future<RemoteUsersSnapshot?> fetchRemoteUsers(SshWorkspaceController c) async {
+Future<RemoteUsersSnapshot?> fetchRemoteUsers(RemoteExecCapable c) async {
   const cmd = r'''
 echo __WHO__
 who 2>/dev/null || true
@@ -348,7 +348,7 @@ String sessionKickByTtyCommand(String tty) {
 }
 
 Future<String?> runUsersMutate(
-  SshWorkspaceController c,
+  RemoteExecCapable c,
   String cmd, {
   String? sudoPassword,
   List<int>? stdinPayload,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../theme/workbench_theme.dart';
@@ -18,7 +20,7 @@ class DesktopCommandPalette extends StatefulWidget {
   });
 
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final VoidCallback onClose;
 
   @override
@@ -350,7 +352,26 @@ class _DesktopCommandPaletteState extends State<DesktopCommandPalette> {
         ),
       );
     }
-    return items;
+    const appGate = <String, DesktopAppType>{
+      '文件': DesktopAppType.files,
+      '浏览器': DesktopAppType.browser,
+      '监控': DesktopAppType.monitor,
+      '任务管理器': DesktopAppType.tasks,
+      '日志': DesktopAppType.logs,
+      '容器': DesktopAppType.containers,
+      '磁盘占用': DesktopAppType.diskUsage,
+      '传输': DesktopAppType.transfers,
+      '端口转发': DesktopAppType.forwards,
+      '运行命令': DesktopAppType.runCommand,
+      '计划任务': DesktopAppType.cron,
+      '用户与组': DesktopAppType.users,
+      '包管理器': DesktopAppType.packages,
+      '防火墙': DesktopAppType.firewall,
+    };
+    return [
+      for (final c in items)
+        if (appGate[c.title] == null || wm.canOpen(appGate[c.title]!)) c,
+    ];
   }
 
   void _refilter() {

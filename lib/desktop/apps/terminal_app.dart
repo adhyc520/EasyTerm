@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../services/remote_exec_capable.dart';
 import '../../services/remote_process_list.dart';
-import '../../services/remote_shell.dart';
-import '../../services/ssh_workspace_controller.dart';
+import '../../services/terminal_session_controller.dart';
 import '../../services/workbench_settings_store.dart';
 import '../../theme/workbench_theme.dart';
 import '../../util/desktop_drop_paths.dart';
@@ -17,8 +17,9 @@ import '../desktop_window_manager.dart';
 
 /// 桌面终端窗口内容。
 ///
-/// - `args['usePrimary'] == true`：复用 [SshWorkspaceController.terminal]
-/// - 否则：经 [RemoteShell.open] 开独立 PTY（关闭窗口时 dispose）
+/// - `args['usePrimary'] == true`：复用主会话 [TerminalSessionController.terminal]
+/// - 否则：经 [TerminalSessionController.openSecondaryShell] 开独立会话
+/// - Serial 无副终端时强制主终端
 /// - `args['cwd']`：独立 shell 就绪后 `cd` 到该路径（文件管理器「打开终端」）
 class TerminalApp extends StatefulWidget {
   const TerminalApp({
@@ -31,7 +32,7 @@ class TerminalApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final WorkbenchSettingsStore settings;
 
   @override
@@ -39,16 +40,24 @@ class TerminalApp extends StatefulWidget {
 }
 
 class _TerminalAppState extends State<TerminalApp> {
+
   final GlobalKey<TerminalSurfaceState> _surfaceKey =
       GlobalKey<TerminalSurfaceState>();
-  RemoteShell? _shell;
+  SecondaryShell? _shell;
   Object? _openError;
   bool _opening = false;
   bool _wasConnected = false;
   bool _wasFocused = false;
   int _seenFocusGeneration = -1;
+  bool _forcePrimary = false;
 
-  bool get _usePrimary => widget.window.args['usePrimary'] == true;
+  bool get _usePrimary =>
+      _forcePrimary || widget.window.args['usePrimary'] == true;
+
+  RemoteExecCapable? get _exec =>
+      widget.controller is RemoteExecCapable
+          ? widget.controller as RemoteExecCapable
+          : null;
 
   Terminal? get _terminal {
     if (_usePrimary) return widget.controller.terminal;
@@ -94,16 +103,6 @@ class _TerminalAppState extends State<TerminalApp> {
       ? widget.controller.mouseModeActive
       : (_shell?.mouseModeActive ?? false);
 
-  String get _displayCwd {
-    if (!_usePrimary) {
-      final shellCwd = _shell?.terminalCwd ?? '';
-      if (shellCwd.isNotEmpty) return shellCwd;
-      final arg = widget.window.args['cwd']?.toString().trim();
-      if (arg != null && arg.isNotEmpty) return arg;
-    }
-    return widget.controller.terminalCwd;
-  }
-
   Future<void> _bumpFont(double delta) async {
     final s = widget.settings;
     final next = (s.terminalFontSize + delta).clamp(6.0, 48.0);
@@ -117,52 +116,6 @@ class _TerminalAppState extends State<TerminalApp> {
     if (s.terminalFontSize == 14) return;
     s.terminalFontSize = 14;
     await s.persist();
-  }
-
-  static String _shortCwd(String path) {
-    final parts = path.split('/').where((e) => e.isNotEmpty).toList();
-    if (parts.isEmpty) return path.isEmpty ? '/' : path;
-    if (parts.length <= 2) return path;
-    return '…/${parts[parts.length - 2]}/${parts.last}';
-  }
-
-  Future<void> _openInFiles() async {
-    final fallback = () {
-      final cwd = widget.window.args['cwd']?.toString().trim();
-      if (cwd != null && cwd.isNotEmpty) return cwd;
-      final tc = _displayCwd;
-      if (tc.isNotEmpty) return tc;
-      return widget.controller.remoteCwd;
-    }();
-
-    var path = fallback;
-    // Prefer live OSC 7 cwd when available (this shell, else primary).
-    final shell = _shell;
-    if (!_usePrimary && shell != null && shell.sawOsc7 && shell.terminalCwd.isNotEmpty) {
-      path = shell.terminalCwd;
-    } else if (_usePrimary &&
-        widget.controller.sawOsc7 &&
-        widget.controller.terminalCwd.isNotEmpty) {
-      path = widget.controller.terminalCwd;
-    } else if (widget.controller.connected && !widget.controller.dropped) {
-      try {
-        final raw = await widget.controller.runQueued(
-          r'pwd 2>/dev/null || echo "$PWD"',
-          timeout: const Duration(seconds: 2),
-        );
-        final line = raw
-            ?.split(RegExp(r'[\r\n]+'))
-            .map((s) => s.trim())
-            .firstWhere((s) => s.isNotEmpty, orElse: () => '');
-        if (line != null && line.startsWith('/')) {
-          path = line;
-        }
-      } catch (_) {
-        // best-effort; fall back to args / remoteCwd
-      }
-    }
-    if (!mounted) return;
-    widget.wm.open(DesktopAppType.files, args: {'cwd': path});
   }
 
   void _onWm() {
@@ -231,8 +184,7 @@ class _TerminalAppState extends State<TerminalApp> {
   Future<void> _openShell({bool force = false}) async {
     if (_opening) return;
     if (!force && _shell != null) return;
-    final client = widget.controller.clientForDesktop;
-    if (client == null) {
+    if (!widget.controller.connected || widget.controller.dropped) {
       setState(() => _openError = '未连接');
       return;
     }
@@ -247,9 +199,22 @@ class _TerminalAppState extends State<TerminalApp> {
       _openError = null;
     });
     try {
-      final shell = await widget.controller.openShell();
+      final shell = await widget.controller.openSecondaryShell();
       if (!mounted) {
-        await shell.close();
+        await shell?.close();
+        return;
+      }
+      if (shell == null) {
+        // Serial / unsupported secondary shell → fall back to primary.
+        setState(() {
+          _forcePrimary = true;
+          _opening = false;
+          _openError = null;
+        });
+        unawaited(_applyArgsToPrimary());
+        if (widget.window.focused) {
+          _claimKeyboard();
+        }
         return;
       }
       shell.addListener(_onShell);
@@ -271,16 +236,19 @@ class _TerminalAppState extends State<TerminalApp> {
     }
   }
 
-  /// 短暂等待 shell 就绪后再 `cd`（stdout 已被 [RemoteShell] 订阅，不宜再听）。
-  Future<void> _cdToInitialCwd(RemoteShell shell) async {
+  /// 短暂等待 shell 就绪后再 `cd`。
+  Future<void> _cdToInitialCwd(SecondaryShell shell) async {
     final raw = widget.window.args['cwd']?.toString().trim();
     if (raw == null || raw.isEmpty) return;
     await Future<void>.delayed(const Duration(milliseconds: 250));
     if (!mounted || !identical(_shell, shell)) return;
     var os = RemoteOsKind.unknown;
-    try {
-      os = await detectRemoteOs(widget.controller);
-    } catch (_) {}
+    final exec = _exec;
+    if (exec != null) {
+      try {
+        os = await detectRemoteOs(exec);
+      } catch (_) {}
+    }
     if (!mounted || !identical(_shell, shell)) return;
     // 路径形态兜底：检测失败时仍按盘符走 Windows 命令。
     if (os == RemoteOsKind.unknown &&
@@ -291,8 +259,41 @@ class _TerminalAppState extends State<TerminalApp> {
     shell.terminal.textInput('$cmd\r');
   }
 
+  /// Serial 主终端回退：同样应用 cwd / inject（副终端不可用时）。
+  Future<void> _applyArgsToPrimary() async {
+    final cwd = widget.window.args['cwd']?.toString().trim();
+    final inject = widget.window.args['inject']?.toString();
+    if ((cwd == null || cwd.isEmpty) && (inject == null || inject.isEmpty)) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted || !_forcePrimary) return;
+    if (cwd != null && cwd.isNotEmpty) {
+      var os = RemoteOsKind.unknown;
+      final exec = _exec;
+      if (exec != null) {
+        try {
+          os = await detectRemoteOs(exec);
+        } catch (_) {}
+      }
+      if (!mounted || !_forcePrimary) return;
+      if (os == RemoteOsKind.unknown &&
+          RegExp(r'^[A-Za-z]:[\\/]').hasMatch(cwd)) {
+        os = RemoteOsKind.windows;
+      }
+      widget.controller.pasteRemoteInputWithLineSubmit(
+        remoteShellCdCommand(cwd, os),
+      );
+    }
+    if (inject != null && inject.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      if (!mounted || !_forcePrimary) return;
+      widget.controller.pasteRemoteInput(inject);
+    }
+  }
+
   /// 包管理器 / 防火墙等：打开终端后注入待执行命令（不自动回车，避免误跑 sudo）。
-  Future<void> _injectInitialCommand(RemoteShell shell) async {
+  Future<void> _injectInitialCommand(SecondaryShell shell) async {
     final raw = widget.window.args['inject']?.toString();
     if (raw == null || raw.isEmpty) return;
     await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -322,84 +323,41 @@ class _TerminalAppState extends State<TerminalApp> {
         const SingleActivator(LogicalKeyboardKey.digit0, control: true): () =>
             unawaited(_resetFont()),
       },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Material(
-            color: context.wb.panel,
-            child: SizedBox(
-              height: 32,
-              child: Row(
-                children: [
-                  const SizedBox(width: 8),
-                  Text(
-                    '字号 ${settings.terminalFontSize.toStringAsFixed(0)}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: context.wb.textMuted,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: Tooltip(
-                      message: _displayCwd,
-                      child: Text(
-                        _shortCwd(_displayCwd),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                          color: context.wb.textMuted,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => unawaited(_openInFiles()),
-                    child: const Text('在文件管理器打开'),
-                  ),
-                  const SizedBox(width: 4),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            child: DropTarget(
-              onDragDone: (detail) {
-                final paths = resolveDesktopDropPaths(detail);
-                if (paths.isEmpty) return;
-                final text = paths.join(' ');
-                if (_usePrimary) {
-                  c.pasteRemoteInput(text);
-                } else {
-                  _shell?.paste(text);
-                }
-              },
-              child: TerminalSurface(
-                key: _surfaceKey,
-                terminal: term,
-                connected: connected,
-                connecting: c.connecting,
-                autofocus: widget.window.focused,
-                onReconnect:
-                    c.dropped ? () => unawaited(c.reconnect()) : null,
-                errorText: c.error,
-                themeBg: context.wb.terminalBg,
-                fontSize: settings.terminalFontSize,
-                fontFamily: settings.terminalFontFamily,
-                uiScale: settings.uiScaleFactor,
-                selectToCopy: settings.selectToCopy,
-                mouseModeActive: _mouseModeActive,
-                smartRightClick: settings.smartRightClick,
-                showLeftBorder: false,
-                tapRegionGroupId: widget.window.id,
-                releaseFocusOnTapOutside: false,
-              ),
-            ),
-          ),
-        ],
+      child: DropTarget(
+        onDragDone: (detail) {
+          final paths = resolveDesktopDropPaths(detail);
+          if (paths.isEmpty) return;
+          final text = paths.join(' ');
+          if (_usePrimary) {
+            c.pasteRemoteInput(text);
+          } else {
+            _shell?.paste(text);
+          }
+        },
+        child: TerminalSurface(
+          key: _surfaceKey,
+          terminal: term,
+          connected: connected,
+          connecting: c.connecting,
+          autofocus: widget.window.focused,
+          onReconnect:
+              c.dropped ? () => unawaited(c.reconnect()) : null,
+          errorText: c.error,
+          themeBg: context.wb.terminalBg,
+          fontSize: settings.terminalFontSize,
+          fontFamily: settings.terminalFontFamily,
+          uiScale: settings.uiScaleFactor,
+          selectToCopy: settings.selectToCopy,
+          mouseModeActive: _mouseModeActive,
+          smartRightClick: settings.smartRightClick,
+          showLeftBorder: false,
+          tapRegionGroupId: widget.window.id,
+          releaseFocusOnTapOutside: false,
+          sessionRecorder: _usePrimary ? c.sessionRecorder : null,
+          onToggleRecording:
+              _usePrimary ? c.toggleSessionRecording : null,
+          hostLabel: c.host,
+        ),
       ),
     );
   }

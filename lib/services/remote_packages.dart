@@ -1,5 +1,5 @@
 import 'remote_sudo.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 enum RemotePackageManager {
   apt,
@@ -440,7 +440,7 @@ String mutatePackageTerminalHint(
 }
 
 Future<RemotePackageManager> detectPackageManager(
-  SshWorkspaceController c,
+  RemoteExecCapable c,
 ) async {
   const cmd = r'''
 for b in apt-get dnf yum pacman brew zypper; do
@@ -454,7 +454,7 @@ echo none
 }
 
 Future<RemotePackagesSnapshot?> fetchInstalledPackages(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   RemotePackageManager? manager,
   int limit = 20000,
   String? nameFilter,
@@ -479,7 +479,7 @@ Future<RemotePackagesSnapshot?> fetchInstalledPackages(
 }
 
 Future<List<RemotePackage>?> searchRemotePackages(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required RemotePackageManager manager,
   required String query,
 }) async {
@@ -495,7 +495,7 @@ Future<List<RemotePackage>?> searchRemotePackages(
 ///
 /// [sudoPassword] 非空时用 `sudo -S` 并从 stdin 注入密码。
 Future<String?> mutateRemotePackage(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required RemotePackageManager manager,
   required String name,
   required bool install,
@@ -571,7 +571,7 @@ List<String> parsePackageFiles(RemotePackageManager pm, String raw) {
 
 /// 列出已安装包的文件路径（最多 500）。不支持的包管理器返回 null。
 Future<List<String>?> listPackageFiles(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required RemotePackageManager pm,
   required String name,
 }) async {
@@ -697,7 +697,7 @@ List<String> parseRemoveSimulation(RemotePackageManager pm, String raw) {
 
 /// 模拟卸载并返回受影响包名；不支持或失败时返回 null。
 Future<List<String>?> fetchRemoveImpact(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required RemotePackageManager manager,
   required String name,
 }) async {
@@ -803,7 +803,7 @@ List<String> parsePackageVersions(RemotePackageManager pm, String raw) {
 
 /// 查询可安装版本候选；不支持或失败时返回 null。
 Future<List<String>?> fetchPackageVersions(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required RemotePackageManager manager,
   required String name,
 }) async {

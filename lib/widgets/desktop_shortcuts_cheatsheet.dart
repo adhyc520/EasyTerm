@@ -20,12 +20,18 @@ class _DesktopShortcutsCheatsheetDialog extends StatelessWidget {
     final mod = workbenchUsesMetaPrimaryModifier() ? '⌘' : 'Ctrl';
     final groups = _shortcutGroups(mod);
 
+    final size = MediaQuery.sizeOf(context);
     return AlertDialog(
       backgroundColor: wb.panelElevated,
-      title: Text('键盘快捷键', style: TextStyle(color: wb.primaryText)),
+      title: Text(
+        '键盘快捷键',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: wb.primaryText),
+      ),
       content: SizedBox(
-        width: 480,
-        height: 420,
+        width: (size.width - 48).clamp(280.0, 480.0),
+        height: (size.height * 0.7).clamp(280.0, 420.0),
         child: ListView.builder(
           itemCount: groups.length,
           itemBuilder: (context, i) {
@@ -58,12 +64,18 @@ class _DesktopShortcutsCheatsheetDialog extends StatelessWidget {
                               ),
                             ),
                           ),
-                          Text(
-                            row.keys,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              color: wb.secondaryText,
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              row.keys,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.end,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                                color: wb.secondaryText,
+                              ),
                             ),
                           ),
                         ],

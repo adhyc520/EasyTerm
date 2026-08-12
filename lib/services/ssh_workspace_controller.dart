@@ -20,10 +20,15 @@ import 'package:xterm/xterm.dart';
 
 import '../io/file_read.dart';
 import '../l10n/app_localizations.dart';
+import '../models/connection_protocol.dart';
+import '../models/proxy_config.dart';
 import '../util/remote_paths.dart';
 import 'browser_gateway.dart';
 import 'local_port_forwarder.dart';
+import 'proxy_connector.dart';
 import 'remote_command_queue.dart';
+import 'remote_exec_capable.dart';
+import 'remote_forward_capable.dart';
 import 'remote_host_metrics.dart';
 import 'remote_process_list.dart';
 import 'remote_session.dart';
@@ -35,8 +40,12 @@ import 'sftp_planned_upload.dart';
 import 'sftp_remote_clipboard.dart';
 import 'sftp_remote_copy.dart' as sftp_copy;
 import 'sftp_upload_progress_hooks.dart';
+import 'command_history_service.dart';
 import 'sftp_upload_task_list.dart';
 import 'pty_interceptor.dart';
+import 'session_recorder.dart';
+import 'term_write_batcher.dart';
+import 'terminal_session_controller.dart';
 import 'workbench_settings_store.dart';
 
 const int kMaxEditorBytes = 512 * 1024;
@@ -252,7 +261,12 @@ bool sshFailureShouldOfferCredentialSheet(
   return false;
 }
 
-class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
+class SshWorkspaceController extends ChangeNotifier
+    implements
+        TerminalSessionController,
+        RemoteExecCapable,
+        RemoteForwardCapable,
+        SftpBrowserHost {
   SshWorkspaceController({
     required this.settings,
     required this.host,
@@ -260,21 +274,53 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     required this.username,
     required String password,
     String? privateKeyPem,
+    ProxyConfig? proxyConfig,
+    int? connectTimeoutSecOverride,
   }) : _password = password,
-       _privateKeyPem = privateKeyPem {
+       _privateKeyPem = privateKeyPem,
+       _proxyConfig = proxyConfig,
+       _connectTimeoutSecOverride = connectTimeoutSecOverride {
     _remoteSession.onTransportClosed = _onRemoteTransportClosed;
     settings.addListener(_onSettingsChanged);
   }
 
   final WorkbenchSettingsStore settings;
+  @override
   final String host;
+  @override
   final int port;
+  @override
   final String username;
   String _password;
   String? _privateKeyPem;
+  final ProxyConfig? _proxyConfig;
+  final int? _connectTimeoutSecOverride;
 
+  @override
+  ConnectionProtocol get protocol => ConnectionProtocol.ssh;
+
+  @override
+  Set<RemoteCapability> get capabilities => const {
+        RemoteCapability.terminal,
+        RemoteCapability.exec,
+        RemoteCapability.file,
+        RemoteCapability.forward,
+      };
+
+  @override
+  String get sessionLabel => '$username@$host:$port';
+
+  /// 跳板机会话（目标断连时需一并关闭）。
+  SSHClient? _jumpClient;
+
+  @override
   String get password => _password;
   String? get privateKeyPem => _privateKeyPem;
+  @override
+  ProxyConfig? get proxyConfig => _proxyConfig;
+
+  int get _effectiveConnectTimeoutSec =>
+      _connectTimeoutSecOverride ?? settings.connectTimeoutSec;
 
   /// 本会话缓存的远端 sudo 密码（仅内存，不落盘）；用于包管理 / 防火墙等特权操作。
   /// 空闲超过 [sudoPasswordIdleTimeout] 后自动失效，下次特权操作需重新输入。
@@ -333,6 +379,41 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
 
   Terminal? get terminal => _terminal;
 
+  final TermWriteBatcher _termWriteBatcher = TermWriteBatcher();
+
+  /// Optional session recorder; created lazily by [startSessionRecording].
+  SessionRecorder? _sessionRecorder;
+
+  SessionRecorder? get sessionRecorder => _sessionRecorder;
+
+  bool get isSessionRecording => _sessionRecorder?.isRecording ?? false;
+
+  /// Begin recording PTY input/output/resize into [sessionRecorder].
+  void startSessionRecording() {
+    final term = _terminal;
+    _sessionRecorder ??= SessionRecorder();
+    _sessionRecorder!.start(
+      cols: term?.viewWidth ?? 80,
+      rows: term?.viewHeight ?? 24,
+    );
+    notifyListeners();
+  }
+
+  /// Stop recording (keeps events for save/export).
+  void stopSessionRecording() {
+    if (_sessionRecorder == null || !_sessionRecorder!.isRecording) return;
+    _sessionRecorder!.stop();
+    notifyListeners();
+  }
+
+  void toggleSessionRecording() {
+    if (isSessionRecording) {
+      stopSessionRecording();
+    } else {
+      startSessionRecording();
+    }
+  }
+
   /// 将文本注入当前远程 shell（经 xterm 输入路径，终端中可见）。
   void pasteRemoteInput(String text) {
     if (!_connected) return;
@@ -344,6 +425,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   ///
   /// 使用 [Terminal.textInput] 而非 [Terminal.paste]：bracketed paste 会导致换行
   /// 不触发 readline 提交行。
+  ///
+  /// Single-line submits are recorded via [CommandHistoryService.shared] when set.
   String pasteRemoteInputWithLineSubmit(String text) {
     if (!_connected) return text;
     var t = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
@@ -351,7 +434,22 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
       t = '$t\r';
     }
     _terminal?.textInput(t);
+    _maybeRecordSubmittedCommand(t);
     return t;
+  }
+
+  void _maybeRecordSubmittedCommand(String submitted) {
+    final hist = CommandHistoryService.shared;
+    if (hist == null) return;
+    var cmd = submitted.replaceAll(RegExp(r'[\r\n]+$'), '');
+    if (cmd.contains('\n') || cmd.trim().isEmpty) return;
+    unawaited(
+      hist.recordCommand(
+        '$username@$host:$port',
+        cmd.trim(),
+        cwd: terminalCwd,
+      ),
+    );
   }
 
   /// 截取当前终端缓冲区尾部纯文本，供助手回传给大模型。
@@ -401,6 +499,12 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   Timer? _followDebounce;
   bool _osc7InjectInFlight = false;
   DateTime? _lastOsc7InjectAt;
+  /// Last time interactive PTY stdout arrived (for post-login idle detection).
+  DateTime? _lastPtyStdoutAt;
+  /// While true, PTY stdout is parsed (OSC 7) but not drawn — hides inject echo
+  /// even when the shell rewrites the line with syntax-highlight ANSI codes.
+  /// Only armed around the inject itself, never during login MOTD.
+  bool _osc7InjectMuteDisplay = false;
   late final PtyInterceptor _ptyInterceptor = PtyInterceptor(
     onCwd: _onTerminalCwd,
     onMouseMode: (active) {
@@ -526,7 +630,13 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     );
   }
 
+  @override
+  Future<SecondaryShell?> openSecondaryShell({int? cols, int? rows}) async {
+    return openShell(cols: cols, rows: rows);
+  }
+
   /// 懒创建并启动进程内 HTTP 网关（方案 B）；掉线/断连时由 [_teardownConnection] 停止。
+  @override
   Future<BrowserGateway> getOrCreateGateway() async {
     final client = _client;
     if (client == null) {
@@ -547,6 +657,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
 
   /// 方案 A 兜底：本地监听 + 每连接一条 forwardLocal。
   /// 断连时本控制器会统一 [stop]；调用方也可 [releaseLocalForward]。
+  @override
   Future<LocalPortForwarder> openLocalForward(
     String remoteHost,
     int remotePort, {
@@ -563,6 +674,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   }
 
   /// 停止并移出登记表（浏览器直连切换目标端口时用）。
+  @override
   Future<void> releaseLocalForward(LocalPortForwarder? fwd) async {
     if (fwd == null) return;
     _desktopForwards.remove(fwd);
@@ -603,15 +715,40 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
       for (var attempt = 0; attempt < totalAttempts; attempt++) {
         if (_sessionDisposed) return;
         try {
-          final socket = await SSHSocket.connect(
-            host,
-            port,
-            timeout: Duration(seconds: settings.connectTimeoutSec),
-          );
+          late final SSHSocket socket;
+          final proxy = _proxyConfig;
+          if (proxy != null &&
+              proxy.host.trim().isNotEmpty &&
+              proxy.username.trim().isNotEmpty) {
+            final forwarded = await ProxyConnector.openForwardedSocket(
+              jumpHost: proxy,
+              targetHost: host,
+              targetPort: port,
+              timeout: Duration(seconds: _effectiveConnectTimeoutSec),
+            );
+            if (_sessionDisposed) {
+              try {
+                forwarded.socket.destroy();
+              } catch (_) {}
+              try {
+                forwarded.jumpClient.close();
+              } catch (_) {}
+              return;
+            }
+            _jumpClient = forwarded.jumpClient;
+            socket = forwarded.socket;
+          } else {
+            socket = await SSHSocket.connect(
+              host,
+              port,
+              timeout: Duration(seconds: _effectiveConnectTimeoutSec),
+            );
+          }
           if (_sessionDisposed) {
             try {
               socket.close();
             } catch (_) {}
+            _closeJumpClient();
             return;
           }
 
@@ -737,11 +874,13 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
       maxLines: settings.terminalMaxLines,
       platform: _xtermPlatform(),
       onOutput: (data) {
+        _sessionRecorder?.recordInput(data);
         final session = _shell;
         if (session == null) return;
         session.write(Uint8List.fromList(utf8.encode(data)));
       },
       onResize: (w, h, pw, ph) {
+        _sessionRecorder?.recordResize(w, h);
         _shell?.resizeTerminal(w, h, pw, ph);
       },
     );
@@ -776,13 +915,20 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     if (term == null) return;
 
     _stdoutSub = session.stdout.listen((data) {
+      _lastPtyStdoutAt = DateTime.now();
       final decoded = utf8.decode(data, allowMalformed: true);
+      // Always parse OSC 7 / mouse; optionally mute drawing during silent inject.
       final out = _ptyInterceptor.process(decoded);
-      term.write(out);
+      if (_osc7InjectMuteDisplay) return;
+      if (out.isEmpty) return;
+      _sessionRecorder?.recordOutput(out);
+      unawaited(_termWriteBatcher.writeBatched(term, out));
     }, onError: (e) => debugPrint('stdout: $e'));
 
     _stderrSub = session.stderr.listen((data) {
-      term.write(utf8.decode(data, allowMalformed: true));
+      final text = utf8.decode(data, allowMalformed: true);
+      _sessionRecorder?.recordOutput(text);
+      unawaited(_termWriteBatcher.writeBatched(term, text));
     }, onError: (e) => debugPrint('stderr: $e'));
   }
 
@@ -841,10 +987,36 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     await navigateToAbsolutePath(target, fromTerminalFollow: true);
   }
 
+  /// Wait until interactive PTY stdout has been quiet long enough that login
+  /// MOTD / banner / rc output is likely finished — without muting display.
+  Future<void> _waitForPtyIdleBeforeInject() async {
+    const minWait = Duration(milliseconds: 400);
+    const idle = Duration(milliseconds: 450);
+    const maxWait = Duration(seconds: 8);
+    final start = DateTime.now();
+    await Future<void>.delayed(minWait);
+    while (!_sessionDisposed && _connected && !_sawOsc7) {
+      final elapsed = DateTime.now().difference(start);
+      if (elapsed >= maxWait) return;
+      final last = _lastPtyStdoutAt;
+      if (last == null) {
+        // No output yet (or only before wire) — treat as idle after min+idle.
+        if (elapsed >= minWait + idle) return;
+      } else if (DateTime.now().difference(last) >= idle) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
   /// Inject bash/zsh OSC 7 cwd hook into the interactive PTY (settings-gated).
   ///
   /// Safe to call multiple times; no-ops once [sawOsc7] is true or while a
   /// recent inject is in flight. Follow-folder enables this automatically.
+  ///
+  /// Typed into the PTY (needed for PROMPT_COMMAND/precmd). Login MOTD is
+  /// allowed to paint first; only then do we briefly mute draws + `stty -echo`
+  /// so the inject itself stays invisible.
   Future<void> _injectOsc7Hook() async {
     if (!_wantOsc7Hook || !_connected || _sawOsc7) return;
     if (_osc7InjectInFlight) return;
@@ -856,25 +1028,72 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
 
     _osc7InjectInFlight = true;
     try {
-      // Wait for login banner / rc files so the snippet lands at a prompt.
-      await Future<void>.delayed(const Duration(milliseconds: 700));
+      // Let Last login / MOTD / shell rc finish on screen before muting.
+      await _waitForPtyIdleBeforeInject();
       final session = _shell;
       if (session == null || !_connected || _sawOsc7 || _sessionDisposed) {
         return;
       }
+
+      // Mute only for the inject window (not during MOTD wait above).
+      _osc7InjectMuteDisplay = true;
+
       // Compact one-liner: bash PROMPT_COMMAND + zsh precmd_functions (not a
       // bare precmd() override — oh-my-zsh ignores that).
+      // Leading space: bash ignorespace / zsh HIST_IGNORE_SPACE when enabled.
       const snippet =
-          r'''if [ -n "$BASH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; case ";${PROMPT_COMMAND:-};" in *__easyterm_osc7*) ;; *) PROMPT_COMMAND="__easyterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; __easyterm_osc7; elif [ -n "$ZSH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOST:-localhost}" "$PWD"; }; typeset -ga precmd_functions 2>/dev/null; case " ${precmd_functions[*]} " in *" __easyterm_osc7 "*) ;; *) precmd_functions+=(__easyterm_osc7);; esac; __easyterm_osc7; fi
+          r''' if [ -n "$BASH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; case ";${PROMPT_COMMAND:-};" in *__easyterm_osc7*) ;; *) PROMPT_COMMAND="__easyterm_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac; __easyterm_osc7; elif [ -n "$ZSH_VERSION" ]; then __easyterm_osc7(){ printf '\033]7;file://%s%s\007' "${HOST:-localhost}" "$PWD"; }; typeset -ga precmd_functions 2>/dev/null; case " ${precmd_functions[*]} " in *" __easyterm_osc7 "*) ;; *) precmd_functions+=(__easyterm_osc7);; esac; __easyterm_osc7; fi
 ''';
-      // Clear any partial input (Ctrl-U) before injecting, then run the hook.
+      // Ctrl-U clear → disable echo → hook → restore echo.
       session.write(Uint8List.fromList([0x15]));
+      session.write(
+        Uint8List.fromList(utf8.encode('stty -echo 2>/dev/null\n')),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!_connected || _sawOsc7 || _sessionDisposed || _shell != session) {
+        return;
+      }
       session.write(Uint8List.fromList(utf8.encode(snippet)));
+      session.write(
+        Uint8List.fromList(utf8.encode('stty echo 2>/dev/null\n')),
+      );
       _lastOsc7InjectAt = DateTime.now();
+
+      // Wait for hook OSC 7 (or timeout), then a short quiet so prompt redraw
+      // stays muted — without holding mute long enough to eat later output.
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!_sawOsc7 &&
+          DateTime.now().isBefore(deadline) &&
+          _connected &&
+          !_sessionDisposed) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+      // Brief settle for the post-hook prompt under mute.
+      final settleUntil = DateTime.now().add(const Duration(milliseconds: 250));
+      while (DateTime.now().isBefore(settleUntil) &&
+          _connected &&
+          !_sessionDisposed) {
+        final lastOut = _lastPtyStdoutAt;
+        if (lastOut != null &&
+            DateTime.now().difference(lastOut) >=
+                const Duration(milliseconds: 120)) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
     } catch (e) {
       debugPrint('injectOsc7: $e');
     } finally {
+      _osc7InjectMuteDisplay = false;
       _osc7InjectInFlight = false;
+      // Prompt drawn while muted is invisible — request a fresh one without
+      // clearing already-visible MOTD lines (\033[2K would wipe the row).
+      final session = _shell;
+      if (session != null && _connected && !_sessionDisposed) {
+        try {
+          session.write(Uint8List.fromList(utf8.encode('\n')));
+        } catch (_) {}
+      }
     }
   }
 
@@ -1971,6 +2190,7 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   RemoteCommandQueue get _cmdQueue {
     return _commandQueue ??= RemoteCommandQueue(
       () => (_connected && !dropped) ? _client : null,
+      // shell/SFTP/日志流另占通道；2 足够桌面轮询且不易占满 MaxSessions。
       maxConcurrent: 2,
     );
   }
@@ -1990,6 +2210,9 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
   /// 最近一次排队命令失败原因（供托盘 / UI 展示）。
   String? get lastRemoteCommandError => _cmdQueue.lastError;
   DateTime? get lastRemoteCommandErrorAt => _cmdQueue.lastErrorAt;
+
+  @override
+  bool get lightweightRemoteExec => false;
 
   /// 当前登记的本地端口转发（桌面转发管理器）。
   List<LocalPortForwarder> get desktopForwards =>
@@ -2055,6 +2278,8 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
     _followDebounce = null;
     _osc7InjectInFlight = false;
     _lastOsc7InjectAt = null;
+    _lastPtyStdoutAt = null;
+    _osc7InjectMuteDisplay = false;
     await _stdoutSub?.cancel();
     await _stderrSub?.cancel();
     _stdoutSub = null;
@@ -2088,12 +2313,26 @@ class SshWorkspaceController extends ChangeNotifier implements SftpBrowserHost {
 
     await _remoteSession.detach(keepNotify: false);
 
+    _closeJumpClient();
+
     _connected = false;
     cachedSudoPassword = null;
+    if (_sessionRecorder?.isRecording ?? false) {
+      _sessionRecorder!.stop();
+    }
     if (!keepTerminal) {
       _terminal = null;
       _entries = [];
     }
+  }
+
+  void _closeJumpClient() {
+    final jump = _jumpClient;
+    _jumpClient = null;
+    if (jump == null) return;
+    try {
+      jump.close();
+    } catch (_) {}
   }
 
   Future<void> _stopActiveStreams() async {

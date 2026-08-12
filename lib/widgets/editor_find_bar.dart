@@ -529,13 +529,23 @@ class EditorFindBar extends StatelessWidget {
                           ),
                         ),
                       ),
-                      TextButton(
-                        onPressed: c.replaceOne,
-                        child: const Text('替换'),
-                      ),
-                      TextButton(
-                        onPressed: c.replaceAll,
-                        child: const Text('全部替换'),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextButton(
+                                onPressed: c.replaceOne,
+                                child: const Text('替换'),
+                              ),
+                              TextButton(
+                                onPressed: c.replaceAll,
+                                child: const Text('全部替换'),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ),

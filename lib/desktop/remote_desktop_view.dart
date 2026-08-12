@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/workbench_settings_store.dart';
@@ -27,7 +29,10 @@ import 'apps/terminal_app.dart';
 import 'apps/transfers_app.dart';
 import 'apps/users_app.dart';
 import 'desktop_command_palette.dart';
+import 'desktop_expose_overlay.dart';
+import 'desktop_snap_picker.dart';
 import 'desktop_taskbar.dart';
+import 'desktop_widget_manager.dart';
 import 'desktop_window_frame.dart';
 import 'desktop_window_manager.dart';
 
@@ -41,7 +46,7 @@ class RemoteDesktopView extends StatefulWidget {
   });
 
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final WorkbenchSettingsStore settings;
 
   @override
@@ -56,10 +61,21 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
   bool? _lastConnecting;
   String? _lastError;
   bool _paletteOpen = false;
+  bool _exposeOpen = false;
+  bool _snapPickerOpen = false;
   bool _dismissDisconnectBanner = false;
+  bool _taskbarRevealed = false;
+  DesktopWidgetManager? _widgetManager;
 
   DesktopWindowManager get wm => widget.wm;
-  SshWorkspaceController get controller => widget.controller;
+  TerminalSessionController get controller => widget.controller;
+
+  DesktopWidgetManager get _widgets {
+    return _widgetManager ??= DesktopWidgetManager(
+      wm: wm,
+      controller: controller,
+    );
+  }
 
   void _openPalette() {
     if (_paletteOpen) return;
@@ -74,23 +90,50 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
     if (id != null) wm.focus(id);
   }
 
+  void _toggleExpose() {
+    setState(() {
+      _exposeOpen = !_exposeOpen;
+      if (_exposeOpen) {
+        _paletteOpen = false;
+        _snapPickerOpen = false;
+      }
+    });
+  }
+
+  void _openSnapPicker() {
+    if (wm.focusedWindow == null) return;
+    setState(() {
+      _snapPickerOpen = true;
+      _exposeOpen = false;
+      _paletteOpen = false;
+    });
+  }
+
   Future<void> _showDesktopMenu(BuildContext context, Offset global) async {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) return;
+    final items = <PopupMenuEntry<String>>[
+      const PopupMenuItem(value: 'terminal', child: Text('打开终端')),
+      if (wm.canOpen(DesktopAppType.files))
+        const PopupMenuItem(value: 'files', child: Text('文件管理器')),
+      if (wm.canOpen(DesktopAppType.browser))
+        const PopupMenuItem(value: 'browser', child: Text('浏览器')),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: 'expose', child: Text('窗口概览')),
+      const PopupMenuItem(value: 'add_widget', child: Text('添加小部件…')),
+      const PopupMenuItem(value: 'toggle_widgets', child: Text('显示/隐藏小部件')),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: 'workspace', child: Text('新建工作区')),
+      const PopupMenuItem(value: 'settings', child: Text('桌面设置')),
+    ];
     final selected = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
         Rect.fromLTWH(global.dx, global.dy, 0, 0),
         Offset.zero & overlay.size,
       ),
-      items: const [
-        PopupMenuItem(value: 'terminal', child: Text('打开终端')),
-        PopupMenuItem(value: 'files', child: Text('文件管理器')),
-        PopupMenuDivider(),
-        PopupMenuItem(value: 'workspace', child: Text('新建工作区')),
-        PopupMenuItem(value: 'settings', child: Text('桌面设置')),
-      ],
+      items: items,
     );
     if (!context.mounted || selected == null) return;
     switch (selected) {
@@ -98,6 +141,14 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
         wm.openTerminal(preferPrimary: false);
       case 'files':
         wm.open(DesktopAppType.files);
+      case 'browser':
+        wm.open(DesktopAppType.browser);
+      case 'expose':
+        _toggleExpose();
+      case 'add_widget':
+        await _pickAndAddWidget(context);
+      case 'toggle_widgets':
+        _widgets.setShowWidgets(!_widgets.showWidgets);
       case 'workspace':
         wm.addWorkspace();
       case 'settings':
@@ -105,6 +156,29 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
           await showDesktopSettingsDialog(context, wm: wm);
         }
     }
+  }
+
+  Future<void> _pickAndAddWidget(BuildContext context) async {
+    final kind = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return SimpleDialog(
+          title: const Text('添加小部件'),
+          children: [
+            for (final k in _widgets.catalog)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, k.id),
+                child: ListTile(
+                  leading: Icon(k.icon),
+                  title: Text(k.name),
+                  dense: true,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+    if (kind != null) await _widgets.add(kind);
   }
 
   @override
@@ -274,6 +348,14 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
               _openPalette,
             ),
             ...workbenchBindActivators(
+              workbenchMetaOrControl(LogicalKeyboardKey.keyE),
+              _toggleExpose,
+            ),
+            ...workbenchBindActivators(
+              workbenchMetaOrControl(LogicalKeyboardKey.keyZ, shift: true),
+              _openSnapPicker,
+            ),
+            ...workbenchBindActivators(
               workbenchMetaOrControl(LogicalKeyboardKey.keyT),
               () {
                 final id = wm.focusedWindow?.id;
@@ -359,6 +441,7 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                     return _DesktopBackground(
                       showGrid: wm.desktopSettings.showGrid,
                       wallpaper: wm.desktopSettings.wallpaper,
+                      canOpen: wm.canOpen,
                       onOpenApp: (type) {
                         if (type == DesktopAppType.terminal) {
                           wm.openTerminal();
@@ -373,6 +456,14 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                     );
                   },
                 ),
+              ),
+              // 桌面小部件：壁纸之上、窗口之下。
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: DesktopWindowManager.taskbarH,
+                child: DesktopWidgetsLayer(manager: _widgets),
               ),
               // 窗口层：仅此层随 wm 几何/清单变化重建。
               Positioned(
@@ -392,39 +483,59 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                         if (at != bt) return at - bt;
                         return a.z.compareTo(b.z);
                       });
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        if (wm.snapPreviewRect != null)
-                          Positioned(
-                            left: wm.snapPreviewRect!.left,
-                            top: wm.snapPreviewRect!.top,
-                            width: wm.snapPreviewRect!.width,
-                            height: wm.snapPreviewRect!.height,
-                            child: IgnorePointer(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: wb.accentBlue.withValues(alpha: 0.14),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
+                    return AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, anim) {
+                        final offset = Tween<Offset>(
+                          begin: const Offset(0.04, 0),
+                          end: Offset.zero,
+                        ).animate(anim);
+                        return FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: offset,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Stack(
+                        key: ValueKey(wm.activeWorkspaceIndex),
+                        clipBehavior: Clip.none,
+                        children: [
+                          if (wm.snapPreviewRect != null)
+                            Positioned(
+                              left: wm.snapPreviewRect!.left,
+                              top: wm.snapPreviewRect!.top,
+                              width: wm.snapPreviewRect!.width,
+                              height: wm.snapPreviewRect!.height,
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
                                     color:
-                                        wb.accentBlue.withValues(alpha: 0.55),
-                                    width: 2,
+                                        wb.accentBlue.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: wb.accentBlue
+                                          .withValues(alpha: 0.55),
+                                      width: 2,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        for (final w in hosts)
-                          _DesktopWindowHost(
-                            key: ValueKey(w.id),
-                            windowId: w.id,
-                            wm: wm,
-                            controller: controller,
-                            settings: widget.settings,
-                            offstage: !wm.isWindowInActiveWorkspace(w.id),
-                          ),
-                      ],
+                          for (final w in hosts)
+                            _DesktopWindowHost(
+                              key: ValueKey(w.id),
+                              windowId: w.id,
+                              wm: wm,
+                              controller: controller,
+                              settings: widget.settings,
+                              offstage: !wm.isWindowInActiveWorkspace(w.id),
+                            ),
+                        ],
+                      ),
                     );
                   },
                 ),
@@ -433,7 +544,35 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: DesktopTaskbar(wm: wm, controller: controller),
+                child: ListenableBuilder(
+                  listenable: wm.desktopSettings,
+                  builder: (context, _) {
+                    final autohide = wm.desktopSettings.taskbarAutohide;
+                    final show = !autohide || _taskbarRevealed;
+                    return MouseRegion(
+                      onEnter: (_) {
+                        if (autohide && !_taskbarRevealed) {
+                          setState(() => _taskbarRevealed = true);
+                        }
+                      },
+                      onExit: (_) {
+                        if (autohide && _taskbarRevealed) {
+                          setState(() => _taskbarRevealed = false);
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutCubic,
+                        height: show ? DesktopWindowManager.taskbarH : 4,
+                        decoration: const BoxDecoration(),
+                        clipBehavior: Clip.hardEdge,
+                        child: show
+                            ? DesktopTaskbar(wm: wm, controller: controller)
+                            : const ColoredBox(color: Colors.transparent),
+                      ),
+                    );
+                  },
+                ),
               ),
               if (_paletteOpen)
                 Positioned.fill(
@@ -441,6 +580,24 @@ class _RemoteDesktopViewState extends State<RemoteDesktopView> {
                     wm: wm,
                     controller: controller,
                     onClose: _closePalette,
+                  ),
+                ),
+              if (_exposeOpen)
+                Positioned.fill(
+                  child: DesktopExposeOverlay(
+                    wm: wm,
+                    onClose: () => setState(() => _exposeOpen = false),
+                  ),
+                ),
+              if (_snapPickerOpen && wm.focusedWindow != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 24,
+                  child: DesktopSnapPicker(
+                    wm: wm,
+                    windowId: wm.focusedWindow!.id,
+                    onClose: () => setState(() => _snapPickerOpen = false),
                   ),
                 ),
               // 掉线横幅（非模态）：可关闭，不阻断背后窗口交互。
@@ -556,7 +713,7 @@ class _DesktopWindowHost extends StatefulWidget {
 
   final String windowId;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final WorkbenchSettingsStore settings;
   final bool offstage;
 
@@ -573,6 +730,16 @@ class _DesktopWindowHostState extends State<_DesktopWindowHost> {
       if (w.id == widget.windowId) return w;
     }
     return null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _DesktopWindowHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 会话控制器切换（例如分屏焦点变化）时必须重建内容，避免绑死旧 SSH/Telnet。
+    if (!identical(oldWidget.controller, widget.controller)) {
+      _content = null;
+      _contentType = null;
+    }
   }
 
   Widget _buildContent(DesktopWindow window) {
@@ -622,7 +789,9 @@ class _DesktopWindowHostState extends State<_DesktopWindowHost> {
         );
       case DesktopAppType.containers:
         return ContainersApp(
-          key: ValueKey('ct-${window.id}'),
+          key: ValueKey(
+            'ct-${window.id}-${identityHashCode(widget.controller)}',
+          ),
           window: window,
           wm: widget.wm,
           controller: widget.controller,
@@ -727,12 +896,14 @@ class _DesktopBackground extends StatelessWidget {
   const _DesktopBackground({
     required this.onOpenApp,
     required this.onContextMenu,
+    required this.canOpen,
     this.showGrid = true,
     this.wallpaper = '',
   });
 
   final void Function(DesktopAppType type) onOpenApp;
   final void Function(Offset globalPosition) onContextMenu;
+  final bool Function(DesktopAppType type) canOpen;
   final bool showGrid;
   final String wallpaper;
 
@@ -811,11 +982,12 @@ class _DesktopBackground extends StatelessWidget {
           runSpacing: 16,
           children: [
             for (final s in _shortcuts)
-              _DesktopShortcutIcon(
-                icon: s.$2,
-                label: s.$3,
-                onOpen: () => onOpenApp(s.$1),
-              ),
+              if (canOpen(s.$1))
+                _DesktopShortcutIcon(
+                  icon: s.$2,
+                  label: s.$3,
+                  onOpen: () => onOpenApp(s.$1),
+                ),
           ],
         ),
       ),

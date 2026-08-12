@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../../services/remote_disk_usage.dart';
 import '../../services/remote_process_list.dart';
 import '../../services/remote_sudo.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/remote_state_view.dart';
@@ -27,14 +29,15 @@ class DiskUsageApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<DiskUsageApp> createState() => _DiskUsageAppState();
 }
 
 class _DiskUsageAppState extends State<DiskUsageApp> {
-  static const _maxEntries = 60;
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+static const _maxEntries = 60;
 
   RemoteDiskUsageSnapshot? _snap;
   bool _loading = false;
@@ -63,7 +66,7 @@ class _DiskUsageAppState extends State<DiskUsageApp> {
     } else if (cwdArg != null && cwdArg.isNotEmpty) {
       _path = cwdArg;
     } else {
-      _path = widget.controller.remoteCwd;
+      _path = _exec.remoteCwd;
     }
     widget.controller.addListener(_onController);
     widget.window.onConnectionRestored = _onRestored;
@@ -227,7 +230,7 @@ class _DiskUsageAppState extends State<DiskUsageApp> {
         return;
       }
       final snap = await fetchRemoteDiskUsage(
-        widget.controller,
+        _exec,
         path: _path,
         osHint: _os,
         maxEntries: _maxEntries,
@@ -248,10 +251,10 @@ class _DiskUsageAppState extends State<DiskUsageApp> {
   Future<void> _loadWithSudo(int gen) async {
     final err = await runWithSudoPasswordPrompt(
       context,
-      widget.controller,
+      _exec,
       attempt: (sudoPassword) async {
         final snap = await fetchRemoteDiskUsage(
-          widget.controller,
+          _exec,
           path: _path,
           osHint: _os,
           maxEntries: _maxEntries,

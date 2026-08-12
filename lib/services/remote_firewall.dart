@@ -1,5 +1,5 @@
 import 'remote_sudo.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 enum RemoteFirewallBackend { ufw, firewalld, iptables, unknown }
 
@@ -210,7 +210,7 @@ bool isSafeFirewalldServiceName(String name) {
 }
 
 Future<RemoteFirewallBackend> detectFirewallBackend(
-  SshWorkspaceController c,
+  RemoteExecCapable c,
 ) async {
   const cmd = r'''
 if command -v ufw >/dev/null 2>&1; then echo ufw; exit 0; fi
@@ -224,7 +224,7 @@ echo none
 }
 
 Future<RemoteFirewallSnapshot?> fetchFirewallSnapshot(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   RemoteFirewallBackend? backend,
 }) async {
   final be = backend ?? await detectFirewallBackend(c);
@@ -339,7 +339,7 @@ String firewalldRemovePortCommand(String portSpec) {
 }
 
 Future<String?> runFirewallMutate(
-  SshWorkspaceController c,
+  RemoteExecCapable c,
   String command, {
   String? terminalHint,
   String? sudoPassword,

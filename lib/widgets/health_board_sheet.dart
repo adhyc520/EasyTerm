@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/remote_host_metrics.dart';
 import '../services/session_tabs_controller.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 
@@ -68,7 +70,7 @@ class _HealthBoardPanel extends StatefulWidget {
 class _HostMetricEntry {
   _HostMetricEntry({required this.controller});
 
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   RemoteHostSnapshot? snap;
   bool loading = false;
   String? error;
@@ -100,8 +102,8 @@ class _HealthBoardPanelState extends State<_HealthBoardPanel> {
     scheduleMicrotask(_refreshAll);
   }
 
-  List<({SessionTab tab, SshWorkspaceController c})> _allPanes() {
-    final panes = <({SessionTab tab, SshWorkspaceController c})>[];
+  List<({SessionTab tab, TerminalSessionController c})> _allPanes() {
+    final panes = <({SessionTab tab, TerminalSessionController c})>[];
     for (final tab in widget.tabs.tabs) {
       for (final leaf in tab.root.leaves) {
         panes.add((tab: tab, c: leaf.controller));
@@ -112,7 +114,7 @@ class _HealthBoardPanelState extends State<_HealthBoardPanel> {
 
   /// 同一主机多窗格只采一次样。
   List<_HostMetricEntry> _uniqueConnectedHosts(
-    List<({SessionTab tab, SshWorkspaceController c})> panes,
+    List<({SessionTab tab, TerminalSessionController c})> panes,
   ) {
     final seen = <String>{};
     final out = <_HostMetricEntry>[];
@@ -155,7 +157,9 @@ class _HealthBoardPanelState extends State<_HealthBoardPanel> {
     entry.error = null;
     if (mounted && gen == _gen) setState(() {});
     try {
-      final snap = await fetchRemoteHostSnapshot(entry.controller);
+      final snap = await fetchRemoteHostSnapshot(
+        entry.controller as RemoteExecCapable,
+      );
       if (gen != _gen) return;
       entry.snap = snap;
       if (snap == null) {
@@ -197,33 +201,42 @@ class _HealthBoardPanelState extends State<_HealthBoardPanel> {
                 size: 20,
               ),
               const SizedBox(width: 8),
-              Text(
-                l10n.healthBoardTitle,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: context.wb.primaryText,
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  l10n.healthBoardTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: context.wb.primaryText,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-              const Spacer(),
               IconButton(
                 tooltip: MaterialLocalizations.of(context).closeButtonLabel,
+                visualDensity: VisualDensity.compact,
                 onPressed: () => Navigator.pop(context),
                 icon: Icon(Icons.close_rounded, color: context.wb.textMuted),
               ),
-              const SizedBox(width: 6),
-              TextButton.icon(
-                onPressed: _refreshing ? null : _refreshAll,
-                icon: _refreshing
-                    ? SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: context.wb.accentBlue,
-                        ),
-                      )
-                    : const Icon(Icons.refresh_rounded, size: 18),
-                label: Text(l10n.healthBoardRefresh),
+              Flexible(
+                child: TextButton.icon(
+                  onPressed: _refreshing ? null : _refreshAll,
+                  icon: _refreshing
+                      ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: context.wb.accentBlue,
+                          ),
+                        )
+                      : const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(
+                    l10n.healthBoardRefresh,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
             ],
           ),

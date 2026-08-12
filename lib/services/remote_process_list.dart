@@ -1,4 +1,4 @@
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 远端 OS 类型（进程列表命令分支）。
 enum RemoteOsKind { linux, windows, unknown }
@@ -94,7 +94,7 @@ const String kWindowsProcessListPs =
 const String kWindowsProcessList =
     r'tasklist.exe /FO CSV /NH 2>nul || tasklist /FO CSV /NH';
 
-Future<RemoteOsKind> detectRemoteOs(SshWorkspaceController controller) async {
+Future<RemoteOsKind> detectRemoteOs(RemoteExecCapable controller) async {
   if (!controller.connected) return RemoteOsKind.unknown;
   final raw = await controller.runRemoteForStatus(kRemoteOsProbeOneLine);
   return parseRemoteOsKind(raw ?? '');
@@ -116,7 +116,7 @@ RemoteOsKind parseRemoteOsKind(String raw) {
 }
 
 Future<RemoteProcessSnapshot?> fetchRemoteProcessSnapshot(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;
@@ -159,7 +159,7 @@ Future<RemoteProcessSnapshot?> fetchRemoteProcessSnapshot(
 }
 
 Future<List<RemoteProcess>> _fetchWindowsProcesses(
-  SshWorkspaceController controller,
+  RemoteExecCapable controller,
 ) async {
   final psRaw = await controller.runRemoteForStatus(kWindowsProcessListPs);
   final fromPs = parseWindowsGetProcessCsv(psRaw ?? '');
@@ -171,7 +171,7 @@ Future<List<RemoteProcess>> _fetchWindowsProcesses(
 /// 结束进程。[force] 为 true 时 Linux 用 SIGKILL、Windows 加 `/F`；
 /// 为 false 时 Linux 用 SIGTERM、Windows 用不带 `/F` 的 `taskkill`。
 Future<String?> killRemoteProcess(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteOsKind os,
   required int pid,
   bool force = true,
@@ -194,7 +194,7 @@ Future<String?> killRemoteProcess(
 
 /// 按需拉取进程详情（cmdline / PPID / 启动时间）。列表命令保持不变以免破坏解析。
 Future<RemoteProcessDetail?> fetchRemoteProcessDetail(
-  SshWorkspaceController c, {
+  RemoteExecCapable c, {
   required int pid,
   required RemoteOsKind os,
 }) async {
@@ -471,7 +471,7 @@ bool isSafeRemoteServiceName(String name) {
 }
 
 Future<RemoteServiceSnapshot?> fetchRemoteServiceSnapshot(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;
@@ -514,7 +514,7 @@ Future<RemoteServiceSnapshot?> fetchRemoteServiceSnapshot(
 }
 
 Future<String?> controlRemoteService(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteOsKind os,
   required String name,
   required RemoteServiceAction action,

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/code_snippets_store.dart';
 import '../services/session_tabs_controller.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 
@@ -134,10 +136,10 @@ class _CodeSnippetsPanelState extends State<_CodeSnippetsPanel> {
     if (ok == true) await widget.store.remove(item.id);
   }
 
-  List<({int tabIndex, int paneId, SshWorkspaceController controller})>
+  List<({int tabIndex, int paneId, TerminalSessionController controller})>
   _connectedTargets() {
     final out =
-        <({int tabIndex, int paneId, SshWorkspaceController controller})>[];
+        <({int tabIndex, int paneId, TerminalSessionController controller})>[];
     final tabs = widget.tabs.tabs;
     for (var ti = 0; ti < tabs.length; ti++) {
       for (final leaf in tabs[ti].root.leaves) {

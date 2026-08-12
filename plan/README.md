@@ -1,27 +1,66 @@
-# 终端模式 / Windows 体验增强方案（第四轮）
+# 第 5 代迭代计划：AI 深度集成、终端生产力、桌面完形与多主机协同
 
-> 四份独立方案，按用户提出的四个问题成文。每份均含已核实现状（行号）、目标与范围、工作流、代码草图、非目标、测试、风险、文件清单。可独立实施，依赖关系在文末标注。
+> 写在 2026-08-10。前 4 代计划已完成：远程桌面基础（流式/Shell/集成）、GNOME 外壳重设计、16 个桌面应用可用性优化、终端/Windows/编辑器体验。本代瞄准 **AI 助手 2.0**、**终端生产力**、**桌面完形**、**会话持久化**、**多主机协同** 五条线。
+>
+> **文档修订 2026-08-10：** 对照当前代码刷新「现状」——LLM 工具闭环、终端基础搜索、工作区/托盘/8 区 Snap 等已部分落地；本代以扩展与补齐为主。
+>
+> **实现状态 2026-08-10：** A–F 主路径已落地（`dart analyze lib` 无 error）。跨设备同步（D4）、热角、并排 diff 等仍按各文档「非目标」延后。
 
-| 问题 | 方案 | 核心结论 |
-|---|---|---|
-| 1. 文件编辑器功能更强（查找/替换等） | [editor-find-replace.md](editor-find-replace.md) | 桌面版已有查找替换骨架；终端模式版完全空白。抽共享组件两端复用 + 桌面版补「命中高亮/自动滚入/替换保留撤销/查找历史」 |
-| 2. Windows 下终端模式 nano 无法复制 | [windows-nano-copy.md](windows-nano-copy.md) | 根因：缺 Shift 绕过鼠标模式。nano 开鼠标上报后选择被抢、选区被重绘冲掉。加 Shift 旁路 + 抑制 PTY 鼠标上报 + pointerUp 即复制 |
-| 3. 终端模式 follow terminal folder | [terminal-follow-folder.md](terminal-follow-folder.md) | `_remoteCwd` 不跟踪 shell `cd`。在 `term.write` 前拦截 OSC 7 取真实 cwd，同步 SFTP 浏览器/状态栏 |
-| 4. Windows 高分辨率显示 | [windows-high-dpi.md](windows-high-dpi.md) | manifest 已 PerMonitorV2（不糊）；缺口是无全局 UI 缩放。`MaterialApp.builder` 注入 `textScaler` + 终端字号联动 + 多显示器 DPI 兜底 |
+---
 
-## 共用件
+## 工作流总览
 
-- **`lib/services/pty_interceptor.dart`**（新增）由方案 2 与方案 3 共用：OSC 7 解析（cwd）+ 鼠标模式状态机（CSI ?1003h/l），一次扫流两用。两方案应同步实现拦截器。
-- 其余互不耦合。
+| 优先级 | 工作流 | 目标 | 代码现状 | 本代交付 |
+|--------|--------|------|----------|----------|
+| **P0** | A — AI 助手 2.0 | LLM 工具链扩展、上下文感知、会话持久化 | 仅 `terminal_run` + 工具闭环 | 多工具执行器、上下文注入、对话持久化、工具卡片 |
+| **P0** | B — 终端生产力 | 搜索、书签、录制回放、复制模式 | 基础 Cmd+F、CodeSnippets | 增强搜索、命令书签 2.0、录制/回放、键盘复制模式 |
+| **P1** | C — 桌面完形 | 工作区动画、Exposé、小部件、Snap 选择器 | 工作区/托盘/8 区 Snap 已有 | Exposé、autohide、Snap 选择器、桌面小部件 |
+| **P1** | D — 会话持久化 | 退出恢复、快照、命令历史 | 仅主机配置与窗口尺寸 | autosave/恢复、命名快照、命令历史 |
+| **P2** | E — 多主机协同 | 批量执行、分组、SSH config、跳板机 | 多标签独立连接 | 分组/标签、批量命令、config 导入、ProxyJump |
+| **P2** | F — 性能与可及性 | 大输出优化、懒加载、无障碍、触控 | UI 缩放 + maxLines | 分片写入、Semantics、触控栏、性能采样 |
 
-## 实施建议顺序
+**总预估：~50 个文件，含新建与修改。**
 
-1. **pty_interceptor.dart**（方案 2+3 共基座）
-2. 方案 2（nano 复制）+ 方案 3（follow folder）--同基座，并行
-3. 方案 1（编辑器）--独立
-4. 方案 4（高分屏）--独立；若工期紧可只做 §9 三件高收益项
+---
 
-## 基线
+## 实施状态
 
-- 前序：`plan/desktop-next-iteration.md`、`plan2/gnome-desktop-redesign.md`、`plan3/desktop-apps-usability.md`（已实现/已并入主干，本目录工作树中已删）。
-- 本轮聚焦「终端模式 + Windows + 编辑器」三条用户可直接感知的体验线，不改 SSH 连接模型与桌面外壳架构。
+| 工作流 | 文档 | 实现 |
+|--------|------|------|
+| A | ✅ | ✅ |
+| B | ✅ | ✅ |
+| C | ✅ | ✅ |
+| D | ✅ | ✅ |
+| E | ✅ | ✅ |
+| F | ✅ | ✅ |
+
+图例：✅ 完成 · 🔄 进行中 · ⬜ 未开始
+
+---
+
+## 详细方案文件
+
+- [AI 助手 2.0](./ai-assistant-2.0.md) — LLM 工具链扩展、上下文感知、多步任务、会话持久化
+- [终端生产力](./terminal-productivity.md) — 终端内搜索、命令书签、会话录制、输出复制
+- [桌面完形](./desktop-completion.md) — 工作区动画、Exposé、桌面小部件、Snap 布局
+- [会话持久化](./session-persistence.md) — 退出恢复、会话快照、命令历史
+- [多主机协同](./multi-host-orchestration.md) — 批量执行、主机分组、SSH config 导入、跳板机
+- [性能与可及性](./performance-accessibility.md) — 大输出优化、懒加载、无障碍、触控
+
+---
+
+## 关键入口（实现后）
+
+| 能力 | 怎么用 |
+|------|--------|
+| 终端搜索 Aa / 正则 | 终端内 Cmd/Ctrl+F |
+| 命令书签面板 | Cmd/Ctrl+Shift+P |
+| 键盘复制模式 | 终端复制模式快捷键（见 shortcuts） |
+| 会话录制 | 终端录制控制条 |
+| Exposé | 桌面 Cmd/Ctrl+E；右键菜单「窗口概览」 |
+| Snap 布局选择器 | Cmd/Ctrl+Shift+Z |
+| 桌面小部件 | 桌面右键 → 添加小部件 |
+| 任务栏自动隐藏 | 桌面设置开关 |
+| 会话恢复 | 启动时若有 autosave 弹出恢复对话框 |
+| 批量执行 / SSH Config / 分组 | 设置菜单相关入口 |
+| 触控辅助栏 | 终端设置 → 触控辅助栏 |

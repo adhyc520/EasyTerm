@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../services/remote_cron.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
@@ -22,14 +24,15 @@ class CronApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<CronApp> createState() => _CronAppState();
 }
 
 class _CronAppState extends State<CronApp> {
-  final _editCtrl = TextEditingController();
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+final _editCtrl = TextEditingController();
   List<CronLine> _lines = const [];
   bool _loading = false;
   bool _saving = false;
@@ -197,8 +200,8 @@ class _CronAppState extends State<CronApp> {
       _hint = null;
     });
     final results = await Future.wait([
-      fetchCrontabText(widget.controller),
-      widget.controller.runQueued(
+      fetchCrontabText(_exec),
+      _exec.runQueued(
         'systemctl is-active cron 2>/dev/null || '
         'systemctl is-active crond 2>/dev/null || echo unknown',
       ),
@@ -213,9 +216,9 @@ class _CronAppState extends State<CronApp> {
       setState(() {
         _loading = false;
         _serviceStatus = status;
-        _error = widget.controller.lastRemoteCommandError == null
+        _error = _exec.lastRemoteCommandError == null
             ? '无法读取 crontab'
-            : '刷新失败：${widget.controller.lastRemoteCommandError}';
+            : '刷新失败：${_exec.lastRemoteCommandError}';
       });
       return;
     }
@@ -250,7 +253,7 @@ class _CronAppState extends State<CronApp> {
       _error = null;
     });
     final backup = _installedText;
-    final err = await installCrontab(widget.controller, text);
+    final err = await installCrontab(_exec, text);
     if (!mounted) return;
     setState(() => _saving = false);
     if (err != null) {
@@ -276,7 +279,7 @@ class _CronAppState extends State<CronApp> {
       _saving = true;
       _error = null;
     });
-    final err = await installCrontab(widget.controller, prev);
+    final err = await installCrontab(_exec, prev);
     if (!mounted) return;
     setState(() => _saving = false);
     if (err != null) {
@@ -301,7 +304,7 @@ class _CronAppState extends State<CronApp> {
       _saving = true;
       _error = null;
     });
-    final text = await fetchCrontabText(widget.controller);
+    final text = await fetchCrontabText(_exec);
     if (!mounted) return;
     if (text == null) {
       setState(() {
@@ -331,7 +334,7 @@ class _CronAppState extends State<CronApp> {
     }
     final next = lines.join('\n');
     final backup = _installedText;
-    final err = await installCrontab(widget.controller, next);
+    final err = await installCrontab(_exec, next);
     if (!mounted) return;
     setState(() => _saving = false);
     if (err != null) {

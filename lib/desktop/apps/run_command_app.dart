@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/remote_stream.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
@@ -21,14 +23,15 @@ class RunCommandApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<RunCommandApp> createState() => _RunCommandAppState();
 }
 
 class _RunCommandAppState extends State<RunCommandApp> {
-  static const _presets = [
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+static const _presets = [
     'uptime',
     'df -h',
     'free -h',
@@ -213,7 +216,7 @@ class _RunCommandAppState extends State<RunCommandApp> {
     _stream = null;
     if (s == null) return;
     s.removeListener(_onStream);
-    widget.controller.unregisterRemoteStream(s);
+    _exec.unregisterRemoteStream(s);
     await s.stop();
   }
 
@@ -273,7 +276,7 @@ class _RunCommandAppState extends State<RunCommandApp> {
     widget.wm.requestRebuild();
     try {
       final stream =
-          await widget.controller.startRemoteStream(cmd, maxLines: 4000);
+          await _exec.startRemoteStream(cmd, maxLines: 4000);
       if (!mounted) {
         await stream.stop();
         return;

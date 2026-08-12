@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
 import '../services/remote_host_metrics.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 import '../widgets/desktop_settings_dialog.dart';
@@ -21,7 +23,7 @@ class DesktopTaskbar extends StatelessWidget {
   });
 
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -135,13 +137,22 @@ class _WorkspaceIndicator extends StatelessWidget {
 class _TrayArea extends StatefulWidget {
   const _TrayArea({required this.wm, required this.controller});
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<_TrayArea> createState() => _TrayAreaState();
 }
 
 class _TrayAreaState extends State<_TrayArea> {
+  RemoteExecCapable? get _exec =>
+      widget.controller is RemoteExecCapable
+          ? widget.controller as RemoteExecCapable
+          : null;
+  SshWorkspaceController? get _ssh =>
+      widget.controller is SshWorkspaceController
+          ? widget.controller as SshWorkspaceController
+          : null;
+
   Timer? _timer;
   RemoteHostSnapshot? _snap;
   String _clock = '--:--';
@@ -179,11 +190,11 @@ class _TrayAreaState extends State<_TrayArea> {
     final ds = widget.wm.desktopSettings;
     if (!ds.trayShowClock && !ds.trayShowMetrics) return;
     try {
-      final snap = await c.snapshot();
+      final snap = await _exec?.snapshot();
       if (!mounted) return;
       String clock = _clock;
       if (ds.trayShowClock) {
-        final raw = await c.runQueued(r"date '+%H:%M'");
+        final raw = await _exec?.runQueued(r"date '+%H:%M'");
         if (raw != null && raw.isNotEmpty) {
           clock = raw.split(RegExp(r'\s')).first;
         }
@@ -196,8 +207,8 @@ class _TrayAreaState extends State<_TrayArea> {
   }
 
   bool get _recentCmdError {
-    final err = widget.controller.lastRemoteCommandError;
-    final at = widget.controller.lastRemoteCommandErrorAt;
+    final err = _exec?.lastRemoteCommandError;
+    final at = _ssh?.lastRemoteCommandErrorAt;
     if (err == null || at == null) return false;
     return DateTime.now().difference(at) < const Duration(seconds: 30);
   }
@@ -217,7 +228,7 @@ class _TrayAreaState extends State<_TrayArea> {
     if (c.connecting) return '连接中…';
     if (c.connected && !c.dropped) {
       if (_recentCmdError) {
-        return '命令失败：${c.lastRemoteCommandError}';
+        return '命令失败：${_exec?.lastRemoteCommandError}';
       }
       return '已连接';
     }
@@ -315,7 +326,7 @@ class _TrayAreaState extends State<_TrayArea> {
               case _TrayAction.shortcuts:
                 showDesktopShortcutsCheatsheet(context);
               case _TrayAction.lockSudo:
-                widget.controller.lockSudoPassword();
+                _ssh?.lockSudoPassword();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
@@ -427,7 +438,7 @@ class _LauncherButton extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
-        for (final app in kAllApps)
+        for (final app in appsForCapabilities(wm.controller.capabilities))
           if (app.id != DesktopAppType.editor)
             _item(
               context,
@@ -435,13 +446,14 @@ class _LauncherButton extends StatelessWidget {
               icon: app.icon,
               label: app.label,
             ),
-        _item(
-          context,
-          value: _LaunchAction.editor,
-          icon: Icons.folder_open_rounded,
-          label: '打开文件…',
-        ),
-        const PopupMenuDivider(),
+        if (wm.canOpen(DesktopAppType.editor))
+          _item(
+            context,
+            value: _LaunchAction.editor,
+            icon: Icons.folder_open_rounded,
+            label: '打开文件…',
+          ),
+        if (wm.canOpen(DesktopAppType.editor)) const PopupMenuDivider(),
         _item(
           context,
           value: _LaunchAction.settings,

@@ -95,5 +95,18 @@ void main() {
       expect(seen, [1, 2, 3]);
       q.dispose();
     });
+
+    test('friendlyError maps channel open failures', () {
+      expect(
+        RemoteCommandQueue.friendlyErrorForTest(
+          Exception('SSHChannelOpenError(2: open failed)'),
+        ),
+        contains('SSH 通道繁忙'),
+      );
+      expect(
+        RemoteCommandQueue.friendlyErrorForTest(TimeoutException('x')),
+        '命令超时',
+      );
+    });
   });
 }

@@ -1,36 +1,42 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
-/// 一条流式 exec 通道：跑一条命令，按行吐出 stdout/stderr，可停止、可观察退出码。
+/// Streaming exec channel: runs one command, emits stdout/stderr lines.
 ///
-/// 用于实时 `tail -f` / `journalctl -f` 等持续输出场景，替代轮询快照。
+/// Used for live `tail -f` / `journalctl -f`. Backed by SSH exec or a generic
+/// byte source ([fromByteSource] / emulator).
 class RemoteStream extends ChangeNotifier {
   RemoteStream._({
     required this.maxLines,
     SSHSession? session,
     String command = '',
+    Future<void> Function()? onCancel,
   })  : _session = session,
-        _cmd = command;
+        _cmd = command,
+        _onCancel = onCancel;
 
   final SSHSession? _session;
   final String _cmd;
   final int maxLines;
+  final Future<void> Function()? _onCancel;
 
-  StreamSubscription<Uint8List>? _outSub;
-  StreamSubscription<Uint8List>? _errSub;
+  StreamSubscription<dynamic>? _outSub;
+  StreamSubscription<dynamic>? _errSub;
   final List<String> _lines = [];
   String _pendingLine = '';
   bool _closed = false;
   bool _debugCounted = false;
   int? _exitCode;
   String? _error;
+  Future<int?>? _exitFuture;
 
-  /// 启动流式命令。
+  /// Start via SSH `client.execute`.
   ///
-  /// [stdinBytes] 写入远端 stdin 后关闭（例如 `sudo -S`）。
+  /// [stdinBytes] are written then stdin is closed (e.g. `sudo -S`).
   static Future<RemoteStream> start(
     SSHClient? client, {
     required String command,
@@ -46,10 +52,41 @@ class RemoteStream extends ChangeNotifier {
       command: command,
       maxLines: maxLines,
     );
-    s._wire();
+    s._wireSsh();
     if (stdinBytes != null && stdinBytes.isNotEmpty) {
       session.write(Uint8List.fromList(stdinBytes));
       await session.stdin.close();
+    }
+    s._debugCounted = true;
+    debugAliveStreams++;
+    if (kDebugMode) {
+      debugPrint('RemoteStream+ alive=$debugAliveStreams cmd=$command');
+    }
+    return s;
+  }
+
+  /// Generic byte-source constructor (Telnet/Serial ShellExecEmulator).
+  ///
+  /// [stdout] may be `Stream<List<int>>` or `Stream<String>`.
+  factory RemoteStream.fromByteSource({
+    required String command,
+    int maxLines = 5000,
+    required Stream<dynamic> stdout,
+    Stream<dynamic>? stderr,
+    Future<int?>? exitCode,
+    Future<void> Function()? cancel,
+    void Function(List<int> bytes)? writeStdin,
+    List<int>? stdinBytes,
+  }) {
+    final s = RemoteStream._(
+      maxLines: maxLines,
+      command: command,
+      onCancel: cancel,
+    );
+    s._exitFuture = exitCode;
+    s._wireGeneric(stdout, stderr);
+    if (stdinBytes != null && stdinBytes.isNotEmpty && writeStdin != null) {
+      writeStdin(stdinBytes);
     }
     s._debugCounted = true;
     debugAliveStreams++;
@@ -94,7 +131,7 @@ class RemoteStream extends ChangeNotifier {
   @visibleForTesting
   void injectError(Object e) => _fail(e);
 
-  void _wire() {
+  void _wireSsh() {
     final session = _session;
     if (session == null) return;
     _outSub = session.stdout.listen(
@@ -106,6 +143,28 @@ class RemoteStream extends ChangeNotifier {
       (data) => _append(utf8.decode(data, allowMalformed: true)),
       onError: (Object e) => _fail(e),
     );
+  }
+
+  void _wireGeneric(Stream<dynamic> stdout, Stream<dynamic>? stderr) {
+    _outSub = stdout.listen(
+      (data) => _append(_asString(data)),
+      onError: (Object e) => _fail(e),
+      onDone: () => unawaited(_doneAsync()),
+    );
+    if (stderr != null) {
+      _errSub = stderr.listen(
+        (data) => _append(_asString(data)),
+        onError: (Object e) => _fail(e),
+      );
+    }
+  }
+
+  static String _asString(dynamic data) {
+    if (data is String) return data;
+    if (data is List<int>) {
+      return utf8.decode(data, allowMalformed: true);
+    }
+    return '$data';
   }
 
   void _append(String chunk) {
@@ -155,6 +214,23 @@ class RemoteStream extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _doneAsync() async {
+    if (_pendingLine.isNotEmpty) {
+      _pushLine(_pendingLine);
+      _pendingLine = '';
+    }
+    try {
+      if (_exitFuture != null) {
+        _exitCode = await _exitFuture;
+      } else {
+        _exitCode = _session?.exitCode;
+      }
+    } catch (_) {}
+    _closed = true;
+    _releaseDebugCount();
+    notifyListeners();
+  }
+
   List<String> get lines => List.unmodifiable(_lines);
   bool get closed => _closed;
   int? get exitCode => _exitCode;
@@ -180,6 +256,15 @@ class RemoteStream extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    // Already closed by natural completion — do not re-run cancel (would
+    // inject Ctrl-C into a shared Telnet/Serial shell).
+    if (_closed) {
+      await _outSub?.cancel();
+      await _errSub?.cancel();
+      _outSub = null;
+      _errSub = null;
+      return;
+    }
     _closed = true;
     await _outSub?.cancel();
     await _errSub?.cancel();
@@ -187,6 +272,9 @@ class RemoteStream extends ChangeNotifier {
     _errSub = null;
     try {
       _session?.close();
+    } catch (_) {}
+    try {
+      await _onCancel?.call();
     } catch (_) {}
     _releaseDebugCount();
     notifyListeners();

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/remote_packages.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../util/remote_paths.dart';
@@ -24,7 +26,7 @@ class PackagesApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<PackagesApp> createState() => _PackagesAppState();
@@ -32,7 +34,8 @@ class PackagesApp extends StatefulWidget {
 
 class _PackagesAppState extends State<PackagesApp>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+late final TabController _tabs;
   RemotePackageManager _pm = RemotePackageManager.unknown;
   List<RemotePackage> _installed = const [];
   List<RemotePackage> _searchHits = const [];
@@ -136,7 +139,7 @@ class _PackagesAppState extends State<PackagesApp>
       _versionCandidatesFor = name;
     });
     final list = await fetchPackageVersions(
-      widget.controller,
+      _exec,
       manager: _pm,
       name: name,
     );
@@ -160,14 +163,14 @@ class _PackagesAppState extends State<PackagesApp>
       _loading = true;
       _error = null;
     });
-    final snap = await fetchInstalledPackages(widget.controller, limit: 400);
+    final snap = await fetchInstalledPackages(_exec, limit: 400);
     if (!mounted) return;
     if (snap == null) {
       setState(() {
         _loading = false;
-        _error = widget.controller.lastRemoteCommandError == null
+        _error = _exec.lastRemoteCommandError == null
             ? '无法读取已安装包'
-            : '刷新失败：${widget.controller.lastRemoteCommandError}';
+            : '刷新失败：${_exec.lastRemoteCommandError}';
       });
       return;
     }
@@ -203,7 +206,7 @@ class _PackagesAppState extends State<PackagesApp>
       _error = null;
     });
     final hits = await searchRemotePackages(
-      widget.controller,
+      _exec,
       manager: _pm,
       query: q,
     );
@@ -259,7 +262,7 @@ class _PackagesAppState extends State<PackagesApp>
       var body = '将尝试卸载「$name」。此操作可能影响系统，确定继续？';
       if (simulateRemoveCommand(_pm, name) != null) {
         final impact = await fetchRemoveImpact(
-          widget.controller,
+          _exec,
           manager: _pm,
           name: name,
         );
@@ -285,7 +288,7 @@ class _PackagesAppState extends State<PackagesApp>
     });
     final result = await showPackageOpLogDialog(
       context,
-      controller: widget.controller,
+      controller: _exec,
       manager: _pm,
       packageName: name,
       install: install,
@@ -343,7 +346,7 @@ class _PackagesAppState extends State<PackagesApp>
       return;
     }
     final future = listPackageFiles(
-      widget.controller,
+      _exec,
       pm: _pm,
       name: name,
     );
@@ -493,7 +496,7 @@ class _PackagesAppState extends State<PackagesApp>
     });
     final result = await showPackageOpLogDialog(
       context,
-      controller: widget.controller,
+      controller: _exec,
       manager: _pm,
       packageName: '',
       install: true,

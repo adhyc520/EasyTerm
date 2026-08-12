@@ -1,14 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
-import '../services/ssh_workspace_controller.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
+import '../services/terminal_session_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
+import '../util/accessibility.dart';
 import 'terminal_surface.dart';
+import 'touch_assist_bar.dart';
 
-/// 仅终端区域（右侧大面板），连接状态与 [SshWorkspaceController] 同步。
+/// 仅终端区域（右侧大面板），连接状态与 [TerminalSessionController] 同步。
 class SessionTerminalPane extends StatefulWidget {
   const SessionTerminalPane({
     super.key,
@@ -17,7 +22,7 @@ class SessionTerminalPane extends StatefulWidget {
     required this.autofocusTerminal,
   });
 
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final WorkbenchSettingsStore workbenchSettings;
   final bool autofocusTerminal;
 
@@ -129,21 +134,58 @@ class _SessionTerminalPaneState extends State<SessionTerminalPane> {
             );
           }
 
-          return TerminalSurface(
-            terminal: term,
-            connected: c.connected,
-            connecting: c.connecting,
-            autofocus: widget.autofocusTerminal,
-            errorText: c.error,
-            onReconnect: () => unawaited(c.reconnect()),
-            themeBg: context.wb.terminalBg,
-            fontSize: ws.terminalFontSize,
-            fontFamily: ws.terminalFontFamily,
-            uiScale: ws.uiScaleFactor,
-            selectToCopy: ws.selectToCopy,
-            mouseModeActive: c.mouseModeActive,
-            smartRightClick: ws.smartRightClick,
-            showLeftBorder: true,
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: a11yTerminal(
+                  hostLabel: '${c.username}@${c.host}',
+                  connected: c.connected,
+                  child: TerminalSurface(
+                    terminal: term,
+                    connected: c.connected,
+                    connecting: c.connecting,
+                    autofocus: widget.autofocusTerminal,
+                    errorText: c.error,
+                    onReconnect: () => unawaited(c.reconnect()),
+                    themeBg: context.wb.terminalBg,
+                    fontSize: ws.terminalFontSize,
+                    fontFamily: ws.terminalFontFamily,
+                    uiScale: ws.uiScaleFactor,
+                    selectToCopy: ws.selectToCopy,
+                    mouseModeActive: c.mouseModeActive,
+                    smartRightClick: ws.smartRightClick,
+                    showLeftBorder: true,
+                    sessionRecorder: c.sessionRecorder,
+                    onToggleRecording: c.toggleSessionRecording,
+                    hostLabel: c.host,
+                  ),
+                ),
+              ),
+              if (ws.touchAssistBar)
+                TouchAssistBar(
+                  onKey: (key) {
+                    // Map common assist keys to terminal input sequences.
+                    if (key == LogicalKeyboardKey.escape) {
+                      term.textInput('\x1b');
+                    } else if (key == LogicalKeyboardKey.tab) {
+                      term.textInput('\t');
+                    } else if (key == LogicalKeyboardKey.backspace) {
+                      term.textInput('\x7f');
+                    } else if (key == LogicalKeyboardKey.arrowUp) {
+                      term.textInput('\x1b[A');
+                    } else if (key == LogicalKeyboardKey.arrowDown) {
+                      term.textInput('\x1b[B');
+                    } else if (key == LogicalKeyboardKey.arrowRight) {
+                      term.textInput('\x1b[C');
+                    } else if (key == LogicalKeyboardKey.arrowLeft) {
+                      term.textInput('\x1b[D');
+                    } else if (key == LogicalKeyboardKey.controlLeft) {
+                      // Modifier-only; no immediate inject.
+                    }
+                  },
+                ),
+            ],
           );
         },
       ),

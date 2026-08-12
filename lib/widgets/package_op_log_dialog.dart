@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../services/remote_packages.dart';
 import '../services/remote_stream.dart';
 import '../services/remote_sudo.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../theme/workbench_theme.dart';
 import 'sudo_password_dialog.dart';
@@ -13,7 +14,7 @@ import 'sudo_password_dialog.dart';
 /// 弹出安装/卸载/升级进度日志框；成功返回 `true`，失败 `false`，取消 `null`。
 Future<bool?> showPackageOpLogDialog(
   BuildContext context, {
-  required SshWorkspaceController controller,
+  required RemoteExecCapable controller,
   required RemotePackageManager manager,
   required String packageName,
   required bool install,
@@ -44,7 +45,7 @@ class _PackageOpLogDialog extends StatefulWidget {
     this.upgradeAll = false,
   });
 
-  final SshWorkspaceController controller;
+  final RemoteExecCapable controller;
   final RemotePackageManager manager;
   final String packageName;
   final bool install;
@@ -56,6 +57,11 @@ class _PackageOpLogDialog extends StatefulWidget {
 }
 
 class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
+  SshWorkspaceController? get _ssh =>
+      widget.controller is SshWorkspaceController
+          ? widget.controller as SshWorkspaceController
+          : null;
+
   final _scroll = ScrollController();
   final List<String> _lines = [];
   RemoteStream? _stream;
@@ -131,7 +137,7 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
       return;
     }
 
-    String? pwd = widget.controller.cachedSudoPassword;
+    String? pwd = _ssh?.cachedSudoPassword;
     var authError = false;
 
     while (true) {
@@ -208,7 +214,7 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
       }
 
       if (ec == 0) {
-        if (usePwd) widget.controller.cachedSudoPassword = pwd;
+        if (usePwd && _ssh != null) _ssh!.cachedSudoPassword = pwd;
         setState(() {
           _running = false;
           _success = true;
@@ -230,14 +236,14 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
               RemoteSudo.looksLikePasswordRequired(out));
 
       if (needPwd || badPwd) {
-        if (usePwd) widget.controller.cachedSudoPassword = null;
+        if (usePwd && _ssh != null) _ssh!.cachedSudoPassword = null;
         if (!mounted) return;
         final next = await promptSudoPassword(
           context,
           errorText: badPwd ? '密码不正确，请重试' : null,
-          offerSshPassword: widget.controller.password.isNotEmpty,
-          sshPassword: widget.controller.password.isNotEmpty
-              ? widget.controller.password
+          offerSshPassword: (_ssh?.password.isNotEmpty ?? false),
+          sshPassword: (_ssh?.password.isNotEmpty ?? false)
+              ? _ssh!.password
               : null,
         );
         if (next == null || _aborted) {
@@ -310,6 +316,7 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
   Widget build(BuildContext context) {
     final wb = context.wb;
     final done = !_running && _success != null;
+    final size = MediaQuery.sizeOf(context);
 
     return AlertDialog(
       title: Row(
@@ -322,7 +329,13 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
             color: wb.accentBlue,
           ),
           const SizedBox(width: 8),
-          Expanded(child: Text(_title)),
+          Expanded(
+            child: Text(
+              _title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (_running)
             const SizedBox(
               width: 16,
@@ -332,8 +345,8 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
         ],
       ),
       content: SizedBox(
-        width: 560,
-        height: 360,
+        width: (size.width - 48).clamp(280.0, 560.0),
+        height: (size.height * 0.55).clamp(240.0, 360.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -342,6 +355,8 @@ class _PackageOpLogDialogState extends State<_PackageOpLogDialog> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
                   _status!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 12,
                     color: _success == true

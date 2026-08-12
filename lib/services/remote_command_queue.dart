@@ -106,18 +106,47 @@ class RemoteCommandQueue {
         if (!cmd.completer.isCompleted) cmd.completer.complete(null);
         return;
       }
-      final out = await _runOnce(
-        client,
-        cmd.command,
-        stdinBytes: cmd.stdinBytes,
-      ).timeout(cmd.timeout);
+
+      // 通道繁忙时短暂退避重试一次，避免桌面多窗口轮询下偶发失败。
+      String? out;
+      Object? lastErr;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          out = await _runOnce(
+            client,
+            cmd.command,
+            stdinBytes: cmd.stdinBytes,
+            timeout: cmd.timeout,
+          );
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (attempt == 0 && _isTransientChannelError(e)) {
+            debugPrint('cmdq retry after channel error: $e');
+            await Future<void>.delayed(const Duration(milliseconds: 250));
+            if (_disposed || _clientGetter() == null) break;
+            continue;
+          }
+          break;
+        }
+      }
+
+      if (lastErr != null) {
+        debugPrint('cmdq run: $lastErr');
+        lastError = _friendlyError(lastErr);
+        lastErrorAt = DateTime.now();
+        if (!cmd.completer.isCompleted) cmd.completer.complete(null);
+        return;
+      }
+
       lastError = null;
       if (!cmd.completer.isCompleted) {
         cmd.completer.complete(out);
       }
     } catch (e) {
       debugPrint('cmdq run: $e');
-      lastError = '$e';
+      lastError = _friendlyError(e);
       lastErrorAt = DateTime.now();
       if (!cmd.completer.isCompleted) {
         cmd.completer.complete(null);
@@ -128,51 +157,93 @@ class RemoteCommandQueue {
     }
   }
 
-  /// 有 stdin 时走 [SSHClient.execute]；否则沿用 [SSHClient.run]。
+  /// 始终走 [SSHClient.execute]，整段（含开通道）受 [timeout] 约束；
+  /// 超时后在 finally 里 [SSHSession.close]，避免通道泄漏 / 队列永久占坑。
   static Future<String> _runOnce(
     SSHClient client,
     String command, {
     List<int>? stdinBytes,
+    required Duration timeout,
   }) async {
-    if (stdinBytes == null || stdinBytes.isEmpty) {
-      final out = await client.run(command, stderr: false);
-      return utf8.decode(out, allowMalformed: true).trim();
-    }
-
-    final session = await client.execute(command);
+    final sw = Stopwatch()..start();
+    SSHSession? session;
     try {
+      // 开通道本身也可能因 MaxSessions 挂起，必须纳入超时。
+      session = await client.execute(command).timeout(timeout);
+      final remaining = timeout - sw.elapsed;
+      if (remaining <= Duration.zero) {
+        throw TimeoutException('SSH exec timed out opening channel');
+      }
+
       final outputBuilder = BytesBuilder(copy: false);
       final stdoutDone = Completer<void>();
       final stderrDone = Completer<void>();
 
       session.stdout.listen(
         outputBuilder.add,
-        onDone: stdoutDone.complete,
-        onError: stdoutDone.completeError,
+        onDone: () {
+          if (!stdoutDone.isCompleted) stdoutDone.complete();
+        },
+        onError: (Object e, StackTrace st) {
+          if (!stdoutDone.isCompleted) stdoutDone.completeError(e, st);
+        },
         cancelOnError: true,
       );
       // 命令侧通常已 `2>&1`；仍吞掉 stderr 以免阻塞。
       session.stderr.listen(
         (_) {},
-        onDone: stderrDone.complete,
-        onError: stderrDone.completeError,
+        onDone: () {
+          if (!stderrDone.isCompleted) stderrDone.complete();
+        },
+        onError: (Object e, StackTrace st) {
+          if (!stderrDone.isCompleted) stderrDone.completeError(e, st);
+        },
         cancelOnError: true,
       );
 
-      session.write(Uint8List.fromList(stdinBytes));
-      await session.stdin.close();
+      if (stdinBytes != null && stdinBytes.isNotEmpty) {
+        session.write(Uint8List.fromList(stdinBytes));
+        await session.stdin.close();
+      }
 
-      await stdoutDone.future;
-      await stderrDone.future;
-      await session.done;
-      return utf8.decode(outputBuilder.takeBytes(), allowMalformed: true).trim();
+      Future<String> collect() async {
+        await stdoutDone.future;
+        await stderrDone.future;
+        await session!.done;
+        return utf8
+            .decode(outputBuilder.takeBytes(), allowMalformed: true)
+            .trim();
+      }
+
+      return await collect().timeout(remaining);
     } finally {
-      // timeout / 取消时也关掉通道，避免 sudo -S session 泄漏。
+      // timeout / 取消时也关掉通道，避免 session 泄漏导致 ChannelOpenError。
       try {
-        session.close();
+        session?.close();
       } catch (_) {}
     }
   }
+
+  static bool _isTransientChannelError(Object e) {
+    if (e is SSHChannelOpenError) return true;
+    final s = e.toString().toLowerCase();
+    return s.contains('sshchannelopenerror') ||
+        s.contains('channel open') ||
+        s.contains('open failed');
+  }
+
+  static String _friendlyError(Object e) {
+    if (e is TimeoutException) {
+      return '命令超时';
+    }
+    if (_isTransientChannelError(e)) {
+      return 'SSH 通道繁忙（远端会话数可能已满），稍后重试';
+    }
+    return '$e';
+  }
+
+  @visibleForTesting
+  static String friendlyErrorForTest(Object e) => _friendlyError(e);
 
   /// 掉线 / 退桌面：清空排队。
   void clearPending() {

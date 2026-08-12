@@ -98,6 +98,12 @@ class _DesktopSettingsDialogState extends State<_DesktopSettingsDialog> {
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
+                title: Text('任务栏自动隐藏', style: TextStyle(color: wb.primaryText)),
+                value: _s.taskbarAutohide,
+                onChanged: (v) => setState(() => _s.taskbarAutohide = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
                 title: Text('托盘显示远端时钟', style: TextStyle(color: wb.primaryText)),
                 value: _s.trayShowClock,
                 onChanged: (v) => setState(() => _s.trayShowClock = v),

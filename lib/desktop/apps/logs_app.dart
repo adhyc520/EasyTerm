@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../../services/remote_logs.dart';
 import '../../services/remote_process_list.dart';
 import '../../services/remote_stream.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
@@ -21,14 +23,15 @@ class LogsApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<LogsApp> createState() => _LogsAppState();
 }
 
 class _LogsAppState extends State<LogsApp> {
-  static const _lineChoices = [100, 300, 1000, 2000];
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+static const _lineChoices = [100, 300, 1000, 2000];
   static const _priorityChoices = <String?>[
     null,
     'err',
@@ -108,7 +111,7 @@ class _LogsAppState extends State<LogsApp> {
   Future<void> _detectOs() async {
     if (!_connected) return;
     try {
-      _os = await detectRemoteOs(widget.controller);
+      _os = await detectRemoteOs(_exec);
     } catch (_) {}
   }
 
@@ -209,7 +212,7 @@ class _LogsAppState extends State<LogsApp> {
     _stream = null;
     if (s == null) return;
     s.removeListener(_onStream);
-    widget.controller.unregisterRemoteStream(s);
+    _exec.unregisterRemoteStream(s);
     await s.stop();
   }
 
@@ -237,7 +240,7 @@ class _LogsAppState extends State<LogsApp> {
       _error = null;
     });
     try {
-      final stream = await widget.controller.startRemoteStream(cmd);
+      final stream = await _exec.startRemoteStream(cmd);
       if (!mounted) {
         await stream.stop();
         return;
@@ -289,7 +292,7 @@ class _LogsAppState extends State<LogsApp> {
     });
     try {
       final snap = await fetchRemoteLogs(
-        widget.controller,
+        _exec,
         osHint: _os,
         source: _source,
         unit: _unitCtrl.text.trim().isEmpty ? null : _unitCtrl.text.trim(),

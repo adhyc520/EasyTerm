@@ -1,6 +1,6 @@
 import 'remote_process_list.dart';
 import 'remote_sudo.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 目录占用失败原因（权限 vs 不存在）。
 enum RemoteDiskUsageErrorKind {
@@ -114,7 +114,7 @@ String _linuxDuPipeline(
 }
 
 Future<RemoteDiskUsageSnapshot?> fetchRemoteDiskUsage(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required String path,
   RemoteOsKind? osHint,
   int maxEntries = 60,
@@ -163,7 +163,7 @@ Future<RemoteDiskUsageSnapshot?> fetchRemoteDiskUsage(
 }
 
 Future<RemoteDiskUsageSnapshot> _fetchLinux(
-  SshWorkspaceController controller,
+  RemoteExecCapable controller,
   String path,
   int maxEntries, {
   bool oneFilesystem = true,
@@ -244,7 +244,7 @@ Future<RemoteDiskUsageSnapshot> _fetchLinux(
 }
 
 Future<RemoteDiskUsageSnapshot> _fetchWindows(
-  SshWorkspaceController controller,
+  RemoteExecCapable controller,
   String path,
   int maxEntries,
 ) async {

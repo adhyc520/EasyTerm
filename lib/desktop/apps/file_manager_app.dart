@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/desktop_sftp_controller.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../util/remote_paths.dart';
@@ -20,13 +22,15 @@ class FileManagerApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<FileManagerApp> createState() => _FileManagerAppState();
 }
 
 class _FileManagerAppState extends State<FileManagerApp> {
+  SshWorkspaceController get _ssh => widget.controller as SshWorkspaceController;
+
   final GlobalKey<SftpBrowserState> _browserKey = GlobalKey<SftpBrowserState>();
   late final DesktopSftpController _host;
   bool _wasFocused = false;
@@ -37,7 +41,7 @@ class _FileManagerAppState extends State<FileManagerApp> {
     super.initState();
     final cwd = widget.window.args['cwd']?.toString();
     _host = DesktopSftpController(
-      widget.controller,
+      _ssh,
       initialCwd: (cwd != null && cwd.isNotEmpty) ? cwd : null,
     );
     unawaited(_host.bindInitial());

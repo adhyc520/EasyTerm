@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../services/session_pane.dart';
 import '../services/session_tabs_controller.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
@@ -222,7 +224,7 @@ class _PaneLeafFrame extends StatelessWidget {
   final SessionTab tab;
   final int tabIndex;
   final int paneId;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
   final WorkbenchSettingsStore workbenchSettings;
   final bool showChrome;
   final bool pickingSnippetTarget;

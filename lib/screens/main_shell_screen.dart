@@ -10,31 +10,37 @@ import 'package:window_manager/window_manager.dart';
 import '../desktop/desktop_window_manager.dart';
 import '../desktop/remote_desktop_view.dart';
 import '../l10n/app_localizations.dart';
+import '../models/proxy_config.dart';
 import '../models/saved_host_profile.dart';
 import '../services/code_snippets_store.dart';
+import '../services/command_history_service.dart';
 import '../services/host_profiles_store.dart';
 import '../services/workbench_desktop_shortcuts.dart';
 import '../services/session_pane.dart';
 import '../services/session_tabs_controller.dart';
 import '../services/ssh_workspace_controller.dart';
+import '../services/sftp_browser_host.dart';
+import '../services/terminal_session_controller.dart';
 import '../services/app_update/app_update_service.dart';
 import '../services/workbench_settings_store.dart';
 import '../widgets/app_update_dialog.dart';
 import '../theme/workbench_theme.dart';
+import '../widgets/bulk_operation_sheet.dart';
 import '../widgets/code_snippets_sheet.dart';
 import '../widgets/connection_sheet.dart';
 import '../widgets/health_board_sheet.dart';
+import '../widgets/host_group_editor.dart';
 import '../widgets/saved_host_connect_sheet.dart';
+import '../widgets/ssh_config_import_dialog.dart';
 import '../widgets/session_pane_layout.dart';
 import '../widgets/sftp_side_panel.dart';
-import '../widgets/workbench_status_bar.dart';
 import '../widgets/assistant_side_panel.dart';
 import '../widgets/workbench_interface_settings_dialog.dart';
 import '../widgets/workbench_llm_settings_dialog.dart';
 import '../widgets/workbench_terminal_settings_dialog.dart';
 import '../widgets/workbench_window_controls.dart';
 
-Color _sessionStatusDot(BuildContext context, SshWorkspaceController c) {
+Color _sessionStatusDot(BuildContext context, TerminalSessionController c) {
   final w = context.wb;
   if (c.connected) return w.online;
   if (c.connecting) return const Color(0xFFEAB308);
@@ -58,6 +64,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
   final HostProfilesStore _profiles = HostProfilesStore();
   final CodeSnippetsStore _snippets = CodeSnippetsStore();
   final AppUpdateService _appUpdate = AppUpdateService();
+  final CommandHistoryService _commandHistory = CommandHistoryService();
   String? _versionTagLabel;
 
   /// 侧栏在「已保存连接」与「文件浏览器」之间切换，避免与终端并排占两列宽度。
@@ -96,7 +103,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
       return;
     }
     if (now && !_sidebarSyncWasConnected) {
-      _sidebarView = _SidebarView.fileBrowser;
+      if (tab.controller.capabilities.contains(RemoteCapability.file)) {
+        _sidebarView = _SidebarView.fileBrowser;
+      }
     }
     _sidebarSyncWasConnected = now;
   }
@@ -107,7 +116,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
     _tabs = SessionTabsController(settings: widget.settings);
     _tabs.addListener(_onRepaint);
     _profiles.addListener(_onRepaint);
+    CommandHistoryService.shared = _commandHistory;
     _profiles.ensureLoaded();
+    unawaited(_commandHistory.ensureLoaded());
     unawaited(
       _appUpdate.currentVersionTagLabel().then((label) {
         if (mounted) setState(() => _versionTagLabel = label);
@@ -122,6 +133,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   void dispose() {
+    if (identical(CommandHistoryService.shared, _commandHistory)) {
+      CommandHistoryService.shared = null;
+    }
     _appUpdate.dispose();
     _tabs.removeListener(_onRepaint);
     _profiles.removeListener(_onRepaint);
@@ -449,13 +463,17 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _openNewHostSheet() async {
-    final launch = await showNewHostSheet(context);
+    final launch = await showNewHostSheet(context, profiles: _profiles);
     if (!mounted || launch == null) return;
     await _persistLaunchAndConnect(launch);
   }
 
   Future<void> _editSavedProfile(SavedHostProfile profile) async {
-    final launch = await showNewHostSheet(context, editingProfile: profile);
+    final launch = await showNewHostSheet(
+      context,
+      editingProfile: profile,
+      profiles: _profiles,
+    );
     if (!mounted || launch == null) return;
     await _persistLaunchAndConnect(launch);
   }
@@ -490,6 +508,12 @@ class _MainShellScreenState extends State<MainShellScreen> {
         password: launch.password.trim().isEmpty
             ? null
             : launch.password.trim(),
+        proxyConfig: launch.proxyConfig,
+        clearProxyConfig: launch.proxyConfig == null,
+        protocol: launch.protocol,
+        serialConfig: launch.serialConfig,
+        encoding: launch.encoding,
+        autoInjectCredentials: launch.autoInjectCredentials,
       );
       profileIdForAuthUi = updateId;
     } else {
@@ -502,15 +526,27 @@ class _MainShellScreenState extends State<MainShellScreen> {
         password: launch.password.trim().isNotEmpty
             ? launch.password.trim()
             : null,
+        proxyConfig: launch.proxyConfig,
+        protocol: launch.protocol,
+        serialConfig: launch.serialConfig,
+        encoding: launch.encoding,
+        autoInjectCredentials: launch.autoInjectCredentials,
       );
     }
 
     final c = _tabs.openTab(
+      protocol: launch.protocol,
       host: launch.host,
       port: launch.port,
       username: launch.username,
       password: launch.password,
       privateKeyPem: launch.privateKeyPem,
+      proxyConfig: launch.proxyConfig,
+      encoding: launch.encoding,
+      serialConfig: launch.serialConfig,
+      autoInjectCredentials: launch.autoInjectCredentials,
+      connectTimeoutSec: launch.connectTimeoutSec,
+      savedProfileId: profileIdForAuthUi,
     );
     final pid = profileIdForAuthUi;
     if (pid != null) {
@@ -532,31 +568,33 @@ class _MainShellScreenState extends State<MainShellScreen> {
   void _bindAuthFailureCredentialSheet(
     SavedHostProfile profile,
     String? privateKeyPem,
-    SshWorkspaceController c,
+    TerminalSessionController c,
   ) {
+    if (c is! SshWorkspaceController) return;
+    final ssh = c;
     var handledOutcome = false;
     void onCred() {
       if (handledOutcome) return;
-      if (c.connected) {
-        c.removeListener(onCred);
+      if (ssh.connected) {
+        ssh.removeListener(onCred);
         handledOutcome = true;
         return;
       }
-      if (c.connecting) return;
+      if (ssh.connecting) return;
 
-      if (!c.connected) {
+      if (!ssh.connected) {
         handledOutcome = true;
-        c.removeListener(onCred);
-        if (c.suggestCredentialSheetAfterFailure) {
+        ssh.removeListener(onCred);
+        if (ssh.suggestCredentialSheetAfterFailure) {
           unawaited(
-            _retrySavedProfileAfterAuthFailure(profile, privateKeyPem, c),
+            _retrySavedProfileAfterAuthFailure(profile, privateKeyPem, ssh),
           );
         }
         return;
       }
     }
 
-    c.addListener(onCred);
+    ssh.addListener(onCred);
   }
 
   Future<void> _retrySavedProfileAfterAuthFailure(
@@ -642,14 +680,51 @@ class _MainShellScreenState extends State<MainShellScreen> {
     }
 
     final c = _tabs.openTab(
+      protocol: profile.protocol,
       host: profile.host,
       port: profile.port,
       username: profile.username,
       password: password,
       privateKeyPem: pem,
+      proxyConfig: await _resolveProxyConfig(profile),
+      encoding: profile.encoding,
+      serialConfig: profile.serialConfig,
+      autoInjectCredentials: profile.autoInjectCredentials,
+      savedProfileId: profile.id,
     );
 
     _bindAuthFailureCredentialSheet(profile, pem, c);
+  }
+
+  Future<ProxyConfig?> _resolveProxyConfig(SavedHostProfile profile) async {
+    final proxy = profile.proxyConfig;
+    if (proxy == null || proxy.host.trim().isEmpty) return null;
+    if (proxy.privateKeyPem != null && proxy.privateKeyPem!.trim().isNotEmpty) {
+      return proxy;
+    }
+    for (final other in _profiles.profiles) {
+      if (other.id == profile.id) continue;
+      if (!other.matchesEndpoint(
+        host: proxy.host,
+        port: proxy.port,
+        username: proxy.username,
+      )) {
+        continue;
+      }
+      String? jumpPem;
+      try {
+        jumpPem = await loadPrivateKeyFromPath(other.keyPath);
+      } catch (_) {}
+      return ProxyConfig(
+        type: proxy.type,
+        host: other.host,
+        port: other.port,
+        username: other.username,
+        password: other.password ?? proxy.password,
+        privateKeyPem: jumpPem ?? proxy.privateKeyPem,
+      );
+    }
+    return proxy;
   }
 
   Future<void> _deleteSavedProfileWithConfirm(SavedHostProfile profile) async {
@@ -677,6 +752,21 @@ class _MainShellScreenState extends State<MainShellScreen> {
     );
     if (!mounted || ok != true) return;
     await _profiles.remove(profile.id);
+  }
+
+  Future<void> _importSshConfig() async {
+    final result = await showSshConfigImportDialog(
+      context,
+      profiles: _profiles,
+    );
+    if (!mounted || result == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '已导入 ${result.imported}，跳过 ${result.skipped}，覆盖 ${result.overwritten}，副本 ${result.duplicated}',
+        ),
+      ),
+    );
   }
 
   void _openSettingsMenu() {
@@ -731,6 +821,47 @@ class _MainShellScreenState extends State<MainShellScreen> {
                     builder: (_) => WorkbenchTerminalSettingsDialog(
                       settings: widget.settings,
                     ),
+                  );
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.playlist_play_outlined),
+              title: Text('批量执行'),
+              onTap: () {
+                Navigator.pop(ctx);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!context.mounted) return;
+                  unawaited(
+                    showBulkOperationSheet(
+                      context,
+                      tabs: _tabs,
+                      profiles: _profiles,
+                    ),
+                  );
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file_outlined),
+              title: Text('导入 SSH Config'),
+              onTap: () {
+                Navigator.pop(ctx);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!context.mounted) return;
+                  unawaited(_importSshConfig());
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: Text('主机分组'),
+              onTap: () {
+                Navigator.pop(ctx);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!context.mounted) return;
+                  unawaited(
+                    showHostGroupEditor(context, profiles: _profiles),
                   );
                 });
               },
@@ -796,8 +927,22 @@ class _MainShellScreenState extends State<MainShellScreen> {
                   child: Builder(
                     builder: (context) {
                       final selected = _tabs.selectedTab;
-                      final isDesktop =
+                      final canDesktop =
+                          selected?.controller.protocol.supportsDesktop ??
+                              false;
+                      final isDesktop = canDesktop &&
                           selected?.viewMode == SessionViewMode.desktop;
+                      // Telnet/串口若残留桌面态，强制回终端。
+                      if (selected != null &&
+                          selected.viewMode == SessionViewMode.desktop &&
+                          !canDesktop) {
+                        final idx = _tabs.selectedIndex;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted) return;
+                          _tabs.setViewMode(idx, SessionViewMode.terminal);
+                          _desktopSidebarExpanded = false;
+                        });
+                      }
                       final sidebarCollapsed =
                           isDesktop && !_desktopSidebarExpanded;
                       return _ResizableSidebarAndTerminal(
@@ -824,6 +969,21 @@ class _MainShellScreenState extends State<MainShellScreen> {
                                   onEditProfile: _editSavedProfile,
                                   onDeleteProfile:
                                       _deleteSavedProfileWithConfirm,
+                                  onBulkOps: () => unawaited(
+                                    showBulkOperationSheet(
+                                      context,
+                                      tabs: _tabs,
+                                      profiles: _profiles,
+                                    ),
+                                  ),
+                                  onImportSshConfig: () =>
+                                      unawaited(_importSshConfig()),
+                                  onEditGroups: () => unawaited(
+                                    showHostGroupEditor(
+                                      context,
+                                      profiles: _profiles,
+                                    ),
+                                  ),
                                 ),
                               )
                             : _WorkbenchSidebarPane(
@@ -837,6 +997,21 @@ class _MainShellScreenState extends State<MainShellScreen> {
                                   onEditProfile: _editSavedProfile,
                                   onDeleteProfile:
                                       _deleteSavedProfileWithConfirm,
+                                  onBulkOps: () => unawaited(
+                                    showBulkOperationSheet(
+                                      context,
+                                      tabs: _tabs,
+                                      profiles: _profiles,
+                                    ),
+                                  ),
+                                  onImportSshConfig: () =>
+                                      unawaited(_importSshConfig()),
+                                  onEditGroups: () => unawaited(
+                                    showHostGroupEditor(
+                                      context,
+                                      profiles: _profiles,
+                                    ),
+                                  ),
                                 ),
                                 fileBrowser: _middlePane(),
                               ),
@@ -854,6 +1029,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
                                 onDuplicate: (i) => _tabs.duplicateTab(i),
                                 onToggleViewMode: (i) {
                                   final t = _tabs.tabs[i];
+                                  if (!t.controller.protocol.supportsDesktop) {
+                                    return;
+                                  }
                                   _tabs.setViewMode(
                                     i,
                                     t.viewMode == SessionViewMode.desktop
@@ -878,9 +1056,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
                                       sessionTab: _tabs.selectedTab,
                                       terminalChild: _rightPane(),
                                     ),
-                            ),
-                            WorkbenchStatusBar(
-                              controller: _tabs.selectedTab?.controller,
                             ),
                           ],
                         ),
@@ -909,7 +1084,16 @@ class _MainShellScreenState extends State<MainShellScreen> {
         onAction: _openNewHostShortcut,
       );
     }
-    return SftpSidePanel(controller: c);
+    if (c is! SftpBrowserHost) {
+      return _WorkbenchPlaceholder(
+        icon: Icons.folder_off_outlined,
+        title: l10n.placeholderFileBrowserTitle,
+        subtitle: '当前协议不支持文件浏览（需要 SSH/SFTP）',
+        actionLabel: l10n.newConnection,
+        onAction: _openNewHostShortcut,
+      );
+    }
+    return SftpSidePanel(controller: c as SftpBrowserHost);
   }
 
   Widget _rightPane() {
@@ -1767,33 +1951,34 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
                         ],
                       ),
                     ),
-                    IconButton(
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 26,
-                        minHeight: 26,
+                    if (t.controller.protocol.supportsDesktop)
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        tooltip: t.viewMode == SessionViewMode.desktop
+                            ? l10n.menuTabToggleDesktopToTerminal
+                            : l10n.menuTabToggleDesktopToDesktop,
+                        style: IconButton.styleFrom(
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () {
+                          widget.onSelect(i);
+                          widget.onToggleViewMode(i);
+                        },
+                        icon: Icon(
+                          t.viewMode == SessionViewMode.desktop
+                              ? Icons.desktop_windows_rounded
+                              : Icons.terminal_rounded,
+                          size: 14,
+                          color: t.viewMode == SessionViewMode.desktop
+                              ? context.wb.accentBlue
+                              : context.wb.textMuted,
+                        ),
                       ),
-                      visualDensity: VisualDensity.compact,
-                      tooltip: t.viewMode == SessionViewMode.desktop
-                          ? l10n.menuTabToggleDesktopToTerminal
-                          : l10n.menuTabToggleDesktopToDesktop,
-                      style: IconButton.styleFrom(
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onPressed: () {
-                        widget.onSelect(i);
-                        widget.onToggleViewMode(i);
-                      },
-                      icon: Icon(
-                        t.viewMode == SessionViewMode.desktop
-                            ? Icons.desktop_windows_rounded
-                            : Icons.terminal_rounded,
-                        size: 14,
-                        color: t.viewMode == SessionViewMode.desktop
-                            ? context.wb.accentBlue
-                            : context.wb.textMuted,
-                      ),
-                    ),
                     IconButton(
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
@@ -1936,13 +2121,16 @@ class _WorkspaceSessionTabBarState extends State<_WorkspaceSessionTabBar> {
   }
 }
 
-class _ConnectionsRail extends StatelessWidget {
+class _ConnectionsRail extends StatefulWidget {
   const _ConnectionsRail({
     required this.profiles,
     required this.tabs,
     required this.onTapProfile,
     required this.onEditProfile,
     required this.onDeleteProfile,
+    required this.onBulkOps,
+    required this.onImportSshConfig,
+    required this.onEditGroups,
   });
 
   final HostProfilesStore profiles;
@@ -1950,6 +2138,22 @@ class _ConnectionsRail extends StatelessWidget {
   final Future<void> Function(SavedHostProfile profile) onTapProfile;
   final Future<void> Function(SavedHostProfile profile) onEditProfile;
   final Future<void> Function(SavedHostProfile profile) onDeleteProfile;
+  final VoidCallback onBulkOps;
+  final VoidCallback onImportSshConfig;
+  final VoidCallback onEditGroups;
+
+  @override
+  State<_ConnectionsRail> createState() => _ConnectionsRailState();
+}
+
+class _ConnectionsRailState extends State<_ConnectionsRail> {
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   static bool _anyConnectedTab(SessionTabsController tabs, SavedHostProfile p) {
     for (final t in tabs.tabs) {
@@ -1973,18 +2177,23 @@ class _ConnectionsRail extends StatelessWidget {
     return Material(
       color: context.wb.panel,
       child: ListenableBuilder(
-        listenable: Listenable.merge([profiles, tabs]),
+        listenable: Listenable.merge([widget.profiles, widget.tabs]),
         builder: (context, _) {
           final l10n = AppLocalizations.of(context)!;
-          final total = profiles.profiles.length;
-          final online = profiles.profiles
-              .where((p) => _anyConnectedTab(tabs, p))
+          final filtered = widget.profiles.search(_search.text);
+          final filteredIds = filtered.map((p) => p.id).toSet();
+          final total = widget.profiles.profiles.length;
+          final online = widget.profiles.profiles
+              .where((p) => _anyConnectedTab(widget.tabs, p))
               .length;
+          final groups = widget.profiles.groups;
+          final ungrouped = widget.profiles.ungroupedProfiles(from: filtered);
+
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 12, 8),
+                  padding: const EdgeInsets.fromLTRB(14, 14, 8, 4),
                   child: Row(
                     children: [
                       Expanded(
@@ -2007,33 +2216,191 @@ class _ConnectionsRail extends StatelessWidget {
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
+                      PopupMenuButton<String>(
+                        tooltip: l10n.paneMenuTooltip,
+                        padding: EdgeInsets.zero,
+                        iconSize: 18,
+                        icon: Icon(
+                          Icons.more_horiz_rounded,
+                          color: context.wb.textMuted,
+                        ),
+                        onSelected: (v) {
+                          switch (v) {
+                            case 'bulk':
+                              widget.onBulkOps();
+                              return;
+                            case 'import':
+                              widget.onImportSshConfig();
+                              return;
+                            case 'groups':
+                              widget.onEditGroups();
+                              return;
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          PopupMenuItem(
+                            value: 'bulk',
+                            child: Text('批量执行'),
+                          ),
+                          PopupMenuItem(
+                            value: 'import',
+                            child: Text('导入 SSH Config'),
+                          ),
+                          PopupMenuItem(
+                            value: 'groups',
+                            child: Text('主机分组'),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
               ),
-              if (profiles.profiles.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+                  child: TextField(
+                    controller: _search,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: '搜索主机…',
+                      prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                    ),
+                    style: TextStyle(
+                      color: context.wb.primaryText,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+              if (widget.profiles.profiles.isEmpty)
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
                     child: _SidebarEmptyHint(text: l10n.savedConnectionsEmpty),
                   ),
                 )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate((context, i) {
-                      final p = profiles.profiles[i];
-                      return _RailSavedTile(
-                        profile: p,
-                        online: _anyConnectedTab(tabs, p),
-                        onTap: () => onTapProfile(p),
-                        onEdit: () => onEditProfile(p),
-                        onDelete: () => onDeleteProfile(p),
+              else ...[
+                for (final g in groups) ...[
+                  Builder(
+                    builder: (context) {
+                      final members = <SavedHostProfile>[];
+                      for (final id in g.profileIds) {
+                        if (!filteredIds.contains(id)) continue;
+                        final p = widget.profiles.profileById(id);
+                        if (p != null) members.add(p);
+                      }
+                      if (members.isEmpty && _search.text.trim().isNotEmpty) {
+                        return const SliverToBoxAdapter(child: SizedBox.shrink());
+                      }
+                      return SliverMainAxisGroup(
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: InkWell(
+                              onTap: () => unawaited(
+                                widget.profiles.setGroupExpanded(
+                                  g.id,
+                                  !g.expanded,
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(12, 8, 10, 4),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      g.expanded
+                                          ? Icons.expand_more_rounded
+                                          : Icons.chevron_right_rounded,
+                                      size: 18,
+                                      color: context.wb.textMuted,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      Icons.folder_outlined,
+                                      size: 16,
+                                      color: context.wb.textMuted,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        '${g.name} (${members.length})',
+                                        style: TextStyle(
+                                          color: context.wb.primaryText,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (g.expanded)
+                            SliverPadding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              sliver: SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, i) {
+                                    final p = members[i];
+                                    return _RailSavedTile(
+                                      profile: p,
+                                      online: _anyConnectedTab(widget.tabs, p),
+                                      onTap: () => widget.onTapProfile(p),
+                                      onEdit: () => widget.onEditProfile(p),
+                                      onDelete: () =>
+                                          widget.onDeleteProfile(p),
+                                    );
+                                  },
+                                  childCount: members.length,
+                                ),
+                              ),
+                            ),
+                        ],
                       );
-                    }, childCount: profiles.profiles.length),
+                    },
                   ),
-                ),
+                ],
+                if (ungrouped.isNotEmpty || groups.isEmpty) ...[
+                  if (groups.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 12, 4),
+                        child: Text(
+                          '未分组 (${ungrouped.length})',
+                          style: TextStyle(
+                            color: context.wb.textMuted,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, i) {
+                        final p = groups.isEmpty ? filtered[i] : ungrouped[i];
+                        return _RailSavedTile(
+                          profile: p,
+                          online: _anyConnectedTab(widget.tabs, p),
+                          onTap: () => widget.onTapProfile(p),
+                          onEdit: () => widget.onEditProfile(p),
+                          onDelete: () => widget.onDeleteProfile(p),
+                        );
+                      }, childCount: groups.isEmpty ? filtered.length : ungrouped.length),
+                    ),
+                  ),
+                ],
+              ],
               const SliverToBoxAdapter(child: SizedBox(height: 16)),
             ],
           );

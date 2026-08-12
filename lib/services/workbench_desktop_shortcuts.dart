@@ -62,6 +62,18 @@ Map<ShortcutActivator, VoidCallback> workbenchBindActivators(
   return {for (final a in activators) a: onInvoke};
 }
 
+/// Terminal find: ⌘/Ctrl+F
+Iterable<SingleActivator> workbenchTerminalFindActivators() =>
+    workbenchMetaOrControl(LogicalKeyboardKey.keyF);
+
+/// Terminal copy mode: ⌘/Ctrl+Shift+X
+Iterable<SingleActivator> workbenchTerminalCopyModeActivators() =>
+    workbenchMetaOrControl(LogicalKeyboardKey.keyX, shift: true);
+
+/// Terminal command bookmark palette: ⌘/Ctrl+Shift+P
+Iterable<SingleActivator> workbenchTerminalCommandPaletteActivators() =>
+    workbenchMetaOrControl(LogicalKeyboardKey.keyP, shift: true);
+
 Future<void> workbenchQuitApplication() async {
   if (!workbenchDesktopShortcutsEnabled()) return;
   await windowManager.destroy();

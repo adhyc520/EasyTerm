@@ -3,18 +3,27 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../desktop/desktop_window_manager.dart';
+import '../models/connection_protocol.dart';
+import '../models/proxy_config.dart';
+import '../models/serial_port_config.dart';
+import '../models/session_snapshot.dart';
 import 'assistant_chat_session.dart';
+import 'serial_workspace_controller.dart';
 import 'session_pane.dart';
 import 'ssh_workspace_controller.dart';
+import 'telnet_workspace_controller.dart';
+import 'terminal_charset.dart';
+import 'terminal_session_controller.dart';
 import 'workbench_settings_store.dart';
 
-enum SessionViewMode { terminal, desktop }
+export '../models/session_snapshot.dart' show SessionViewMode;
 
 class SessionTab {
   SessionTab({
     required this.id,
-    required SshWorkspaceController controller,
+    required TerminalSessionController controller,
     required int paneId,
+    this.savedProfileId,
   }) : root = SessionPaneLeaf(paneId: paneId, controller: controller),
        focusedPaneId = paneId,
        assistant = AssistantChatSession();
@@ -24,18 +33,21 @@ class SessionTab {
   int focusedPaneId;
   final AssistantChatSession assistant;
   SessionViewMode viewMode = SessionViewMode.terminal;
+
+  /// Linked saved host profile id (for restore without re-prompt when possible).
+  String? savedProfileId;
   DesktopWindowManager? _desktop;
 
   DesktopWindowManager? get desktopWindowManager => _desktop;
 
   /// 当前焦点窗格的控制器（侧栏 SFTP / 助手 / 状态栏共用）。
-  SshWorkspaceController get controller {
+  TerminalSessionController get controller {
     final leaf = root.findLeaf(focusedPaneId) ?? root.leaves.first;
     return leaf.controller;
   }
 
   String get title {
-    final base = '${controller.username}@${controller.host}';
+    final base = controller.sessionLabel;
     if (!hasSplit) return base;
     final n = root.leaves.length;
     return '$base ($n)';
@@ -43,7 +55,7 @@ class SessionTab {
 
   bool get hasSplit => root is SessionPaneSplit;
 
-  bool containsController(SshWorkspaceController c) {
+  bool containsController(TerminalSessionController c) {
     for (final leaf in root.leaves) {
       if (identical(leaf.controller, c)) return true;
     }
@@ -63,7 +75,7 @@ class SessionTab {
   }
 }
 
-/// 多标签 SSH 会话：每个标签内可分屏，每个窗格独立 [SshWorkspaceController]。
+/// 多标签会话：每个标签内可分屏，每个窗格独立 [TerminalSessionController]。
 class SessionTabsController extends ChangeNotifier {
   SessionTabsController({required this.settings});
 
@@ -80,7 +92,7 @@ class SessionTabsController extends ChangeNotifier {
   static const Duration _openTabDebounce = Duration(milliseconds: 500);
 
   DateTime? _lastOpenTabAt;
-  SshWorkspaceController? _lastOpenedController;
+  TerminalSessionController? _lastOpenedController;
 
   int get selectedIndex {
     if (_tabs.isEmpty) return 0;
@@ -91,26 +103,61 @@ class SessionTabsController extends ChangeNotifier {
 
   void _onTabNotify() => notifyListeners();
 
-  SshWorkspaceController _spawnController({
+  TerminalSessionController _spawnController({
+    ConnectionProtocol protocol = ConnectionProtocol.ssh,
     required String host,
     required int port,
     required String username,
     required String password,
     String? privateKeyPem,
+    ProxyConfig? proxyConfig,
+    TerminalEncoding? encoding,
+    SerialPortConfig? serialConfig,
+    bool autoInjectCredentials = true,
+    int? connectTimeoutSecOverride,
   }) {
-    final c = SshWorkspaceController(
-      settings: settings,
-      host: host,
-      port: port,
-      username: username,
-      password: password,
-      privateKeyPem: privateKeyPem,
-    );
+    final TerminalSessionController c;
+    switch (protocol) {
+      case ConnectionProtocol.ssh:
+        c = SshWorkspaceController(
+          settings: settings,
+          host: host,
+          port: port,
+          username: username,
+          password: password,
+          privateKeyPem: privateKeyPem,
+          proxyConfig: proxyConfig,
+          connectTimeoutSecOverride: connectTimeoutSecOverride,
+        );
+      case ConnectionProtocol.telnet:
+        c = TelnetWorkspaceController(
+          settings: settings,
+          host: host,
+          port: port,
+          username: username,
+          password: password,
+          proxyConfig: proxyConfig,
+          encoding: encoding ?? TerminalEncoding.utf8,
+          autoInjectCredentials: autoInjectCredentials,
+          connectTimeoutSecOverride: connectTimeoutSecOverride,
+        );
+      case ConnectionProtocol.serial:
+        final cfg = serialConfig ??
+            SerialPortConfig(
+              name: host,
+              baudRate: port > 0 ? port : 115200,
+            );
+        c = SerialWorkspaceController(
+          settings: settings,
+          serialConfig: cfg,
+          encoding: encoding ?? TerminalEncoding.utf8,
+        );
+    }
     c.addListener(_onTabNotify);
     return c;
   }
 
-  void _connectInBackground(SshWorkspaceController c) {
+  void _connectInBackground(TerminalSessionController c) {
     unawaited(
       c.connect().whenComplete(() {
         if (_tabs.any((t) => t.containsController(c))) {
@@ -120,14 +167,66 @@ class SessionTabsController extends ChangeNotifier {
     );
   }
 
-  /// 打开新标签并后台连接；返回该标签的 [SshWorkspaceController]。
-  SshWorkspaceController openTab({
+  /// Copy protocol-specific fields from an existing controller.
+  static ({
+    ConnectionProtocol protocol,
+    String? privateKeyPem,
+    TerminalEncoding? encoding,
+    SerialPortConfig? serialConfig,
+    bool autoInjectCredentials,
+  }) _copyParams(TerminalSessionController src) {
+    if (src is SshWorkspaceController) {
+      return (
+        protocol: ConnectionProtocol.ssh,
+        privateKeyPem: src.privateKeyPem,
+        encoding: null,
+        serialConfig: null,
+        autoInjectCredentials: true,
+      );
+    }
+    if (src is TelnetWorkspaceController) {
+      return (
+        protocol: ConnectionProtocol.telnet,
+        privateKeyPem: null,
+        encoding: src.encoding,
+        serialConfig: null,
+        autoInjectCredentials: src.autoInjectCredentials,
+      );
+    }
+    if (src is SerialWorkspaceController) {
+      return (
+        protocol: ConnectionProtocol.serial,
+        privateKeyPem: null,
+        encoding: src.encoding,
+        serialConfig: src.serialConfig,
+        autoInjectCredentials: true,
+      );
+    }
+    return (
+      protocol: src.protocol,
+      privateKeyPem: null,
+      encoding: null,
+      serialConfig: null,
+      autoInjectCredentials: true,
+    );
+  }
+
+  /// 打开新标签并后台连接；返回该标签的 [TerminalSessionController]。
+  TerminalSessionController openTab({
+    ConnectionProtocol protocol = ConnectionProtocol.ssh,
     required String host,
     required int port,
     required String username,
     required String password,
     String? privateKeyPem,
+    ProxyConfig? proxyConfig,
+    TerminalEncoding? encoding,
+    SerialPortConfig? serialConfig,
+    bool autoInjectCredentials = true,
+    int? connectTimeoutSec,
+    String? savedProfileId,
     bool bypassDebounce = false,
+    bool connect = true,
   }) {
     final now = DateTime.now();
 
@@ -148,43 +247,64 @@ class SessionTabsController extends ChangeNotifier {
     _lastOpenTabAt = now;
 
     final c = _spawnController(
+      protocol: protocol,
       host: host,
       port: port,
       username: username,
       password: password,
       privateKeyPem: privateKeyPem,
+      proxyConfig: proxyConfig,
+      encoding: encoding,
+      serialConfig: serialConfig,
+      autoInjectCredentials: autoInjectCredentials,
+      connectTimeoutSecOverride: connectTimeoutSec,
     );
-    final tab = SessionTab(id: _idSeq++, controller: c, paneId: _paneIdSeq++);
+    final tab = SessionTab(
+      id: _idSeq++,
+      controller: c,
+      paneId: _paneIdSeq++,
+      savedProfileId: savedProfileId,
+    );
     _tabs.add(tab);
     _selectedIndex = _tabs.length - 1;
     _lastOpenedController = c;
     notifyListeners();
-    _connectInBackground(c);
+    if (connect) {
+      _connectInBackground(c);
+    }
     return c;
   }
 
-  /// 复制 [index] 标签为新标签并重新连接（同主机凭据，独立会话）。
-  SshWorkspaceController? duplicateTab(int index) {
+  /// 复制 [index] 标签为新标签并重新连接（同主机凭据，独立会话）。  /// 串口端口互斥，拒绝复制。
+  TerminalSessionController? duplicateTab(int index) {
     if (index < 0 || index >= _tabs.length) return null;
     final src = _tabs[index].controller;
+    final params = _copyParams(src);
+    if (params.protocol == ConnectionProtocol.serial) return null;
     return openTab(
+      protocol: params.protocol,
       host: src.host,
       port: src.port,
       username: src.username,
       password: src.password,
-      privateKeyPem: src.privateKeyPem,
+      privateKeyPem: params.privateKeyPem,
+      proxyConfig: src.proxyConfig,
+      encoding: params.encoding,
+      serialConfig: params.serialConfig,
+      autoInjectCredentials: params.autoInjectCredentials,
+      savedProfileId: _tabs[index].savedProfileId,
       bypassDebounce: true,
     );
   }
 
   /// 复制当前选中标签。
-  SshWorkspaceController? duplicateSelectedTab() {
+  TerminalSessionController? duplicateSelectedTab() {
     if (_tabs.isEmpty) return null;
     return duplicateTab(selectedIndex);
   }
 
   /// 在焦点窗格旁分屏，新窗格用同主机凭据新建连接。
-  SshWorkspaceController? splitFocusedPane({
+  TerminalSessionController? splitFocusedPane({
     required SessionPaneAxis axis,
     SessionSplitPlacement placement = SessionSplitPlacement.after,
   }) {
@@ -198,7 +318,7 @@ class SessionTabsController extends ChangeNotifier {
     );
   }
 
-  SshWorkspaceController? splitPane({
+  TerminalSessionController? splitPane({
     required int tabIndex,
     required int targetPaneId,
     required SessionPaneAxis axis,
@@ -210,12 +330,20 @@ class SessionTabsController extends ChangeNotifier {
     if (target == null) return null;
 
     final src = target.controller;
+    final params = _copyParams(src);
+    // Serial ports are exclusive — a second open on the same device fails.
+    if (params.protocol == ConnectionProtocol.serial) return null;
     final c = _spawnController(
+      protocol: params.protocol,
       host: src.host,
       port: src.port,
       username: src.username,
       password: src.password,
-      privateKeyPem: src.privateKeyPem,
+      privateKeyPem: params.privateKeyPem,
+      proxyConfig: src.proxyConfig,
+      encoding: params.encoding,
+      serialConfig: params.serialConfig,
+      autoInjectCredentials: params.autoInjectCredentials,
     );
     final newLeaf = SessionPaneLeaf(paneId: _paneIdSeq++, controller: c);
     tab.root = splitLeaf(
@@ -283,14 +411,19 @@ class SessionTabsController extends ChangeNotifier {
   }
 
   static String hostKeyFor(SessionTab tab) {
-    final c = tab.controller;
-    return '${c.username}@${c.host}:${c.port}';
+    return tab.controller.sessionLabel;
   }
 
   /// 切换标签视图模式（终端 / 可视化桌面）。桌面管理器懒创建；进入桌面从空桌面开始。
+  ///
+  /// Telnet / 串口不支持桌面模式（无可靠独立 exec/SFTP）。
   void setViewMode(int tabIndex, SessionViewMode mode) {
     if (tabIndex < 0 || tabIndex >= _tabs.length) return;
     final t = _tabs[tabIndex];
+    if (mode == SessionViewMode.desktop &&
+        !t.controller.protocol.supportsDesktop) {
+      return;
+    }
     if (t.viewMode == mode) return;
     t.viewMode = mode;
     if (mode == SessionViewMode.desktop) {

@@ -33,6 +33,7 @@ class _WorkbenchTerminalSettingsDialogState
   late bool _followCwd;
   late bool _injectOsc7;
   late bool _smartRightClick;
+  late bool _touchAssistBar;
 
   @override
   void initState() {
@@ -55,6 +56,7 @@ class _WorkbenchTerminalSettingsDialogState
     _followCwd = s.followTerminalCwd;
     _injectOsc7 = s.injectOsc7Cwd;
     _smartRightClick = s.smartRightClick;
+    _touchAssistBar = s.touchAssistBar;
   }
 
   @override
@@ -129,6 +131,7 @@ class _WorkbenchTerminalSettingsDialogState
     s.followTerminalCwd = _followCwd;
     s.injectOsc7Cwd = _injectOsc7;
     s.smartRightClick = _smartRightClick;
+    s.touchAssistBar = _touchAssistBar;
     await s.persist();
     if (mounted) Navigator.of(context).pop();
   }
@@ -139,17 +142,20 @@ class _WorkbenchTerminalSettingsDialogState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 150,
+          Flexible(
+            flex: 2,
             child: Text(
               label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: context.wb.secondaryText,
                 fontSize: 14,
               ),
             ),
           ),
-          Expanded(child: field),
+          const SizedBox(width: 12),
+          Expanded(flex: 3, child: field),
         ],
       ),
     );
@@ -191,14 +197,17 @@ class _WorkbenchTerminalSettingsDialogState
                 children: [
                   Icon(Icons.tune_rounded, color: context.wb.accentBlue),
                   const SizedBox(width: 10),
-                  Text(
-                    l.settingsDialogTitle,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: context.wb.primaryText,
-                      fontWeight: FontWeight.w700,
+                  Expanded(
+                    child: Text(
+                      l.settingsDialogTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: context.wb.primaryText,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(
@@ -459,6 +468,27 @@ class _WorkbenchTerminalSettingsDialogState
                       padding: const EdgeInsets.only(left: 150, bottom: 4),
                       child: Text(
                         l.settingsSmartRightClickDescription,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: context.wb.textMuted.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ),
+                    _row(
+                      '触控辅助栏',
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Switch(
+                          value: _touchAssistBar,
+                          onChanged: (v) =>
+                              setState(() => _touchAssistBar = v),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 150, bottom: 4),
+                      child: Text(
+                        '在终端底部显示 Esc/Tab/方向键等快捷按钮',
                         style: TextStyle(
                           fontSize: 11,
                           color: context.wb.textMuted.withValues(alpha: 0.85),

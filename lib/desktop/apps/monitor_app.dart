@@ -7,11 +7,14 @@ import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/remote_network.dart';
 import '../../services/remote_process_list.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/remote_state_view.dart';
 import '../desktop_window_manager.dart';
 import '../widgets/desktop_monitor_widgets.dart';
+import '../widgets/desktop_scrollable_actions.dart';
 
 /// 主机资源 + 网络监控：每 5s 拉取；窗口最小化时暂停。
 class MonitorApp extends StatefulWidget {
@@ -24,7 +27,7 @@ class MonitorApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<MonitorApp> createState() => _MonitorAppState();
@@ -32,7 +35,8 @@ class MonitorApp extends StatefulWidget {
 
 class _MonitorAppState extends State<MonitorApp>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+late final TabController _tabs;
   Timer? _timer;
   RemoteHostSnapshot? _snap;
   RemoteNetworkSnapshot? _net;
@@ -146,9 +150,9 @@ class _MonitorAppState extends State<MonitorApp>
     });
     try {
       final results = await Future.wait([
-        widget.controller.snapshot(osHint: _os),
-        fetchRemoteNetworkSnapshot(c, osHint: _os),
-        fetchRemoteGpuSnapshot(c, osHint: _os),
+        _exec.snapshot(osHint: _os),
+        fetchRemoteNetworkSnapshot(_exec, osHint: _os),
+        fetchRemoteGpuSnapshot(_exec, osHint: _os),
       ]);
       if (!mounted) return;
       final snap = results[0] as RemoteHostSnapshot?;
@@ -156,7 +160,7 @@ class _MonitorAppState extends State<MonitorApp>
       final gpu = results[2] as RemoteGpuSnapshot?;
       if (snap == null && net == null && gpu == null) {
         setState(() {
-          final detail = widget.controller.lastRemoteCommandError;
+          final detail = _exec.lastRemoteCommandError;
           _error = detail == null ? '无法获取指标' : '刷新失败：$detail';
           _loading = false;
         });
@@ -228,54 +232,69 @@ class _MonitorAppState extends State<MonitorApp>
               children: [
                 Icon(Icons.monitor_heart_rounded, size: 18, color: wb.accentBlue),
                 const SizedBox(width: 8),
-                Text(
-                  '主机监控',
-                  style: TextStyle(
-                    color: wb.primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                LastUpdatedChip(
-                  lastTickAt: _lastTickAt,
-                  live: !_paused && connected,
-                ),
-                const SizedBox(width: 4),
-                PauseToggle(
-                  paused: _userPaused,
-                  onPausedChanged: (v) {
-                    setState(() => _userPaused = v);
-                    _armTimer();
-                  },
-                  interval: _interval,
-                  onIntervalChanged: (d) {
-                    setState(() => _interval = d);
-                    _armTimer();
-                  },
-                  intervals: const [
-                    Duration(seconds: 1),
-                    Duration(seconds: 3),
-                    Duration(seconds: 5),
-                    Duration(seconds: 10),
-                    Duration(seconds: 30),
-                  ],
-                ),
-                if (_loading)
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: wb.accentBlue,
+                Flexible(
+                  child: Text(
+                    '主机监控',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: wb.primaryText,
+                      fontWeight: FontWeight.w600,
                     ),
-                  )
-                else
-                  IconButton(
-                    tooltip: '刷新',
-                    iconSize: 18,
-                    onPressed: connected ? () => unawaited(_tick()) : null,
-                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
                   ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: DesktopScrollableActions(
+                    height: 36,
+                    children: [
+                      LastUpdatedChip(
+                        lastTickAt: _lastTickAt,
+                        live: !_paused && connected,
+                      ),
+                      const SizedBox(width: 4),
+                      PauseToggle(
+                        paused: _userPaused,
+                        onPausedChanged: (v) {
+                          setState(() => _userPaused = v);
+                          _armTimer();
+                        },
+                        interval: _interval,
+                        onIntervalChanged: (d) {
+                          setState(() => _interval = d);
+                          _armTimer();
+                        },
+                        intervals: const [
+                          Duration(seconds: 1),
+                          Duration(seconds: 3),
+                          Duration(seconds: 5),
+                          Duration(seconds: 10),
+                          Duration(seconds: 30),
+                        ],
+                      ),
+                      if (_loading)
+                        SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: wb.accentBlue,
+                          ),
+                        )
+                      else
+                        IconButton(
+                          tooltip: '刷新',
+                          iconSize: 18,
+                          onPressed:
+                              connected ? () => unawaited(_tick()) : null,
+                          icon: Icon(
+                            Icons.refresh_rounded,
+                            color: wb.textMuted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -611,6 +630,8 @@ class _MonitorAppState extends State<MonitorApp>
                   flex: 2,
                   child: Text(
                     r.iface.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
@@ -622,6 +643,8 @@ class _MonitorAppState extends State<MonitorApp>
                 Expanded(
                   child: Text(
                     '↓ ${formatNetRate(r.rxBytesPerSec)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 11,
@@ -632,6 +655,8 @@ class _MonitorAppState extends State<MonitorApp>
                 Expanded(
                   child: Text(
                     '↑ ${formatNetRate(r.txBytesPerSec)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 11,
@@ -639,12 +664,16 @@ class _MonitorAppState extends State<MonitorApp>
                     ),
                   ),
                 ),
-                Text(
-                  formatNetBytes(r.iface.rxBytes + r.iface.txBytes),
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 10,
-                    color: wb.textMuted,
+                Flexible(
+                  child: Text(
+                    formatNetBytes(r.iface.rxBytes + r.iface.txBytes),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: wb.textMuted,
+                    ),
                   ),
                 ),
               ],

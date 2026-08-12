@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/remote_sudo.dart';
 import '../../services/remote_users.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
@@ -22,7 +24,7 @@ class UsersApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<UsersApp> createState() => _UsersAppState();
@@ -30,6 +32,7 @@ class UsersApp extends StatefulWidget {
 
 class _UsersAppState extends State<UsersApp>
     with SingleTickerProviderStateMixin {
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
   late final TabController _tabs;
   RemoteUsersSnapshot? _snap;
   bool _loading = false;
@@ -80,14 +83,14 @@ class _UsersAppState extends State<UsersApp>
       _loading = true;
       _error = null;
     });
-    final snap = await fetchRemoteUsers(widget.controller);
+    final snap = await fetchRemoteUsers(_exec);
     if (!mounted) return;
     if (snap == null) {
       setState(() {
         _loading = false;
-        _error = widget.controller.lastRemoteCommandError == null
+        _error = _exec.lastRemoteCommandError == null
             ? '无法获取用户信息'
-            : '刷新失败：${widget.controller.lastRemoteCommandError}';
+            : '刷新失败：${_exec.lastRemoteCommandError}';
       });
       return;
     }
@@ -129,9 +132,9 @@ class _UsersAppState extends State<UsersApp>
     });
     final err = await runWithSudoPasswordPrompt(
       context,
-      widget.controller,
+      _exec,
       attempt: (sudoPassword) => runUsersMutate(
-        widget.controller,
+        _exec,
         cmd,
         terminalHint: hint,
         sudoPassword: sudoPassword,

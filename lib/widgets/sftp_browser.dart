@@ -2170,6 +2170,41 @@ class SftpBrowserState extends State<SftpBrowser> {
     if (mounted) _requestFocus();
   }
 
+  /// 列表行在给定宽度下显示哪些元数据列。
+  /// 窄面板时逐级隐藏（owner → mode → mtime → size），避免 Row overflow。
+  static ({bool mode, bool owner, bool size, bool mtime})
+  _detailColumnsForWidth(
+    double rowWidth, {
+    required bool enabled,
+  }) {
+    // icon(20)+gap(4)；其后 meta 列之间各 6px gap（mtime 无尾 gap）。
+    const iconBlock = 20.0 + 4.0;
+    const sizeW = 64.0;
+    const mtimeW = 108.0;
+    const modeBlock = 82.0 + 6.0;
+    const ownerBlock = 72.0 + 6.0;
+    const gap = 6.0;
+    const minName = 56.0;
+
+    final withSizeMtime = iconBlock + sizeW + gap + mtimeW + minName;
+    final withMode = withSizeMtime + modeBlock;
+    final withOwner = withMode + ownerBlock;
+
+    if (enabled && rowWidth >= withOwner) {
+      return (mode: true, owner: true, size: true, mtime: true);
+    }
+    if (enabled && rowWidth >= withMode) {
+      return (mode: true, owner: false, size: true, mtime: true);
+    }
+    if (rowWidth >= withSizeMtime) {
+      return (mode: false, owner: false, size: true, mtime: true);
+    }
+    if (rowWidth >= iconBlock + sizeW + minName) {
+      return (mode: false, owner: false, size: true, mtime: false);
+    }
+    return (mode: false, owner: false, size: false, mtime: false);
+  }
+
   Widget _sortHeaderCell({
     required String label,
     required SftpSortColumn column,
@@ -2194,6 +2229,8 @@ class SftpBrowserState extends State<SftpBrowser> {
         child: Text(
           '$label$arrow',
           textAlign: textAlign,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: style,
         ),
       ),
@@ -2655,84 +2692,96 @@ class SftpBrowserState extends State<SftpBrowser> {
     required bool useBeijingMtime,
   }) {
     final isDir = entry.attr.isDirectory;
+    final metaStyle = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 10,
+      color: context.wb.textMuted,
+    );
     final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Row(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(2),
-            child: Icon(
-              isDir ? Icons.folder_rounded : Icons.insert_drive_file_outlined,
-              color: isDir ? context.wb.folder : context.wb.textMuted,
-              size: 16,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            flex: 5,
-            child: Text(
-              entry.filename,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: context.wb.secondaryText,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (_detailColumns) ...[
-            SizedBox(
-              width: 82,
-              child: Text(
-                _formatSftpMode(entry.attr.mode),
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: context.wb.textMuted,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final detail = _detailColumnsForWidth(
+            constraints.maxWidth,
+            enabled: _detailColumns,
+          );
+          return Row(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(
+                  isDir
+                      ? Icons.folder_rounded
+                      : Icons.insert_drive_file_outlined,
+                  color: isDir ? context.wb.folder : context.wb.textMuted,
+                  size: 16,
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 72,
-              child: Text(
-                _formatSftpOwner(entry.attr),
-                textAlign: TextAlign.end,
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  color: context.wb.textMuted,
+              const SizedBox(width: 4),
+              Expanded(
+                flex: 5,
+                child: Text(
+                  entry.filename,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: context.wb.secondaryText,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          SizedBox(
-            width: 64,
-            child: Text(
-              isDir ? '—' : _formatRemoteBytes(entry.attr.size),
-              textAlign: TextAlign.end,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 10,
-                color: context.wb.textMuted,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 108,
-            child: Text(
-              _formatUnixMtime(entry.attr.modifyTime, useBeijingMtime),
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 10,
-                color: context.wb.textMuted,
-              ),
-            ),
-          ),
-        ],
+              if (detail.mode) ...[
+                SizedBox(
+                  width: 82,
+                  child: Text(
+                    _formatSftpMode(entry.attr.mode),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: metaStyle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (detail.owner) ...[
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    _formatSftpOwner(entry.attr),
+                    textAlign: TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: metaStyle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (detail.size) ...[
+                SizedBox(
+                  width: 64,
+                  child: Text(
+                    isDir ? '—' : _formatRemoteBytes(entry.attr.size),
+                    textAlign: TextAlign.end,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: metaStyle,
+                  ),
+                ),
+                if (detail.mtime) const SizedBox(width: 6),
+              ],
+              if (detail.mtime)
+                SizedBox(
+                  width: 108,
+                  child: Text(
+                    _formatUnixMtime(entry.attr.modifyTime, useBeijingMtime),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: metaStyle,
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
     return _wrapEntryChrome(context: context, entry: entry, content: content);
@@ -3366,67 +3415,90 @@ class SftpBrowserState extends State<SftpBrowser> {
                                             _SftpLayoutMode.list) ...[
                                           Padding(
                                             padding: const EdgeInsets.fromLTRB(
-                                              10,
+                                              8,
                                               4,
-                                              10,
+                                              8,
                                               2,
                                             ),
-                                            child: Row(
-                                              children: [
-                                                const SizedBox(width: 22),
-                                                const SizedBox(width: 4),
-                                                _sortHeaderCell(
-                                                  label: l.sftpColumnName,
-                                                  column: SftpSortColumn.name,
-                                                  flex: 5,
-                                                ),
-                                                if (_detailColumns) ...[
-                                                  SizedBox(
-                                                    width: 82,
-                                                    child: Text(
-                                                      '权限',
-                                                      style: TextStyle(
-                                                        fontSize: 10,
-                                                        color: context
-                                                            .wb.textMuted,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                      ),
+                                            child: LayoutBuilder(
+                                              builder: (context, constraints) {
+                                                final detail =
+                                                    _detailColumnsForWidth(
+                                                  constraints.maxWidth,
+                                                  enabled: _detailColumns,
+                                                );
+                                                final headerStyle = TextStyle(
+                                                  fontSize: 10,
+                                                  color: context.wb.textMuted,
+                                                  fontWeight: FontWeight.w600,
+                                                );
+                                                return Row(
+                                                  children: [
+                                                    const SizedBox(width: 20),
+                                                    const SizedBox(width: 4),
+                                                    _sortHeaderCell(
+                                                      label: l.sftpColumnName,
+                                                      column:
+                                                          SftpSortColumn.name,
+                                                      flex: 5,
                                                     ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                  SizedBox(
-                                                    width: 72,
-                                                    child: Text(
-                                                      '所有者',
-                                                      textAlign:
-                                                          TextAlign.end,
-                                                      style: TextStyle(
-                                                        fontSize: 10,
-                                                        color: context
-                                                            .wb.textMuted,
-                                                        fontWeight:
-                                                            FontWeight.w600,
+                                                    if (detail.mode) ...[
+                                                      SizedBox(
+                                                        width: 82,
+                                                        child: Text(
+                                                          '权限',
+                                                          maxLines: 1,
+                                                          overflow:
+                                                              TextOverflow
+                                                                  .ellipsis,
+                                                          style: headerStyle,
+                                                        ),
                                                       ),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6),
-                                                ],
-                                                _sortHeaderCell(
-                                                  label: l.sftpColumnSize,
-                                                  column: SftpSortColumn.size,
-                                                  textAlign: TextAlign.end,
-                                                  flex: null,
-                                                  width: 64,
-                                                ),
-                                                const SizedBox(width: 6),
-                                                _sortHeaderCell(
-                                                  label: l.sftpColumnModified,
-                                                  column: SftpSortColumn.mtime,
-                                                  flex: null,
-                                                  width: 108,
-                                                ),
-                                              ],
+                                                      const SizedBox(width: 6),
+                                                    ],
+                                                    if (detail.owner) ...[
+                                                      SizedBox(
+                                                        width: 72,
+                                                        child: Text(
+                                                          '所有者',
+                                                          textAlign:
+                                                              TextAlign.end,
+                                                          maxLines: 1,
+                                                          overflow:
+                                                              TextOverflow
+                                                                  .ellipsis,
+                                                          style: headerStyle,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                    ],
+                                                    if (detail.size) ...[
+                                                      _sortHeaderCell(
+                                                        label: l.sftpColumnSize,
+                                                        column:
+                                                            SftpSortColumn.size,
+                                                        textAlign:
+                                                            TextAlign.end,
+                                                        flex: null,
+                                                        width: 64,
+                                                      ),
+                                                      if (detail.mtime)
+                                                        const SizedBox(
+                                                          width: 6,
+                                                        ),
+                                                    ],
+                                                    if (detail.mtime)
+                                                      _sortHeaderCell(
+                                                        label: l
+                                                            .sftpColumnModified,
+                                                        column: SftpSortColumn
+                                                            .mtime,
+                                                        flex: null,
+                                                        width: 108,
+                                                      ),
+                                                  ],
+                                                );
+                                              },
                                             ),
                                           ),
                                           Divider(

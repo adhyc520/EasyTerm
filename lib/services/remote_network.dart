@@ -1,5 +1,5 @@
 import 'remote_process_list.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 网卡累计收发字节（Linux `/proc/net/dev`；Windows 适配器统计）。
 class RemoteNetIface {
@@ -164,7 +164,7 @@ const String kWindowsNetworkBundle =
     r'''powershell -NoProfile -NonInteractive -Command "Write-Output '__IF__'; Get-NetAdapterStatistics -ErrorAction SilentlyContinue | ForEach-Object { ($_.Name -replace '[|\r\n]',' ') + '|' + [int64]$_.ReceivedBytes + '|' + [int64]$_.SentBytes }; if(-not $?){ Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -ErrorAction SilentlyContinue | ForEach-Object { ($_.Name -replace '[|\r\n]',' ') + '|' + [int64]$_.BytesReceived + '|' + [int64]$_.BytesSent } }; Write-Output '__LISTEN__'; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -First 250 | ForEach-Object { 'tcp|' + $_.LocalAddress + '|' + $_.LocalPort + '|' + $_.OwningProcess }; Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Select-Object -First 120 | ForEach-Object { 'udp|' + $_.LocalAddress + '|' + $_.LocalPort + '|' + $_.OwningProcess }; Write-Output '__SUM__'; $g=Get-NetTCPConnection -ErrorAction SilentlyContinue | Group-Object State; if($g){ ($g | ForEach-Object { $_.Name + '=' + $_.Count }) -join ' ' }; Write-Output '__Z__'"''';
 
 Future<RemoteNetworkSnapshot?> fetchRemoteNetworkSnapshot(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;

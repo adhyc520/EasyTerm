@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../services/terminal_session_controller.dart';
 import 'desktop_window_manager.dart' show DesktopAppType;
 
-/// 桌面应用元数据：图标 / 标题 / 搜索关键词 / 默认窗口尺寸。
+/// 桌面应用元数据：图标 / 标题 / 搜索关键词 / 默认窗口尺寸 / 所需能力。
 class AppMeta {
   const AppMeta(
     this.id,
@@ -10,6 +11,7 @@ class AppMeta {
     this.label,
     this.keywords, {
     this.defaultSize,
+    this.needs = const {RemoteCapability.terminal},
   });
 
   final DesktopAppType id;
@@ -17,6 +19,9 @@ class AppMeta {
   final String label;
   final List<String> keywords;
   final Size? defaultSize;
+
+  /// Capabilities required to show/open this app. Empty = always available.
+  final Set<RemoteCapability> needs;
 }
 
 const kAllApps = <AppMeta>[
@@ -26,6 +31,7 @@ const kAllApps = <AppMeta>[
     '终端',
     ['terminal', 'shell', 'ssh'],
     defaultSize: Size(720, 460),
+    needs: {RemoteCapability.terminal},
   ),
   AppMeta(
     DesktopAppType.files,
@@ -33,6 +39,7 @@ const kAllApps = <AppMeta>[
     '文件管理器',
     ['files', 'sftp', 'file manager'],
     defaultSize: Size(820, 540),
+    needs: {RemoteCapability.file},
   ),
   AppMeta(
     DesktopAppType.browser,
@@ -40,6 +47,7 @@ const kAllApps = <AppMeta>[
     '浏览器',
     ['browser', 'web'],
     defaultSize: Size(900, 600),
+    needs: {},
   ),
   AppMeta(
     DesktopAppType.monitor,
@@ -47,6 +55,7 @@ const kAllApps = <AppMeta>[
     '监控',
     ['monitor', 'metrics', 'system'],
     defaultSize: Size(760, 560),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.tasks,
@@ -54,6 +63,7 @@ const kAllApps = <AppMeta>[
     '任务管理器',
     ['tasks', 'task manager', 'process', 'top'],
     defaultSize: Size(820, 560),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.logs,
@@ -61,6 +71,7 @@ const kAllApps = <AppMeta>[
     '日志',
     ['logs', 'journal', 'tail'],
     defaultSize: Size(780, 520),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.containers,
@@ -68,6 +79,7 @@ const kAllApps = <AppMeta>[
     '容器',
     ['containers', 'docker'],
     defaultSize: Size(820, 560),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.diskUsage,
@@ -75,6 +87,7 @@ const kAllApps = <AppMeta>[
     '磁盘占用',
     ['disk', 'du', 'usage'],
     defaultSize: Size(640, 520),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.transfers,
@@ -82,6 +95,7 @@ const kAllApps = <AppMeta>[
     '传输',
     ['transfers', 'upload', 'download'],
     defaultSize: Size(560, 420),
+    needs: {RemoteCapability.file},
   ),
   AppMeta(
     DesktopAppType.editor,
@@ -89,6 +103,7 @@ const kAllApps = <AppMeta>[
     '编辑器',
     ['editor', 'edit'],
     defaultSize: Size(780, 560),
+    needs: {RemoteCapability.file},
   ),
   AppMeta(
     DesktopAppType.forwards,
@@ -96,6 +111,7 @@ const kAllApps = <AppMeta>[
     '端口转发',
     ['forwards', 'tunnel', 'port forward'],
     defaultSize: Size(620, 460),
+    needs: {RemoteCapability.forward},
   ),
   AppMeta(
     DesktopAppType.runCommand,
@@ -103,6 +119,7 @@ const kAllApps = <AppMeta>[
     '运行命令',
     ['run', 'command'],
     defaultSize: Size(600, 420),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.cron,
@@ -110,6 +127,7 @@ const kAllApps = <AppMeta>[
     '计划任务',
     ['cron', 'crontab', 'schedule'],
     defaultSize: Size(640, 480),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.users,
@@ -117,6 +135,7 @@ const kAllApps = <AppMeta>[
     '用户与组',
     ['users', 'who', 'last'],
     defaultSize: Size(640, 480),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.packages,
@@ -124,6 +143,7 @@ const kAllApps = <AppMeta>[
     '包管理器',
     ['packages', 'apt', 'dnf', 'pacman'],
     defaultSize: Size(760, 540),
+    needs: {RemoteCapability.exec},
   ),
   AppMeta(
     DesktopAppType.firewall,
@@ -131,9 +151,15 @@ const kAllApps = <AppMeta>[
     '防火墙',
     ['firewall', 'ufw', 'iptables'],
     defaultSize: Size(680, 520),
+    needs: {RemoteCapability.exec},
   ),
 ];
 
 AppMeta metaFor(DesktopAppType t) => kAllApps.firstWhere((m) => m.id == t);
 
 IconData iconForApp(DesktopAppType t) => metaFor(t).icon;
+
+/// Apps whose [AppMeta.needs] are fully satisfied by [caps].
+/// Empty [needs] (e.g. browser) always match.
+List<AppMeta> appsForCapabilities(Set<RemoteCapability> caps) =>
+    kAllApps.where((a) => a.needs.every(caps.contains)).toList();

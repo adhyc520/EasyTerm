@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/remote_containers.dart';
 import '../../services/remote_process_list.dart';
-import '../../services/ssh_workspace_controller.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
 import '../../widgets/remote_state_view.dart';
@@ -25,19 +26,21 @@ class ContainersApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<ContainersApp> createState() => _ContainersAppState();
 }
 
 class _ContainersAppState extends State<ContainersApp> {
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
   Timer? _timer;
   RemoteOsKind? _os;
   List<RemoteContainer> _items = const [];
   bool _available = true;
   bool _loading = false;
   bool _busy = false;
+  bool _tickInFlight = false;
   String? _error;
   String _filter = '';
   String? _selected;
@@ -49,6 +52,8 @@ class _ContainersAppState extends State<ContainersApp> {
   bool _userPaused = false;
   Duration _interval = const Duration(seconds: 5);
   DateTime? _lastTickAt;
+  /// 连续确认「无 Docker」的次数；瞬时失败不计入，避免闪烁。
+  int _unavailableStreak = 0;
 
   @override
   void initState() {
@@ -70,15 +75,45 @@ class _ContainersAppState extends State<ContainersApp> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant ContainersApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.wm, widget.wm)) {
+      oldWidget.wm.removeListener(_onWm);
+      widget.wm.addListener(_onWm);
+      _armTimer();
+    }
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller.removeListener(_onController);
+      widget.controller.addListener(_onController);
+      _os = null;
+      _unavailableStreak = 0;
+      _tickInFlight = false;
+      unawaited(_tick());
+    }
+    if (!identical(oldWidget.window, widget.window)) {
+      oldWidget.window.onConnectionRestored = null;
+      widget.window.onConnectionRestored = _onConnectionRestored;
+    }
+  }
+
   void _onConnectionRestored() {
     if (!mounted) return;
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _unavailableStreak = 0;
+    });
     unawaited(_tick());
   }
 
   void _onWm() {
+    final wasPaused = _timer == null;
     _armTimer();
     if (mounted) setState(() {});
+    // 切回活动工作区时补一次刷新。
+    if (wasPaused && !_paused && _connected) {
+      unawaited(_tick());
+    }
   }
 
   void _onController() {
@@ -86,7 +121,9 @@ class _ContainersAppState extends State<ContainersApp> {
   }
 
   bool get _paused =>
-      widget.window.state == WindowState.minimized || _userPaused;
+      widget.window.state == WindowState.minimized ||
+      _userPaused ||
+      !widget.wm.isWindowInActiveWorkspace(widget.window.id);
 
   bool get _connected =>
       widget.controller.connected && !widget.controller.dropped;
@@ -103,7 +140,7 @@ class _ContainersAppState extends State<ContainersApp> {
   }
 
   Future<void> _tick() async {
-    if (!mounted || _paused) return;
+    if (!mounted || _paused || _tickInFlight) return;
     if (!_connected) {
       setState(() {
         _error = '连接已断开，重连后刷新';
@@ -111,24 +148,59 @@ class _ContainersAppState extends State<ContainersApp> {
       });
       return;
     }
+    _tickInFlight = true;
     setState(() {
-      _loading = _items.isEmpty;
-      _error = null;
+      // 仅在尚无列表且仍认为 Docker 可用时显示 loading，避免冲掉已有数据。
+      _loading = _items.isEmpty && _available;
+      if (_items.isEmpty) _error = null;
     });
     try {
+      // 总超时：避免 SSH execute / Telnet exclusive 挂起时永久钉死刷新。
       final snap = await fetchRemoteContainers(
-        widget.controller,
+        _exec,
         osHint: _os,
+      ).timeout(
+        const Duration(seconds: 45),
+        onTimeout: () => null,
       );
       if (!mounted) return;
       if (snap == null) {
+        // 超时/队列失败：保留上次列表与 available，勿切到「未安装」。
         setState(() {
-          _error = '无法获取容器列表';
+          final detail = _exec.lastRemoteCommandError;
+          if (detail != null &&
+              (detail.contains('SSH 通道繁忙') || detail.contains('exec 繁忙'))) {
+            // 瞬时拥塞：有旧数据时静默保留，避免刷屏。
+            _error = _items.isEmpty ? detail : null;
+          } else if (detail == null) {
+            _error = _items.isEmpty
+                ? '无法获取容器列表（命令超时或会话繁忙）'
+                : '刷新失败，已保留上次结果';
+          } else {
+            _error = _items.isEmpty ? detail : '刷新失败：$detail';
+          }
           _loading = false;
         });
         return;
       }
       if (snap.os != RemoteOsKind.unknown) _os = snap.os;
+
+      if (!snap.available) {
+        _unavailableStreak++;
+        // 曾成功过时，连续 2 次确认才降级，避免单次误判闪烁。
+        final demote = _items.isEmpty || _unavailableStreak >= 2;
+        if (!demote) {
+          setState(() {
+            _error = snap.error ?? 'Docker 探测异常，稍后重试';
+            _loading = false;
+            _lastTickAt = DateTime.now();
+          });
+          return;
+        }
+      } else {
+        _unavailableStreak = 0;
+      }
+
       setState(() {
         _items = snap.containers;
         _available = snap.available;
@@ -152,6 +224,8 @@ class _ContainersAppState extends State<ContainersApp> {
         _error = '$e';
         _loading = false;
       });
+    } finally {
+      _tickInFlight = false;
     }
   }
 
@@ -226,7 +300,7 @@ class _ContainersAppState extends State<ContainersApp> {
     }
     setState(() => _busy = true);
     final out = await controlRemoteContainer(
-      widget.controller,
+      _exec,
       os: _os!,
       ref: id,
       action: action,
@@ -263,7 +337,7 @@ class _ContainersAppState extends State<ContainersApp> {
     if (_os == null) return;
     final ref = c.name.isNotEmpty ? c.name : c.id;
     final raw = await inspectRemoteContainer(
-      widget.controller,
+      _exec,
       os: _os!,
       ref: ref,
     );

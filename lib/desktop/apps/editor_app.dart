@@ -7,6 +7,8 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../util/desktop_drop_paths.dart';
@@ -29,7 +31,7 @@ class EditorApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<EditorApp> createState() => _EditorAppState();
@@ -326,6 +328,8 @@ String _encodingStatusLabel(String encoding) {
 }
 
 class _EditorAppState extends State<EditorApp> {
+  SshWorkspaceController get _ssh => widget.controller as SshWorkspaceController;
+
   final List<_EditorTab> _tabs = [];
   int _active = 0;
   Timer? _poll;
@@ -430,7 +434,7 @@ class _EditorAppState extends State<EditorApp> {
   String _normalizePath(String raw) {
     if (raw.isEmpty) return '';
     if (isRemoteAbsolutePath(raw)) return normalizeRemotePath(raw);
-    return remoteJoin(widget.controller.remoteCwd, raw);
+    return remoteJoin(_ssh.remoteCwd, raw);
   }
 
   bool _tryOpenPath(String raw) {
@@ -704,7 +708,7 @@ class _EditorAppState extends State<EditorApp> {
   }
 
   Future<({Uint8List bytes, bool readOnly})?> _readAbsolute(String path) async {
-    final client = widget.controller.sftp;
+    final client = _ssh.sftp;
     if (client == null) return null;
     final file = await client.open(path, mode: SftpFileOpenMode.read);
     try {
@@ -723,7 +727,7 @@ class _EditorAppState extends State<EditorApp> {
   }
 
   Future<void> _writeAbsolute(String path, Uint8List bytes) async {
-    final client = widget.controller.sftp;
+    final client = _ssh.sftp;
     if (client == null) throw StateError('SFTP 未就绪');
     final file = await client.open(
       path,
@@ -739,7 +743,7 @@ class _EditorAppState extends State<EditorApp> {
   }
 
   Future<int?> _mtimeAbsolute(String path) async {
-    final client = widget.controller.sftp;
+    final client = _ssh.sftp;
     if (client == null) return null;
     final attrs = await client.stat(path);
     return attrs.modifyTime;
@@ -751,7 +755,7 @@ class _EditorAppState extends State<EditorApp> {
       tab.error = null;
     });
     try {
-      if (!widget.controller.connected || widget.controller.sftp == null) {
+      if (!widget.controller.connected || _ssh.sftp == null) {
         setState(() {
           tab.loading = false;
           tab.error = '未连接';

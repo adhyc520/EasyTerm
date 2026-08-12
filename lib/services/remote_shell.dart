@@ -14,13 +14,15 @@ import 'package:flutter/foundation.dart'
 import 'package:xterm/xterm.dart';
 
 import 'pty_interceptor.dart';
+import 'terminal_session_controller.dart';
 import 'workbench_settings_store.dart';
 
 /// 一条独立 PTY + xterm [Terminal] + I/O 接线，供桌面多终端窗口使用。
-class RemoteShell extends ChangeNotifier {
+class RemoteShell extends SecondaryShell {
   RemoteShell._(this.session, this.terminal, this._interceptor);
 
   final SSHSession session;
+  @override
   final Terminal terminal;
   final PtyInterceptor _interceptor;
 
@@ -31,8 +33,11 @@ class RemoteShell extends ChangeNotifier {
   String _terminalCwd = '';
   bool _sawOsc7 = false;
 
+  @override
   bool get mouseModeActive => _mouseMode;
+  @override
   String get terminalCwd => _terminalCwd;
+  @override
   bool get sawOsc7 => _sawOsc7;
 
   static Future<RemoteShell> open(
@@ -106,13 +111,16 @@ class RemoteShell extends ChangeNotifier {
     }
   }
 
+  @override
   void resize(int w, int h, int pw, int ph) =>
       session.resizeTerminal(w, h, pw, ph);
 
+  @override
   void paste(String s) => terminal.paste(s);
 
   bool _closed = false;
 
+  @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;

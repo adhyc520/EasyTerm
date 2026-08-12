@@ -28,15 +28,16 @@ Future<String?> promptSudoPassword(
 /// 返回 `null` 表示成功；用户取消返回 [RemoteSudo.cancelled]。
 Future<String?> runWithSudoPasswordPrompt(
   BuildContext context,
-  SshWorkspaceController controller, {
+  Object controller, {
   required Future<String?> Function(String? sudoPassword) attempt,
 }) async {
-  String? pwd = controller.cachedSudoPassword;
+  final ssh = controller is SshWorkspaceController ? controller : null;
+  String? pwd = ssh?.cachedSudoPassword;
   var err = await attempt(pwd);
 
   // 缓存密码失效
   if (RemoteSudo.isAuthFailed(err) && pwd != null) {
-    controller.cachedSudoPassword = null;
+    if (ssh != null) ssh.cachedSudoPassword = null;
     pwd = null;
   }
 
@@ -49,25 +50,25 @@ Future<String?> runWithSudoPasswordPrompt(
           ? (AppLocalizations.of(context)?.sudoPasswordIncorrect ??
               '密码不正确，请重试')
           : null,
-      offerSshPassword: controller.password.isNotEmpty,
-      sshPassword: controller.password.isNotEmpty ? controller.password : null,
+      offerSshPassword: ssh?.password.isNotEmpty ?? false,
+      sshPassword: (ssh?.password.isNotEmpty ?? false) ? ssh!.password : null,
     );
     if (next == null) return RemoteSudo.cancelled;
     if (!context.mounted) return RemoteSudo.cancelled;
     pwd = next;
     err = await attempt(pwd);
     if (err == null) {
-      controller.cachedSudoPassword = pwd;
-      controller.touchSudoPassword();
+      if (ssh != null) ssh.cachedSudoPassword = pwd;
+      ssh?.touchSudoPassword();
       return null;
     }
     if (RemoteSudo.isAuthFailed(err)) {
-      controller.cachedSudoPassword = null;
+      if (ssh != null) ssh.cachedSudoPassword = null;
       continue;
     }
     if (RemoteSudo.isPasswordRequired(err)) {
       // 理论上带密码不应再返回 passwordRequired；当作鉴权失败。
-      controller.cachedSudoPassword = null;
+      if (ssh != null) ssh.cachedSudoPassword = null;
       err = RemoteSudo.authFailed;
       continue;
     }
@@ -75,10 +76,10 @@ Future<String?> runWithSudoPasswordPrompt(
   }
 
   if (err == null && pwd != null && pwd.isNotEmpty) {
-    controller.cachedSudoPassword = pwd;
-    controller.touchSudoPassword();
-  } else if (err == null && controller.cachedSudoPassword != null) {
-    controller.touchSudoPassword();
+    if (ssh != null) ssh.cachedSudoPassword = pwd;
+    ssh?.touchSudoPassword();
+  } else if (err == null && ssh?.cachedSudoPassword != null) {
+    ssh?.touchSudoPassword();
   }
   return err;
 }

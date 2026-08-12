@@ -484,10 +484,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Inject an OSC 7 hook into bash/zsh after connect (also auto-enabled with Follow terminal folder).';
 
   @override
-  String get statusBarCwdNoOsc7Hint =>
-      'No cwd reports yet — follow may not work';
-
-  @override
   String get settingsSmartRightClickLabel => 'Smart right-click copy/paste';
 
   @override
@@ -812,80 +808,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get statusNotConnected => 'Not connected';
-
-  @override
-  String get statusNoRemoteInfo => 'Remote metrics unavailable';
-
-  @override
-  String get statusPickHost => 'Pick a host on the left and connect';
-
-  @override
-  String get statusBeijingTimeLabel => 'Beijing';
-
-  @override
-  String get statusRemoteUptimePrefix => 'Remote';
-
-  @override
-  String statusRemoteUptimeLine(String uptime) {
-    return 'Remote: $uptime';
-  }
-
-  @override
-  String get tooltipMemNoData => 'Memory usage\n(no data)';
-
-  @override
-  String tooltipMem(String percent) {
-    return 'Memory usage\nAbout $percent% (vs MemAvailable / MemTotal)';
-  }
-
-  @override
-  String get tooltipCpuNoData => 'CPU usage\n(no data; needs vmstat sampling)';
-
-  @override
-  String tooltipCpu(String percent) {
-    return 'CPU usage\nAbout $percent% (vmstat 1s sample)';
-  }
-
-  @override
-  String get tooltipDiskTitle => 'Disk space on /';
-
-  @override
-  String tooltipDiskUsed(String percent) {
-    return '\nUsed: about $percent%';
-  }
-
-  @override
-  String get tooltipDiskNoUsage => '\nUsage: no data';
-
-  @override
-  String get tooltipInodeTitle => 'Inodes on /';
-
-  @override
-  String tooltipInodeUsed(String percent) {
-    return '\nUsed: about $percent%';
-  }
-
-  @override
-  String get tooltipInodeNoUsage => '\nUsage: no data';
-
-  @override
-  String get tooltipLoadTitle => 'Load average';
-
-  @override
-  String tooltipLoadLine(String line) {
-    return '\n1 / 5 / 15 min: $line';
-  }
-
-  @override
-  String get tooltipLoadNoData => '\n(no /proc/loadavg)';
-
-  @override
-  String tooltipLoadPressure(String percent) {
-    return '\nPressure vs CPU count: about $percent%';
-  }
-
-  @override
   String get sshAuthFailKeyAndPassword =>
       'Authentication failed: the server rejected the key, or the key passphrase / SSH password is wrong. Double-check each.';
 
@@ -1175,4 +1097,148 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sudoHidePassword => 'Hide';
+
+  @override
+  String get bulkOperationTitle => 'Bulk command';
+
+  @override
+  String get bulkTargetHosts => 'Target hosts';
+
+  @override
+  String get bulkNoConnectedHosts =>
+      'No connected sessions. Open tabs first, then run bulk commands.';
+
+  @override
+  String get bulkNoHostsSelected => 'Select at least one connected host.';
+
+  @override
+  String get bulkCommandEmpty => 'Enter a command to run.';
+
+  @override
+  String get bulkCommandLabel => 'Command';
+
+  @override
+  String get bulkParallel => 'Run in parallel';
+
+  @override
+  String get bulkTimeoutSec => 'Timeout (s)';
+
+  @override
+  String get bulkExecute => 'Run';
+
+  @override
+  String get bulkResults => 'Results';
+
+  @override
+  String get sshConfigImportTitle => 'Import SSH config';
+
+  @override
+  String sshConfigImportSource(String path) {
+    return 'Source: $path';
+  }
+
+  @override
+  String get sshConfigImportEmpty =>
+      'No Host entries found (wildcards like Host * are skipped).';
+
+  @override
+  String sshConfigImportFound(int count) {
+    return 'Found $count host entries';
+  }
+
+  @override
+  String get sshConfigConflictLabel => 'On conflict';
+
+  @override
+  String get sshConfigConflictSkip => 'Skip';
+
+  @override
+  String get sshConfigConflictOverwrite => 'Overwrite';
+
+  @override
+  String get sshConfigConflictDuplicate => 'Create duplicate';
+
+  @override
+  String get sshConfigImportAll => 'Import all';
+
+  @override
+  String get sshConfigImportSelected => 'Import selected';
+
+  @override
+  String sshConfigImportDone(
+    int imported,
+    int skipped,
+    int overwritten,
+    int duplicated,
+  ) {
+    return 'Imported $imported, skipped $skipped, overwritten $overwritten, duplicated $duplicated';
+  }
+
+  @override
+  String get hostGroupEditorTitle => 'Host groups';
+
+  @override
+  String get hostGroupsHeader => 'Groups';
+
+  @override
+  String get hostGroupsEmpty => 'No groups yet.';
+
+  @override
+  String get hostGroupCreateTitle => 'New group';
+
+  @override
+  String get hostGroupRenameTitle => 'Rename group';
+
+  @override
+  String get hostGroupDeleteTitle => 'Delete group';
+
+  @override
+  String hostGroupDeleteConfirm(String name) {
+    return 'Delete group “$name”? Hosts are not deleted.';
+  }
+
+  @override
+  String get hostGroupNameLabel => 'Group name';
+
+  @override
+  String hostGroupMemberCount(int count) {
+    return '$count hosts';
+  }
+
+  @override
+  String get hostGroupSelectHint => 'Select a group to assign hosts.';
+
+  @override
+  String hostGroupMembersOf(String name) {
+    return 'Members · $name';
+  }
+
+  @override
+  String get hostGroupNoMembers => 'No members in this group.';
+
+  @override
+  String get hostGroupAddMember => 'Add host';
+
+  @override
+  String get hostGroupRemoveMember => 'Remove from group';
+
+  @override
+  String get hostSearchHint => 'Search hosts…';
+
+  @override
+  String hostUngroupedHeader(int count) {
+    return 'Ungrouped ($count)';
+  }
+
+  @override
+  String get connectionAdvancedSection => 'Advanced';
+
+  @override
+  String get connectionJumpHostLabel => 'Jump host (ProxyJump)';
+
+  @override
+  String get connectionJumpHostNone => 'None';
+
+  @override
+  String get connectionTimeoutSecLabel => 'Connect timeout (s)';
 }

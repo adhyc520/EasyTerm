@@ -1,5 +1,5 @@
 import 'remote_process_list.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 单块 GPU 采样（nvidia-smi）。
 class RemoteGpuInfo {
@@ -43,7 +43,7 @@ const String kWindowsNvidiaSmiQuery =
     r'''nvidia-smi.exe --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>nul || nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits''';
 
 Future<RemoteGpuSnapshot?> fetchRemoteGpuSnapshot(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;

@@ -1,0 +1,1 @@
+enum SessionViewMode { terminal, desktop }

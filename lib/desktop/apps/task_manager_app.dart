@@ -7,6 +7,8 @@ import '../../services/remote_gpu.dart';
 import '../../services/remote_host_metrics.dart';
 import '../../services/remote_network.dart';
 import '../../services/remote_process_list.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
@@ -31,7 +33,7 @@ class TaskManagerApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<TaskManagerApp> createState() => _TaskManagerAppState();
@@ -39,7 +41,8 @@ class TaskManagerApp extends StatefulWidget {
 
 class _TaskManagerAppState extends State<TaskManagerApp>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+late final TabController _tabs;
   Timer? _timer;
 
   RemoteOsKind? _os;
@@ -198,7 +201,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   Future<void> _loadProcesses() async {
     final snap =
-        await fetchRemoteProcessSnapshot(widget.controller, osHint: _os);
+        await fetchRemoteProcessSnapshot(_exec, osHint: _os);
     if (!mounted) return;
     if (snap == null) {
       setState(() {
@@ -231,15 +234,15 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   Future<void> _loadPerf() async {
     final results = await Future.wait([
-      widget.controller.snapshot(),
-      fetchRemoteGpuSnapshot(widget.controller, osHint: _os),
+      _exec.snapshot(),
+      fetchRemoteGpuSnapshot(_exec, osHint: _os),
     ]);
     if (!mounted) return;
     final snap = results[0] as RemoteHostSnapshot?;
     final gpu = results[1] as RemoteGpuSnapshot?;
     if (snap == null && gpu == null) {
       setState(() {
-        final detail = widget.controller.lastRemoteCommandError;
+        final detail = _exec.lastRemoteCommandError;
         _error = detail == null ? '无法获取性能指标' : '刷新失败：$detail';
         _loading = false;
       });
@@ -269,7 +272,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   Future<void> _loadNetwork() async {
     final snap = await fetchRemoteNetworkSnapshot(
-      widget.controller,
+      _exec,
       osHint: _os,
     );
     if (!mounted) return;
@@ -317,7 +320,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
 
   Future<void> _loadServices() async {
     final snap =
-        await fetchRemoteServiceSnapshot(widget.controller, osHint: _os);
+        await fetchRemoteServiceSnapshot(_exec, osHint: _os);
     if (!mounted) return;
     if (snap == null) {
       setState(() {
@@ -527,7 +530,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
       _detailOpen = true;
       _detailPid = process.pid;
       _detailFuture = fetchRemoteProcessDetail(
-        widget.controller,
+        _exec,
         pid: process.pid,
         os: os,
       );
@@ -599,7 +602,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     });
     try {
       await killRemoteProcess(
-        widget.controller,
+        _exec,
         os: os,
         pid: pid,
         force: result == true,
@@ -654,7 +657,7 @@ class _TaskManagerAppState extends State<TaskManagerApp>
     setState(() => _svcBusy = true);
     try {
       final out = await controlRemoteService(
-        widget.controller,
+        _exec,
         os: os,
         name: name,
         action: action,
@@ -883,48 +886,66 @@ class _TitleBar extends StatelessWidget {
         children: [
           Icon(Icons.memory_rounded, size: 18, color: wb.accentBlue),
           const SizedBox(width: 8),
-          Text(
-            '任务管理器',
-            style: TextStyle(
-              color: wb.primaryText,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              '任务管理器',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: wb.primaryText,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: wb.panel,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: wb.border),
-            ),
-            child: Text(
-              osLabel,
-              style: TextStyle(fontSize: 11, color: wb.textMuted),
+          Flexible(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: wb.panel,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: wb.border),
+                ),
+                child: Text(
+                  osLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: wb.textMuted),
+                ),
+              ),
             ),
           ),
-          const Spacer(),
-          LastUpdatedChip(lastTickAt: lastTickAt, live: live),
-          const SizedBox(width: 4),
-          PauseToggle(
-            paused: paused,
-            onPausedChanged: onPausedChanged,
-            interval: interval,
-            onIntervalChanged: onIntervalChanged,
-          ),
-          if (loading)
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else
-            IconButton(
-              tooltip: '刷新',
-              iconSize: 18,
-              onPressed: connected ? onRefresh : null,
-              icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+          const SizedBox(width: 8),
+          Flexible(
+            child: DesktopScrollableActions(
+              height: 36,
+              children: [
+                LastUpdatedChip(lastTickAt: lastTickAt, live: live),
+                const SizedBox(width: 4),
+                PauseToggle(
+                  paused: paused,
+                  onPausedChanged: onPausedChanged,
+                  interval: interval,
+                  onIntervalChanged: onIntervalChanged,
+                ),
+                if (loading)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    tooltip: '刷新',
+                    iconSize: 18,
+                    onPressed: connected ? onRefresh : null,
+                    icon: Icon(Icons.refresh_rounded, color: wb.textMuted),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );

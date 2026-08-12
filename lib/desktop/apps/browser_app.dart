@@ -13,7 +13,9 @@ import '../../services/browser_bookmarks_store.dart';
 import '../../services/browser_history_store.dart';
 import '../../services/browser_gateway_rewrite.dart';
 import '../../services/remote_browser_backend.dart';
-import '../../services/ssh_workspace_controller.dart';
+import '../../services/remote_forward_capable.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../theme/workbench_theme.dart';
 import '../../util/launch_external_url.dart';
 import '../desktop_tab_strip.dart';
@@ -31,7 +33,7 @@ class BrowserApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<BrowserApp> createState() => _BrowserAppState();
@@ -124,6 +126,8 @@ class _BrowserTab implements DesktopTabModel {
 }
 
 class _BrowserAppState extends State<BrowserApp> {
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+
   static const _maxTabs = 8;
   static const _kJsHintDismissPrefs = 'desktop_browser_js_hint_dismissed';
   static const _kZoomPrefsPrefix = 'desktop_browser_zoom_';
@@ -154,7 +158,12 @@ class _BrowserAppState extends State<BrowserApp> {
 
   FocusNode? _boundAddressFocus;
 
-  SshWorkspaceController get c => widget.controller;
+  TerminalSessionController get c => widget.controller;
+
+  RemoteForwardCapable? get _forward =>
+      c is RemoteForwardCapable ? c as RemoteForwardCapable : null;
+
+  bool get _canTunnel => _forward != null;
 
   String get _hostKey => '${c.username}@${c.host}:${c.port}';
 
@@ -449,16 +458,23 @@ class _BrowserAppState extends State<BrowserApp> {
   Future<void> _ensureBackend() async {
     await _backend?.close();
     _backend = null;
-    if (c.clientForDesktop == null) {
-      throw StateError('SSH 未连接');
+    if (!c.connected) {
+      throw StateError('未连接');
+    }
+    final forward = _forward;
+    if (forward == null) {
+      // Telnet / Serial: public URLs only (no SSH tunnel).
+      _useGateway = false;
+      _backend = DirectOnlyBrowserBackend();
+      return;
     }
     if (_useGateway) {
-      final gw = await c.getOrCreateGateway();
+      final gw = await forward.getOrCreateGateway();
       _backend = GatewayBrowserBackend(gw);
     } else {
       _backend = LocalForwardBrowserBackend(
-        openForward: (host, port) => c.openLocalForward(host, port),
-        releaseForward: c.releaseLocalForward,
+        openForward: (host, port) => forward.openLocalForward(host, port),
+        releaseForward: forward.releaseLocalForward,
       );
     }
   }
@@ -468,7 +484,7 @@ class _BrowserAppState extends State<BrowserApp> {
     if (t == null) return;
     final input = raw.trim();
     if (input.isEmpty) return;
-    if (!c.connected || c.clientForDesktop == null) {
+    if (!c.connected) {
       setState(() {
         t.error = '未连接';
         _error = '未连接';
@@ -671,6 +687,7 @@ class _BrowserAppState extends State<BrowserApp> {
   }
 
   Future<void> _toggleMode() async {
+    if (!_canTunnel) return;
     final switchingToDirect = _useGateway;
     final tab = _tab;
     if (switchingToDirect && mounted) {
@@ -1586,27 +1603,41 @@ class _BrowserAppState extends State<BrowserApp> {
                         onSubmitted: (_) => unawaited(_findNext()),
                       ),
                     ),
-                    TextButton(
-                      onPressed: () => unawaited(_findNext(forward: false)),
-                      child: const Text('上一个'),
-                    ),
-                    TextButton(
-                      onPressed: () => unawaited(_findNext()),
-                      child: const Text('下一个'),
-                    ),
-                    Text(
-                      tab.findTotal <= 0
-                          ? ''
-                          : '${tab.findActive + 1}/${tab.findTotal}',
-                      style: TextStyle(fontSize: 11, color: wb.textMuted),
-                    ),
-                    IconButton(
-                      iconSize: 18,
-                      onPressed: () {
-                        setState(() => _findOpen = false);
-                        unawaited(tab.findInteraction.clearMatches());
-                      },
-                      icon: Icon(Icons.close, color: wb.textMuted),
+                    Flexible(
+                      child: DesktopScrollableActions(
+                        height: 40,
+                        children: [
+                          TextButton(
+                            onPressed: () =>
+                                unawaited(_findNext(forward: false)),
+                            child: const Text('上一个'),
+                          ),
+                          TextButton(
+                            onPressed: () => unawaited(_findNext()),
+                            child: const Text('下一个'),
+                          ),
+                          if (tab.findTotal > 0)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 4),
+                              child: Text(
+                                '${tab.findActive + 1}/${tab.findTotal}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: wb.textMuted,
+                                ),
+                              ),
+                            ),
+                          IconButton(
+                            iconSize: 18,
+                            onPressed: () {
+                              setState(() => _findOpen = false);
+                              unawaited(tab.findInteraction.clearMatches());
+                            },
+                            icon: Icon(Icons.close, color: wb.textMuted),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

@@ -466,9 +466,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '连接后向 bash/zsh 注入 OSC 7（开启「跟随终端目录」时也会自动注入）。';
 
   @override
-  String get statusBarCwdNoOsc7Hint => '未检测到目录上报，跟随可能无效';
-
-  @override
   String get settingsSmartRightClickLabel => '右键智能复制/粘贴';
 
   @override
@@ -787,80 +784,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get statusNotConnected => '未连接';
-
-  @override
-  String get statusNoRemoteInfo => '系统信息暂不可用';
-
-  @override
-  String get statusPickHost => '请选择左侧主机并连接';
-
-  @override
-  String get statusBeijingTimeLabel => '北京';
-
-  @override
-  String get statusRemoteUptimePrefix => '远端';
-
-  @override
-  String statusRemoteUptimeLine(String uptime) {
-    return '远端：$uptime';
-  }
-
-  @override
-  String get tooltipMemNoData => '内存使用率\n（暂无数据）';
-
-  @override
-  String tooltipMem(String percent) {
-    return '内存使用率\n已用约 $percent%（相对 MemAvailable / MemTotal）';
-  }
-
-  @override
-  String get tooltipCpuNoData => 'CPU 使用率\n（暂无数据，依赖 vmstat 采样）';
-
-  @override
-  String tooltipCpu(String percent) {
-    return 'CPU 使用率\n约 $percent%（vmstat 1s 间隔采样）';
-  }
-
-  @override
-  String get tooltipDiskTitle => '根挂载点 / 磁盘空间';
-
-  @override
-  String tooltipDiskUsed(String percent) {
-    return '\n已用 $percent%';
-  }
-
-  @override
-  String get tooltipDiskNoUsage => '\n使用率：暂无数据';
-
-  @override
-  String get tooltipInodeTitle => '根挂载点 / inode';
-
-  @override
-  String tooltipInodeUsed(String percent) {
-    return '\n已用 $percent%';
-  }
-
-  @override
-  String get tooltipInodeNoUsage => '\n使用率：暂无数据';
-
-  @override
-  String get tooltipLoadTitle => '系统负载';
-
-  @override
-  String tooltipLoadLine(String line) {
-    return '\n1 / 5 / 15 分钟: $line';
-  }
-
-  @override
-  String get tooltipLoadNoData => '\n（暂无 /proc/loadavg）';
-
-  @override
-  String tooltipLoadPressure(String percent) {
-    return '\n相对 CPU 数折算压力: $percent%';
-  }
-
-  @override
   String get sshAuthFailKeyAndPassword =>
       '认证失败：私钥未被服务器接受，或私钥口令 / SSH 登录密码不正确，请逐项核对。';
 
@@ -1141,4 +1064,146 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sudoHidePassword => '隐藏';
+
+  @override
+  String get bulkOperationTitle => '批量执行命令';
+
+  @override
+  String get bulkTargetHosts => '目标主机';
+
+  @override
+  String get bulkNoConnectedHosts => '当前没有已连接的会话。请先打开标签页再执行批量命令。';
+
+  @override
+  String get bulkNoHostsSelected => '请至少选择一台已连接的主机。';
+
+  @override
+  String get bulkCommandEmpty => '请输入要执行的命令。';
+
+  @override
+  String get bulkCommandLabel => '命令';
+
+  @override
+  String get bulkParallel => '并行执行';
+
+  @override
+  String get bulkTimeoutSec => '超时 (秒)';
+
+  @override
+  String get bulkExecute => '执行';
+
+  @override
+  String get bulkResults => '结果';
+
+  @override
+  String get sshConfigImportTitle => '导入 SSH Config';
+
+  @override
+  String sshConfigImportSource(String path) {
+    return '源文件: $path';
+  }
+
+  @override
+  String get sshConfigImportEmpty => '未发现 Host 条目（Host * 等通配会被跳过）。';
+
+  @override
+  String sshConfigImportFound(int count) {
+    return '发现 $count 个主机配置';
+  }
+
+  @override
+  String get sshConfigConflictLabel => '冲突处理';
+
+  @override
+  String get sshConfigConflictSkip => '跳过';
+
+  @override
+  String get sshConfigConflictOverwrite => '覆盖';
+
+  @override
+  String get sshConfigConflictDuplicate => '创建副本';
+
+  @override
+  String get sshConfigImportAll => '导入全部';
+
+  @override
+  String get sshConfigImportSelected => '导入选中';
+
+  @override
+  String sshConfigImportDone(
+    int imported,
+    int skipped,
+    int overwritten,
+    int duplicated,
+  ) {
+    return '已导入 $imported，跳过 $skipped，覆盖 $overwritten，副本 $duplicated';
+  }
+
+  @override
+  String get hostGroupEditorTitle => '主机分组';
+
+  @override
+  String get hostGroupsHeader => '分组';
+
+  @override
+  String get hostGroupsEmpty => '暂无分组。';
+
+  @override
+  String get hostGroupCreateTitle => '新建分组';
+
+  @override
+  String get hostGroupRenameTitle => '重命名分组';
+
+  @override
+  String get hostGroupDeleteTitle => '删除分组';
+
+  @override
+  String hostGroupDeleteConfirm(String name) {
+    return '删除分组「$name」？主机本身不会被删除。';
+  }
+
+  @override
+  String get hostGroupNameLabel => '分组名称';
+
+  @override
+  String hostGroupMemberCount(int count) {
+    return '$count 台主机';
+  }
+
+  @override
+  String get hostGroupSelectHint => '选择一个分组以分配主机。';
+
+  @override
+  String hostGroupMembersOf(String name) {
+    return '成员 · $name';
+  }
+
+  @override
+  String get hostGroupNoMembers => '该分组暂无成员。';
+
+  @override
+  String get hostGroupAddMember => '添加主机';
+
+  @override
+  String get hostGroupRemoveMember => '移出分组';
+
+  @override
+  String get hostSearchHint => '搜索主机…';
+
+  @override
+  String hostUngroupedHeader(int count) {
+    return '未分组 ($count)';
+  }
+
+  @override
+  String get connectionAdvancedSection => '高级';
+
+  @override
+  String get connectionJumpHostLabel => '跳板机 (ProxyJump)';
+
+  @override
+  String get connectionJumpHostNone => '无';
+
+  @override
+  String get connectionTimeoutSecLabel => '连接超时 (秒)';
 }

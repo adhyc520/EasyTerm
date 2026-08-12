@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../../services/remote_firewall.dart';
 import '../../services/remote_sudo.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../../widgets/destructive_action_dialog.dart';
@@ -26,14 +28,15 @@ class FirewallApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<FirewallApp> createState() => _FirewallAppState();
 }
 
 class _FirewallAppState extends State<FirewallApp> {
-  RemoteFirewallSnapshot? _snap;
+  RemoteExecCapable get _exec => widget.controller as RemoteExecCapable;
+RemoteFirewallSnapshot? _snap;
   bool _loading = false;
   bool _busy = false;
   String? _error;
@@ -79,14 +82,14 @@ class _FirewallAppState extends State<FirewallApp> {
       _loading = true;
       _error = null;
     });
-    final snap = await fetchFirewallSnapshot(widget.controller);
+    final snap = await fetchFirewallSnapshot(_exec);
     if (!mounted) return;
     if (snap == null) {
       setState(() {
         _loading = false;
-        _error = widget.controller.lastRemoteCommandError == null
+        _error = _exec.lastRemoteCommandError == null
             ? '无法读取防火墙状态'
-            : '刷新失败：${widget.controller.lastRemoteCommandError}';
+            : '刷新失败：${_exec.lastRemoteCommandError}';
       });
       return;
     }
@@ -125,9 +128,9 @@ class _FirewallAppState extends State<FirewallApp> {
     });
     final err = await runWithSudoPasswordPrompt(
       context,
-      widget.controller,
+      _exec,
       attempt: (sudoPassword) => runFirewallMutate(
-        widget.controller,
+        _exec,
         cmd,
         terminalHint: hint,
         sudoPassword: sudoPassword,

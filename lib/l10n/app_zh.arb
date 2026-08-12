@@ -163,7 +163,6 @@
   "settingsFollowTerminalCwdDescription": "终端 cd 后自动同步文件浏览器；会自动向 bash/zsh 注入目录上报。",
   "settingsInjectOsc7Label": "启用目录上报",
   "settingsInjectOsc7Description": "连接后向 bash/zsh 注入 OSC 7（开启「跟随终端目录」时也会自动注入）。",
-  "statusBarCwdNoOsc7Hint": "未检测到目录上报，跟随可能无效",
   "settingsSmartRightClickLabel": "右键智能复制/粘贴",
   "settingsSmartRightClickDescription": "有选区时右键复制并清除；无选区时右键粘贴（Windows 终端习惯）。",
   "settingsUiScaleLabel": "界面缩放",
@@ -318,26 +317,6 @@
   "remoteEditorSaved": "已保存并同步到服务器",
   "remoteEditorSaveFailed": "保存失败: {error}",
   "remoteEditorSyntaxError": "语法错误：{detail}",
-  "statusNotConnected": "未连接",
-  "statusNoRemoteInfo": "系统信息暂不可用",
-  "statusPickHost": "请选择左侧主机并连接",
-  "statusBeijingTimeLabel": "北京",
-  "statusRemoteUptimePrefix": "远端",
-  "statusRemoteUptimeLine": "远端：{uptime}",
-  "tooltipMemNoData": "内存使用率\n（暂无数据）",
-  "tooltipMem": "内存使用率\n已用约 {percent}%（相对 MemAvailable / MemTotal）",
-  "tooltipCpuNoData": "CPU 使用率\n（暂无数据，依赖 vmstat 采样）",
-  "tooltipCpu": "CPU 使用率\n约 {percent}%（vmstat 1s 间隔采样）",
-  "tooltipDiskTitle": "根挂载点 / 磁盘空间",
-  "tooltipDiskUsed": "\n已用 {percent}%",
-  "tooltipDiskNoUsage": "\n使用率：暂无数据",
-  "tooltipInodeTitle": "根挂载点 / inode",
-  "tooltipInodeUsed": "\n已用 {percent}%",
-  "tooltipInodeNoUsage": "\n使用率：暂无数据",
-  "tooltipLoadTitle": "系统负载",
-  "tooltipLoadLine": "\n1 / 5 / 15 分钟: {line}",
-  "tooltipLoadNoData": "\n（暂无 /proc/loadavg）",
-  "tooltipLoadPressure": "\n相对 CPU 数折算压力: {percent}%",
   "sshAuthFailKeyAndPassword": "认证失败：私钥未被服务器接受，或私钥口令 / SSH 登录密码不正确，请逐项核对。",
   "sshAuthFailKey": "认证失败：当前私钥与该账户不匹配，或私钥解密口令错误。",
   "sshAuthFailPassword": "未能连接：用户名或 SSH 密码不正确（认证失败）。若服务器仅允许密钥登录，请配置私钥并确认未填错密码。",
@@ -449,5 +428,88 @@
   "sudoLockedSnack": "已锁定 sudo 密码",
   "sudoCancel": "取消",
   "sudoShowPassword": "显示",
-  "sudoHidePassword": "隐藏"
+  "sudoHidePassword": "隐藏",
+
+  "bulkOperationTitle": "批量执行命令",
+  "bulkTargetHosts": "目标主机",
+  "bulkNoConnectedHosts": "当前没有已连接的会话。请先打开标签页再执行批量命令。",
+  "bulkNoHostsSelected": "请至少选择一台已连接的主机。",
+  "bulkCommandEmpty": "请输入要执行的命令。",
+  "bulkCommandLabel": "命令",
+  "bulkParallel": "并行执行",
+  "bulkTimeoutSec": "超时 (秒)",
+  "bulkExecute": "执行",
+  "bulkResults": "结果",
+
+  "sshConfigImportTitle": "导入 SSH Config",
+  "sshConfigImportSource": "源文件: {path}",
+  "@sshConfigImportSource": {
+    "placeholders": {
+      "path": {"type": "String"}
+    }
+  },
+  "sshConfigImportEmpty": "未发现 Host 条目（Host * 等通配会被跳过）。",
+  "sshConfigImportFound": "发现 {count} 个主机配置",
+  "@sshConfigImportFound": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "sshConfigConflictLabel": "冲突处理",
+  "sshConfigConflictSkip": "跳过",
+  "sshConfigConflictOverwrite": "覆盖",
+  "sshConfigConflictDuplicate": "创建副本",
+  "sshConfigImportAll": "导入全部",
+  "sshConfigImportSelected": "导入选中",
+  "sshConfigImportDone": "已导入 {imported}，跳过 {skipped}，覆盖 {overwritten}，副本 {duplicated}",
+  "@sshConfigImportDone": {
+    "placeholders": {
+      "imported": {"type": "int"},
+      "skipped": {"type": "int"},
+      "overwritten": {"type": "int"},
+      "duplicated": {"type": "int"}
+    }
+  },
+
+  "hostGroupEditorTitle": "主机分组",
+  "hostGroupsHeader": "分组",
+  "hostGroupsEmpty": "暂无分组。",
+  "hostGroupCreateTitle": "新建分组",
+  "hostGroupRenameTitle": "重命名分组",
+  "hostGroupDeleteTitle": "删除分组",
+  "hostGroupDeleteConfirm": "删除分组「{name}」？主机本身不会被删除。",
+  "@hostGroupDeleteConfirm": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "hostGroupNameLabel": "分组名称",
+  "hostGroupMemberCount": "{count} 台主机",
+  "@hostGroupMemberCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "hostGroupSelectHint": "选择一个分组以分配主机。",
+  "hostGroupMembersOf": "成员 · {name}",
+  "@hostGroupMembersOf": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "hostGroupNoMembers": "该分组暂无成员。",
+  "hostGroupAddMember": "添加主机",
+  "hostGroupRemoveMember": "移出分组",
+  "hostSearchHint": "搜索主机…",
+  "hostUngroupedHeader": "未分组 ({count})",
+  "@hostUngroupedHeader": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+
+  "connectionAdvancedSection": "高级",
+  "connectionJumpHostLabel": "跳板机 (ProxyJump)",
+  "connectionJumpHostNone": "无",
+  "connectionTimeoutSecLabel": "连接超时 (秒)"
 }

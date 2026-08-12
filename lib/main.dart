@@ -7,12 +7,19 @@ import 'package:window_manager/window_manager.dart';
 
 import 'l10n/app_localizations.dart';
 import 'screens/main_shell_screen.dart';
+import 'services/performance_monitor.dart';
 import 'services/workbench_desktop_shortcuts.dart';
 import 'services/workbench_settings_store.dart';
 import 'theme/workbench_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 开发模式可打开帧耗时采样（设置里也可扩展开关）。
+  assert(() {
+    PerformanceMonitor.instance.setEnabled(true);
+    return true;
+  }());
 
   final bool isDesktop =
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);

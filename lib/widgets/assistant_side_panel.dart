@@ -7,11 +7,14 @@ import '../l10n/app_localizations.dart';
 import '../services/assistant_chat_session.dart';
 import '../services/llm_openai_chat_service.dart';
 import '../services/session_tabs_controller.dart';
+import '../services/terminal_session_controller.dart';
+import '../services/remote_exec_capable.dart';
 import '../services/ssh_workspace_controller.dart';
 import '../services/workbench_settings_store.dart';
 import '../theme/workbench_theme.dart';
 import 'assistant_chat_messages.dart';
 import 'assistant_chat_text.dart';
+import 'assistant_prompt_templates.dart';
 
 /// 终端区域右侧：可拖拽宽度、可收起的助手栏（大模型对话 + 终端工具调用）。
 class TerminalWithAssistantSplit extends StatefulWidget {
@@ -208,7 +211,7 @@ class AssistantChatPanel extends StatefulWidget {
   final SessionTab? sessionTab;
   final VoidCallback onCollapse;
 
-  SshWorkspaceController? get ssh => sessionTab?.controller;
+  TerminalSessionController? get ssh => sessionTab?.controller;
   AssistantChatSession? get session => sessionTab?.assistant;
 
   @override
@@ -277,7 +280,16 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
     _boundSession = session;
     session?.addListener(_onSessionChanged);
     if (session != null && !session.isDisposed) {
-      session.ensureSystemMessage(zh: _zh);
+      if (tab != null) {
+        session.hostKey = SessionTabsController.hostKeyFor(tab);
+      }
+      unawaited(
+        session.ensureSystemMessage(
+          zh: _zh,
+          ssh: tab?.controller,
+          customPrompt: widget.settings.llmSystemPrompt,
+        ),
+      );
     }
     _boundTabId = tab?.id;
     _input.text = session?.draftInput ?? '';
@@ -343,6 +355,22 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
     return allow == true;
   }
 
+  Future<bool> _confirmFileWrite(String path, String contentPreview) async {
+    final l = AppLocalizations.of(context)!;
+    final preview =
+        'path: $path\n\n$contentPreview';
+    final clipped = preview.length > 12000
+        ? '${preview.substring(0, 12000)}…'
+        : preview;
+    final allow = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _TerminalRunApprovalDialog(preview: clipped, l10n: l),
+    );
+    if (!mounted) return false;
+    return allow == true;
+  }
+
   Future<void> _send() async {
     final session = _session;
     if (session == null || session.isDisposed) return;
@@ -358,6 +386,12 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       return;
     }
 
+    await session.ensureSystemMessage(
+      zh: _zh,
+      ssh: widget.ssh,
+      customPrompt: widget.settings.llmSystemPrompt,
+    );
+
     session.draftInput = '';
     final cancel = LlmStreamCancel();
     final tabId = widget.sessionTab?.id;
@@ -366,6 +400,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       session.streamCancel = cancel;
       session.streamReasoning = '';
       session.streamContent = '';
+      session.clearLiveToolProgress();
       session.messages.add({'role': 'user', 'content': text});
       session.touch();
       _input.clear();
@@ -383,11 +418,17 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
         ssh: widget.ssh,
         useZhTools: _zh,
         onRequestTerminalApproval: _confirmTerminalCommand,
+        onRequestFileWriteApproval: _confirmFileWrite,
+        onToolProgress: (name, status, {detail}) {
+          if (session.isDisposed) return;
+          session.setLiveToolProgress(name, status, detail: detail);
+        },
         cancel: cancel,
         onStreamRoundStart: () {
           if (session.isDisposed) return;
           session.streamReasoning = '';
           session.streamContent = '';
+          session.clearLiveToolProgress();
           _scheduleStreamUi(session);
         },
         onStreamDelta: ({reasoningDelta, contentDelta}) {
@@ -419,6 +460,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
         session.streamCancel = null;
         session.streamReasoning = '';
         session.streamContent = '';
+        session.clearLiveToolProgress();
       }
       if (mounted && widget.sessionTab?.id == tabId) {
         setState(() {});
@@ -451,9 +493,36 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
       ),
     );
     if (ok == true && mounted) {
-      _session?.reset(zh: _zh);
+      await _session?.reset(
+        zh: _zh,
+        ssh: widget.ssh,
+        customPrompt: widget.settings.llmSystemPrompt,
+      );
       setState(() {});
     }
+  }
+
+  Future<void> _exportMarkdown() async {
+    final session = _session;
+    if (session == null || session.isDisposed) return;
+    final md = session.exportMarkdown(zh: _zh);
+    await Clipboard.setData(ClipboardData(text: md));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _zh ? '已复制 Markdown 到剪贴板' : 'Markdown copied to clipboard',
+        ),
+      ),
+    );
+  }
+
+  void _applyPromptTemplate(String prompt) {
+    if (_busy) return;
+    _input.text = prompt;
+    _input.selection = TextSelection.collapsed(offset: prompt.length);
+    _session?.draftInput = prompt;
+    setState(() {});
   }
 
   @override
@@ -495,6 +564,8 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
                 Expanded(
                   child: Text(
                     l.assistantPanelTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: wb.primaryText,
                       fontWeight: FontWeight.w700,
@@ -504,27 +575,59 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
                 ),
                 IconButton(
                   tooltip: l.assistantClearTooltip,
-                  onPressed: _busy ? null : _clear,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  onPressed: _busy ? null : () => unawaited(_clear()),
                   icon: Icon(
                     Icons.delete_outline_rounded,
-                    size: 20,
+                    size: 18,
+                    color: wb.textMuted,
+                  ),
+                ),
+                IconButton(
+                  tooltip: _zh ? '导出 Markdown' : 'Export Markdown',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  onPressed: _busy ? null : () => unawaited(_exportMarkdown()),
+                  icon: Icon(
+                    Icons.ios_share_rounded,
+                    size: 16,
                     color: wb.textMuted,
                   ),
                 ),
                 if (_busy)
                   IconButton(
                     tooltip: l.assistantStopTooltip,
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
                     onPressed: _stopGeneration,
                     icon: Icon(
                       Icons.stop_circle_outlined,
-                      size: 22,
+                      size: 20,
                       color: wb.accentBlue,
                     ),
                   ),
                 IconButton(
                   tooltip: l.assistantCollapseTooltip,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
                   onPressed: widget.onCollapse,
-                  icon: Icon(Icons.chevron_right_rounded, color: wb.accentBlue),
+                  icon: Icon(
+                    Icons.chevron_right_rounded,
+                    color: wb.accentBlue,
+                  ),
                 ),
               ],
             ),
@@ -541,6 +644,7 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
                   busy: _busy,
                   streamReasoning: _streamReasoning,
                   streamContent: _streamContent,
+                  zh: _zh,
                 ),
               ),
             ),
@@ -579,6 +683,14 @@ class _AssistantChatPanelState extends State<AssistantChatPanel> {
                 ),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: AssistantPromptTemplates(
+              zh: _zh,
+              enabled: !_busy,
+              onSelect: _applyPromptTemplate,
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
             child: CallbackShortcuts(

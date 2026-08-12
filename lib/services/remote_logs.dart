@@ -1,6 +1,6 @@
 import 'remote_containers.dart' show isSafeContainerRef;
 import 'remote_process_list.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 /// 日志来源。
 enum RemoteLogSource {
@@ -122,7 +122,7 @@ List<RemoteLogLine> remoteLogLinesFromRaw(List<String> rawLines) {
 }
 
 Future<RemoteLogSnapshot?> fetchRemoteLogs(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
   RemoteLogSource source = RemoteLogSource.journal,
   String? unit,
@@ -177,7 +177,7 @@ Future<RemoteLogSnapshot?> fetchRemoteLogs(
 }
 
 Future<RemoteLogSnapshot> _fetchLinux(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteLogSource source,
   String? unit,
   String? path,
@@ -254,7 +254,7 @@ Future<RemoteLogSnapshot> _fetchLinux(
 }
 
 Future<RemoteLogSnapshot> _fetchWindows(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteLogSource source,
   String? unit,
   String? path,

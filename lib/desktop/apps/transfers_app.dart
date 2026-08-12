@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../services/sftp_upload_task_list.dart';
+import '../../services/terminal_session_controller.dart';
+import '../../services/remote_exec_capable.dart';
 import '../../services/ssh_workspace_controller.dart';
 import '../../theme/workbench_theme.dart';
 import '../desktop_window_manager.dart';
@@ -19,25 +21,27 @@ class TransfersApp extends StatefulWidget {
 
   final DesktopWindow window;
   final DesktopWindowManager wm;
-  final SshWorkspaceController controller;
+  final TerminalSessionController controller;
 
   @override
   State<TransfersApp> createState() => _TransfersAppState();
 }
 
 class _TransfersAppState extends State<TransfersApp> {
+  SshWorkspaceController get _ssh => widget.controller as SshWorkspaceController;
+
   /// id → (lastBytes, lastAtMs, bytesPerSec)
   final Map<String, (int, int, double)> _speedSamples = {};
 
   @override
   void initState() {
     super.initState();
-    widget.controller.uploadTasks.addListener(_onTasks);
+    _ssh.uploadTasks.addListener(_onTasks);
   }
 
   @override
   void dispose() {
-    widget.controller.uploadTasks.removeListener(_onTasks);
+    _ssh.uploadTasks.removeListener(_onTasks);
     super.dispose();
   }
 
@@ -98,7 +102,7 @@ class _TransfersAppState extends State<TransfersApp> {
   @override
   Widget build(BuildContext context) {
     final wb = context.wb;
-    final list = widget.controller.uploadTasks;
+    final list = _ssh.uploadTasks;
     final tasks = list.items;
     final active = list.activeCount;
     final failed = list.failedCount;
@@ -147,7 +151,7 @@ class _TransfersAppState extends State<TransfersApp> {
                       TextButton(
                         onPressed: failed > 0
                             ? () => unawaited(
-                                  widget.controller.retryAllFailedTransfers(),
+                                  _ssh.retryAllFailedTransfers(),
                                 )
                             : null,
                         child: const Text('全部重试'),
@@ -355,7 +359,7 @@ class _TransfersAppState extends State<TransfersApp> {
               iconSize: 18,
               onPressed: t.canRetry
                   ? () => unawaited(
-                        widget.controller.retryTransferTask(t),
+                        _ssh.retryTransferTask(t),
                       )
                   : null,
               icon: Icon(

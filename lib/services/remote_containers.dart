@@ -1,6 +1,6 @@
 import 'remote_process_list.dart';
 import 'remote_sudo.dart';
-import 'ssh_workspace_controller.dart';
+import 'remote_exec_capable.dart';
 
 enum RemoteContainerAction { start, stop, restart, remove }
 
@@ -73,7 +73,7 @@ const String kWindowsDockerStats =
     r'''docker.exe stats --no-stream --format "{{.ID}}|{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}" 2>nul || docker stats --no-stream --format "{{.ID}}|{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}"''';
 
 Future<bool> detectDockerAvailable(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return false;
@@ -87,7 +87,7 @@ Future<bool> detectDockerAvailable(
 }
 
 Future<RemoteContainerSnapshot?> fetchRemoteContainers(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   RemoteOsKind? osHint,
 }) async {
   if (!controller.connected) return null;
@@ -99,13 +99,19 @@ Future<RemoteContainerSnapshot?> fetchRemoteContainers(
       return _fetch(controller, os: RemoteOsKind.windows);
     case RemoteOsKind.unknown:
       final linux = await _fetch(controller, os: RemoteOsKind.linux);
+      // null = 命令超时/队列失败，勿当成「无 Docker」再去试 Windows。
+      if (linux == null) return null;
       if (linux.available || linux.containers.isNotEmpty) return linux;
       return _fetch(controller, os: RemoteOsKind.windows);
   }
 }
 
-Future<RemoteContainerSnapshot> _fetch(
-  SshWorkspaceController controller, {
+/// 拉取容器列表。
+///
+/// 返回 `null` 表示命令失败（超时、掉线、队列拥塞等），调用方应保留上一帧数据，
+/// **不要**据此判定「未安装 Docker」。
+Future<RemoteContainerSnapshot?> _fetch(
+  RemoteExecCapable controller, {
   required RemoteOsKind os,
 }) async {
   final psCmd =
@@ -113,18 +119,17 @@ Future<RemoteContainerSnapshot> _fetch(
   final statsCmd =
       os == RemoteOsKind.windows ? kWindowsDockerStats : kLinuxDockerStats;
 
-  final psRaw = await controller.runRemoteForStatus(psCmd);
-  if (psRaw == null || psRaw.trim().isEmpty) {
-    // 区分「无容器」与「无 docker」
-    final probe = os == RemoteOsKind.windows
-        ? 'docker.exe version 2>nul || docker version'
-        : 'command -v docker >/dev/null 2>&1 && echo ok || echo missing';
-    final p = await controller.runRemoteForStatus(probe);
-    final available = os == RemoteOsKind.windows
-        ? (p != null &&
-            p.trim().isNotEmpty &&
-            !p.toLowerCase().contains('is not recognized'))
-        : (p ?? '').trim() == 'ok';
+  // 与「空输出 / 无 docker」区分：null 只表示 exec 失败。
+  final psRaw = await controller.runQueued(
+    psCmd,
+    timeout: const Duration(seconds: 20),
+  );
+  if (psRaw == null) return null;
+
+  if (psRaw.trim().isEmpty) {
+    // 成功但无输出：可能是零容器，也可能是未安装（stderr 被丢弃）。
+    final available = await _probeDockerCli(controller, os: os);
+    if (available == null) return null; // probe 也失败 → 瞬时错误
     return RemoteContainerSnapshot(
       os: os,
       containers: const [],
@@ -134,9 +139,15 @@ Future<RemoteContainerSnapshot> _fetch(
   }
 
   var list = parseDockerPs(psRaw, os: os);
-  final statsRaw = await controller.runRemoteForStatus(statsCmd);
-  if (statsRaw != null && statsRaw.trim().isNotEmpty) {
-    list = mergeDockerStats(list, parseDockerStats(statsRaw));
+  // Telnet/Serial 仿真 exec：跳过 stats，减少主终端刷屏与超时。
+  if (list.isNotEmpty && !controller.lightweightRemoteExec) {
+    final statsRaw = await controller.runQueued(
+      statsCmd,
+      timeout: const Duration(seconds: 20),
+    );
+    if (statsRaw != null && statsRaw.trim().isNotEmpty) {
+      list = mergeDockerStats(list, parseDockerStats(statsRaw));
+    }
   }
   list.sort((a, b) {
     final ar = a.isRunning ? 0 : 1;
@@ -151,8 +162,31 @@ Future<RemoteContainerSnapshot> _fetch(
   );
 }
 
+/// 探测 Docker CLI 是否存在。
+///
+/// - `true` / `false`：明确结论
+/// - `null`：命令失败，无法判定
+Future<bool?> _probeDockerCli(
+  RemoteExecCapable controller, {
+  required RemoteOsKind os,
+}) async {
+  final probe = os == RemoteOsKind.windows
+      ? r'(where docker.exe >nul 2>nul || where docker >nul 2>nul) && echo __DOCKER_OK__ || echo __DOCKER_MISSING__'
+      : r'command -v docker >/dev/null 2>&1 && echo __DOCKER_OK__ || echo __DOCKER_MISSING__';
+  final p = await controller.runQueued(
+    probe,
+    timeout: const Duration(seconds: 10),
+  );
+  if (p == null) return null;
+  final t = p.trim();
+  if (t.contains('__DOCKER_OK__')) return true;
+  if (t.contains('__DOCKER_MISSING__')) return false;
+  // 输出被 MOTD/噪声污染且无标记 → 当作瞬时失败，避免误报「无 Docker」。
+  return null;
+}
+
 Future<String?> controlRemoteContainer(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteOsKind os,
   required String ref,
   required RemoteContainerAction action,
@@ -184,7 +218,7 @@ Future<String?> controlRemoteContainer(
 }
 
 Future<String?> inspectRemoteContainer(
-  SshWorkspaceController controller, {
+  RemoteExecCapable controller, {
   required RemoteOsKind os,
   required String ref,
 }) async {
